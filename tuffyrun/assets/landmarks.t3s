@@ -1,0 +1,4 @@
+--atlas -f rgba -z auto
+gfx/pollak.png
+gfx/tsu.png
+gfx/statue.png

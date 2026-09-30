@@ -1,0 +1,14 @@
+# local toolchain helpers (python venv, devkitPro installer, etc.)
+tools/
+
+# build output
+build/
+*.elf
+*.cia
+*.3dsx
+*.smdh
+*.bnr
+*.icn
+
+# host preview output
+*.ppm
