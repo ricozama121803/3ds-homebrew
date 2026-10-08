@@ -2,6 +2,16 @@
 
 Nintendo 3DS homebrew games written in C with [devkitPro](https://devkitpro.org/) (libctru + citro2d/citro3d). Each project also has a small PC-side harness for rendering preview frames and running logic tests without a console.
 
+## Grand Theft Otto
+
+| | |
+| --- | --- |
+| ![Downtown](docs/gto-downtown.png) | ![Night](docs/gto-night.png) |
+| ![Helicopter](docs/gto-helicopter.png) | ![Shootout](docs/gto-shootout.png) |
+| ![Hollywood](docs/gto-hollywood.png) | ![Hollywood sign](docs/gto-hollywood-sign.png) |
+
+*Frames from the PC preview renderer (`grand-theft-otto/host/preview3d.sh`), which rasterises the same triangles the 3DS draws. The top-screen HUD is not shown.*
+
 ## Projects
 
 | Folder | What it is |
