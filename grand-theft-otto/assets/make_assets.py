@@ -28,14 +28,25 @@ def star(d, cx, cy, r, fill):
         pts.append((cx + math.cos(a) * rr, cy + math.sin(a) * rr))
     d.polygon(pts, fill=fill, outline=BLACK)
 
-# ---- icon
-icon = street_scene(48, 48, 1).crop((0, 8, 48, 56)).convert("RGBA")
+# ---- icon: bold GTO lettering on a night-city gradient
+icon = Image.new("RGBA", (48, 48))
 d = ImageDraw.Draw(icon)
-d.ellipse([10, 22, 40, 44], fill=(176, 16, 28, 210))                        # blood splat
-for (x, y) in [(6, 28), (42, 24), (36, 12)]: d.ellipse([x, y, x + 4, y + 4], fill=(190, 20, 30, 230))
-sprite = G("player_1_2").resize((40, 40), Image.NEAREST)
-icon.alpha_composite(sprite, (4, 4))
-for i in range(3): star(d, 10 + i * 12, 40, 5, (255, 220, 60, 255))
+for y in range(48):
+    t = y / 47
+    d.line([(0, y), (47, y)], fill=(int(22 + 200 * t * t), int(30 + 60 * t * t), int(70 - 30 * t), 255))
+for x0, w, h in [(2, 7, 18), (11, 6, 26), (19, 8, 14), (30, 6, 22), (38, 8, 30)]:         # skyline
+    d.rectangle([x0, 48 - h, x0 + w, 48], fill=(14, 16, 30, 255))
+    for wy in range(48 - h + 3, 46, 5):
+        for wx in range(x0 + 1, x0 + w, 3): d.point((wx, wy), fill=(255, 210, 110, 255))
+fp = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+f = ImageFont.truetype(fp, 18) if os.path.exists(fp) else ImageFont.load_default()
+tw = d.textlength("GTO", font=f)
+x, y = (48 - tw) / 2, 9
+for ox in range(-2, 3):
+    for oy in range(-2, 3): d.text((x + ox, y + oy), "GTO", font=f, fill=BLACK)
+d.text((x, y), "GTO", font=f, fill=ORANGE)
+d.text((x, y - 1), "GTO", font=f, fill=(255, 190, 90, 255))
+for i in range(3): star(d, 14 + i * 10, 41, 4, (255, 220, 60, 255))
 icon.convert("RGB").save(os.path.join(HERE, "icon.png"))
 
 # ---- banner
