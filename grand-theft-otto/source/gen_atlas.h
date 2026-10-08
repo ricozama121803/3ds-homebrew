@@ -2,8 +2,8 @@
 #pragma once
 #include <stdint.h>
 
-#define NTILES 203
-#define IMG_COUNT 645
+#define NTILES 214
+#define IMG_COUNT 798
 #define F_SOLID 1
 #define F_BUILDING 2
 #define F_TREE 4
@@ -34,248 +34,275 @@
 #define TILE_COURT0 19
 #define TILE_SPRAY_PAD 20
 #define TILE_ROAD 21
-#define TILE_ROAD_HY_B 22
-#define TILE_ROAD_HY_T 23
-#define TILE_ROAD_HW_B 24
-#define TILE_ROAD_HW_T 25
-#define TILE_ROAD_VY_R 26
-#define TILE_ROAD_VY_L 27
-#define TILE_ROAD_VW_R 28
-#define TILE_ROAD_VW_L 29
-#define TILE_CW_V 30
-#define TILE_CW_H 31
-#define TILE_PARKING_V 32
-#define TILE_PARKING_H 33
-#define TILE_FW 34
-#define TILE_FW_DASH_L 35
-#define TILE_FW_DASH_R 36
-#define TILE_FW_EDGE_L 37
-#define TILE_FW_EDGE_R 38
-#define TILE_FW_BARRIER 39
-#define TILE_FW_EDGE_T 40
-#define TILE_FW_EDGE_B 41
-#define TILE_FW_DASH_T 42
-#define TILE_FW_DASH_B 43
-#define TILE_FW_BARRIER_H 44
-#define TILE_RAIL_H 45
-#define TILE_RAIL_V 46
-#define TILE_RAIL_X_V 47
-#define TILE_RAIL_X_H 48
-#define TILE_RUNWAY 49
-#define TILE_RUNWAY_DASH 50
-#define TILE_OCEAN0 51
-#define TILE_OCEAN1 52
-#define TILE_WATER0 53
-#define TILE_WATER1 54
-#define TILE_STREAM 55
-#define TILE_POOL0 56
-#define TILE_ROOF_GRAY0 57
-#define TILE_ROOF_GRAY1 58
-#define TILE_ROOF_GRAY2 59
-#define TILE_ROOF_GRAY3 60
-#define TILE_ROOF_TAN0 61
-#define TILE_ROOF_TAN1 62
-#define TILE_ROOF_TAN2 63
-#define TILE_ROOF_TAN3 64
-#define TILE_ROOF_BROWN0 65
-#define TILE_ROOF_BROWN1 66
-#define TILE_ROOF_BROWN2 67
-#define TILE_ROOF_BROWN3 68
-#define TILE_ROOF_RED0 69
-#define TILE_ROOF_RED1 70
-#define TILE_ROOF_RED2 71
-#define TILE_ROOF_RED3 72
-#define TILE_ROOF_BLUE0 73
-#define TILE_ROOF_BLUE1 74
-#define TILE_ROOF_BLUE2 75
-#define TILE_ROOF_BLUE3 76
-#define TILE_ROOF_TEAL0 77
-#define TILE_ROOF_TEAL1 78
-#define TILE_ROOF_TEAL2 79
-#define TILE_ROOF_TEAL3 80
-#define TILE_ROOF_WHITE0 81
-#define TILE_ROOF_WHITE1 82
-#define TILE_ROOF_WHITE2 83
-#define TILE_ROOF_WHITE3 84
-#define TILE_ROOF_DARK0 85
-#define TILE_ROOF_DARK1 86
-#define TILE_ROOF_DARK2 87
-#define TILE_ROOF_DARK3 88
-#define TILE_ROOF_GREEN0 89
-#define TILE_ROOF_GREEN1 90
-#define TILE_ROOF_GREEN2 91
-#define TILE_ROOF_GREEN3 92
-#define TILE_ROOF_ORANGE0 93
-#define TILE_ROOF_ORANGE1 94
-#define TILE_ROOF_ORANGE2 95
-#define TILE_ROOF_ORANGE3 96
-#define TILE_ROOF_THEATRE 97
-#define TILE_ROOF_GARAGE 98
-#define TILE_ROOF_POLICE 99
-#define TILE_ROOF_STATION 100
-#define TILE_STAND 101
-#define TILE_HOSP_0 102
-#define TILE_HOSP_1 103
-#define TILE_HOSP_2 104
-#define TILE_HOSP_3 105
-#define TILE_HOSP_4 106
-#define TILE_HOSP_5 107
-#define TILE_HOSP_6 108
-#define TILE_HOSP_7 109
-#define TILE_HOSP_8 110
-#define TILE_TOWER_GLASS0 111
-#define TILE_TOWER_GLASS1 112
-#define TILE_TOWER_DARK0 113
-#define TILE_TOWER_DARK1 114
-#define TILE_TOWER_STONE0 115
-#define TILE_TOWER_STONE1 116
-#define TILE_OBS_0 117
-#define TILE_OBS_1 118
-#define TILE_OBS_2 119
-#define TILE_OBS_3 120
-#define TILE_OBS_4 121
-#define TILE_OBS_5 122
-#define TILE_OBS_6 123
-#define TILE_OBS_7 124
-#define TILE_OBS_8 125
-#define TILE_FERRIS_0 126
-#define TILE_FERRIS_1 127
-#define TILE_FERRIS_2 128
-#define TILE_FERRIS_3 129
-#define TILE_FERRIS_4 130
-#define TILE_FERRIS_5 131
-#define TILE_FERRIS_6 132
-#define TILE_FERRIS_7 133
-#define TILE_FERRIS_8 134
-#define TILE_FERRIS_9 135
-#define TILE_FERRIS_10 136
-#define TILE_FERRIS_11 137
-#define TILE_FERRIS_12 138
-#define TILE_FERRIS_13 139
-#define TILE_FERRIS_14 140
-#define TILE_FERRIS_15 141
-#define TILE_FIELD0 142
-#define TILE_FIELD1 143
-#define TILE_TRACK 144
-#define TILE_TREE0 145
-#define TILE_TREE1 146
-#define TILE_PALM 147
-#define TILE_BUSH 148
-#define TILE_HSIGN_0_0 149
-#define TILE_HSIGN_0_1 150
-#define TILE_HSIGN_0_2 151
-#define TILE_HSIGN_0_3 152
-#define TILE_HSIGN_0_4 153
-#define TILE_HSIGN_0_5 154
-#define TILE_HSIGN_0_6 155
-#define TILE_HSIGN_0_7 156
-#define TILE_HSIGN_0_8 157
-#define TILE_HSIGN_0_9 158
-#define TILE_HSIGN_0_10 159
-#define TILE_HSIGN_0_11 160
-#define TILE_HSIGN_0_12 161
-#define TILE_HSIGN_0_13 162
-#define TILE_HSIGN_0_14 163
-#define TILE_HSIGN_0_15 164
-#define TILE_HSIGN_0_16 165
-#define TILE_HSIGN_0_17 166
-#define TILE_HSIGN_1_0 167
-#define TILE_HSIGN_1_1 168
-#define TILE_HSIGN_1_2 169
-#define TILE_HSIGN_1_3 170
-#define TILE_HSIGN_1_4 171
-#define TILE_HSIGN_1_5 172
-#define TILE_HSIGN_1_6 173
-#define TILE_HSIGN_1_7 174
-#define TILE_HSIGN_1_8 175
-#define TILE_HSIGN_1_9 176
-#define TILE_HSIGN_1_10 177
-#define TILE_HSIGN_1_11 178
-#define TILE_HSIGN_1_12 179
-#define TILE_HSIGN_1_13 180
-#define TILE_HSIGN_1_14 181
-#define TILE_HSIGN_1_15 182
-#define TILE_HSIGN_1_16 183
-#define TILE_HSIGN_1_17 184
-#define TILE_HSIGN_2_0 185
-#define TILE_HSIGN_2_1 186
-#define TILE_HSIGN_2_2 187
-#define TILE_HSIGN_2_3 188
-#define TILE_HSIGN_2_4 189
-#define TILE_HSIGN_2_5 190
-#define TILE_HSIGN_2_6 191
-#define TILE_HSIGN_2_7 192
-#define TILE_HSIGN_2_8 193
-#define TILE_HSIGN_2_9 194
-#define TILE_HSIGN_2_10 195
-#define TILE_HSIGN_2_11 196
-#define TILE_HSIGN_2_12 197
-#define TILE_HSIGN_2_13 198
-#define TILE_HSIGN_2_14 199
-#define TILE_HSIGN_2_15 200
-#define TILE_HSIGN_2_16 201
-#define TILE_HSIGN_2_17 202
+#define TILE_ROAD1 22
+#define TILE_ROAD2 23
+#define TILE_ROAD_HY_B 24
+#define TILE_ROAD_HY_T 25
+#define TILE_ROAD_HW_B 26
+#define TILE_ROAD_HW_T 27
+#define TILE_ROAD_VY_R 28
+#define TILE_ROAD_VY_L 29
+#define TILE_ROAD_VW_R 30
+#define TILE_ROAD_VW_L 31
+#define TILE_CW_V 32
+#define TILE_CW_H 33
+#define TILE_PARKING_V 34
+#define TILE_PARKING_H 35
+#define TILE_FW 36
+#define TILE_FW_DASH_L 37
+#define TILE_FW_DASH_R 38
+#define TILE_FW_EDGE_L 39
+#define TILE_FW_EDGE_R 40
+#define TILE_FW_BARRIER 41
+#define TILE_FW_EDGE_T 42
+#define TILE_FW_EDGE_B 43
+#define TILE_FW_DASH_T 44
+#define TILE_FW_DASH_B 45
+#define TILE_FW_BARRIER_H 46
+#define TILE_RAIL_H 47
+#define TILE_RAIL_V 48
+#define TILE_RAIL_X_V 49
+#define TILE_RAIL_X_H 50
+#define TILE_RUNWAY 51
+#define TILE_RUNWAY_DASH 52
+#define TILE_OCEAN0 53
+#define TILE_OCEAN1 54
+#define TILE_WATER0 55
+#define TILE_WATER1 56
+#define TILE_STREAM 57
+#define TILE_POOL0 58
+#define TILE_ROOF_GRAY0 59
+#define TILE_ROOF_GRAY1 60
+#define TILE_ROOF_GRAY2 61
+#define TILE_ROOF_GRAY3 62
+#define TILE_ROOF_TAN0 63
+#define TILE_ROOF_TAN1 64
+#define TILE_ROOF_TAN2 65
+#define TILE_ROOF_TAN3 66
+#define TILE_ROOF_BROWN0 67
+#define TILE_ROOF_BROWN1 68
+#define TILE_ROOF_BROWN2 69
+#define TILE_ROOF_BROWN3 70
+#define TILE_ROOF_RED0 71
+#define TILE_ROOF_RED1 72
+#define TILE_ROOF_RED2 73
+#define TILE_ROOF_RED3 74
+#define TILE_ROOF_BLUE0 75
+#define TILE_ROOF_BLUE1 76
+#define TILE_ROOF_BLUE2 77
+#define TILE_ROOF_BLUE3 78
+#define TILE_ROOF_TEAL0 79
+#define TILE_ROOF_TEAL1 80
+#define TILE_ROOF_TEAL2 81
+#define TILE_ROOF_TEAL3 82
+#define TILE_ROOF_WHITE0 83
+#define TILE_ROOF_WHITE1 84
+#define TILE_ROOF_WHITE2 85
+#define TILE_ROOF_WHITE3 86
+#define TILE_ROOF_DARK0 87
+#define TILE_ROOF_DARK1 88
+#define TILE_ROOF_DARK2 89
+#define TILE_ROOF_DARK3 90
+#define TILE_ROOF_GREEN0 91
+#define TILE_ROOF_GREEN1 92
+#define TILE_ROOF_GREEN2 93
+#define TILE_ROOF_GREEN3 94
+#define TILE_ROOF_ORANGE0 95
+#define TILE_ROOF_ORANGE1 96
+#define TILE_ROOF_ORANGE2 97
+#define TILE_ROOF_ORANGE3 98
+#define TILE_ROOF_THEATRE 99
+#define TILE_ROOF_GARAGE 100
+#define TILE_ROOF_POLICE 101
+#define TILE_ROOF_STATION 102
+#define TILE_STAND 103
+#define TILE_HOSP_0 104
+#define TILE_HOSP_1 105
+#define TILE_HOSP_2 106
+#define TILE_HOSP_3 107
+#define TILE_HOSP_4 108
+#define TILE_HOSP_5 109
+#define TILE_HOSP_6 110
+#define TILE_HOSP_7 111
+#define TILE_HOSP_8 112
+#define TILE_PAD_0 113
+#define TILE_PAD_1 114
+#define TILE_PAD_2 115
+#define TILE_PAD_3 116
+#define TILE_PAD_4 117
+#define TILE_PAD_5 118
+#define TILE_PAD_6 119
+#define TILE_PAD_7 120
+#define TILE_PAD_8 121
+#define TILE_TOWER_GLASS0 122
+#define TILE_TOWER_GLASS1 123
+#define TILE_TOWER_DARK0 124
+#define TILE_TOWER_DARK1 125
+#define TILE_TOWER_STONE0 126
+#define TILE_TOWER_STONE1 127
+#define TILE_OBS_0 128
+#define TILE_OBS_1 129
+#define TILE_OBS_2 130
+#define TILE_OBS_3 131
+#define TILE_OBS_4 132
+#define TILE_OBS_5 133
+#define TILE_OBS_6 134
+#define TILE_OBS_7 135
+#define TILE_OBS_8 136
+#define TILE_FERRIS_0 137
+#define TILE_FERRIS_1 138
+#define TILE_FERRIS_2 139
+#define TILE_FERRIS_3 140
+#define TILE_FERRIS_4 141
+#define TILE_FERRIS_5 142
+#define TILE_FERRIS_6 143
+#define TILE_FERRIS_7 144
+#define TILE_FERRIS_8 145
+#define TILE_FERRIS_9 146
+#define TILE_FERRIS_10 147
+#define TILE_FERRIS_11 148
+#define TILE_FERRIS_12 149
+#define TILE_FERRIS_13 150
+#define TILE_FERRIS_14 151
+#define TILE_FERRIS_15 152
+#define TILE_FIELD0 153
+#define TILE_FIELD1 154
+#define TILE_TRACK 155
+#define TILE_TREE0 156
+#define TILE_TREE1 157
+#define TILE_PALM 158
+#define TILE_BUSH 159
+#define TILE_HSIGN_0_0 160
+#define TILE_HSIGN_0_1 161
+#define TILE_HSIGN_0_2 162
+#define TILE_HSIGN_0_3 163
+#define TILE_HSIGN_0_4 164
+#define TILE_HSIGN_0_5 165
+#define TILE_HSIGN_0_6 166
+#define TILE_HSIGN_0_7 167
+#define TILE_HSIGN_0_8 168
+#define TILE_HSIGN_0_9 169
+#define TILE_HSIGN_0_10 170
+#define TILE_HSIGN_0_11 171
+#define TILE_HSIGN_0_12 172
+#define TILE_HSIGN_0_13 173
+#define TILE_HSIGN_0_14 174
+#define TILE_HSIGN_0_15 175
+#define TILE_HSIGN_0_16 176
+#define TILE_HSIGN_0_17 177
+#define TILE_HSIGN_1_0 178
+#define TILE_HSIGN_1_1 179
+#define TILE_HSIGN_1_2 180
+#define TILE_HSIGN_1_3 181
+#define TILE_HSIGN_1_4 182
+#define TILE_HSIGN_1_5 183
+#define TILE_HSIGN_1_6 184
+#define TILE_HSIGN_1_7 185
+#define TILE_HSIGN_1_8 186
+#define TILE_HSIGN_1_9 187
+#define TILE_HSIGN_1_10 188
+#define TILE_HSIGN_1_11 189
+#define TILE_HSIGN_1_12 190
+#define TILE_HSIGN_1_13 191
+#define TILE_HSIGN_1_14 192
+#define TILE_HSIGN_1_15 193
+#define TILE_HSIGN_1_16 194
+#define TILE_HSIGN_1_17 195
+#define TILE_HSIGN_2_0 196
+#define TILE_HSIGN_2_1 197
+#define TILE_HSIGN_2_2 198
+#define TILE_HSIGN_2_3 199
+#define TILE_HSIGN_2_4 200
+#define TILE_HSIGN_2_5 201
+#define TILE_HSIGN_2_6 202
+#define TILE_HSIGN_2_7 203
+#define TILE_HSIGN_2_8 204
+#define TILE_HSIGN_2_9 205
+#define TILE_HSIGN_2_10 206
+#define TILE_HSIGN_2_11 207
+#define TILE_HSIGN_2_12 208
+#define TILE_HSIGN_2_13 209
+#define TILE_HSIGN_2_14 210
+#define TILE_HSIGN_2_15 211
+#define TILE_HSIGN_2_16 212
+#define TILE_HSIGN_2_17 213
 
-#define IMG_EDGE_N 203
-#define IMG_EDGE_E 204
-#define IMG_EDGE_S 205
-#define IMG_EDGE_W 206
-#define IMG_CANOPY0 207
-#define IMG_CANOPY1 208
-#define IMG_PALMTOP 209
-#define IMG_SHADOW 210
-#define IMG_MINIMAP 644
-#define IMG_PLAYER_BASE 211
+#define IMG_EDGE_N 214
+#define IMG_EDGE_E 215
+#define IMG_EDGE_S 216
+#define IMG_EDGE_W 217
+#define IMG_CANOPY0 218
+#define IMG_CANOPY1 219
+#define IMG_PALMTOP 220
+#define IMG_SHADOW 221
+#define IMG_MINIMAP 797
+#define IMG_PLAYER_BASE 334
 #define IMG_PLAYER(frame, dir) (IMG_PLAYER_BASE + (frame) * 16 + (dir))
 #define DIRS 16
 #define WALK_FRAMES 4
 #define PED_DIRS 8
 #define PED_FRAMES 2
 
-#define NCARVARS 11
-#define IMG_CAR_BASE 275
+#define NCARVARS 12
+#define IMG_CAR_BASE 398
 #define IMG_CAR(var, dir) (IMG_CAR_BASE + (var) * 16 + (dir))
-__attribute__((unused)) static const uint8_t carvar_model[NCARVARS] = {0,0,1,1,1,2,2,3,4,5,6};
+__attribute__((unused)) static const uint8_t carvar_model[NCARVARS] = {0,0,1,1,1,2,2,3,4,5,6,7};
 #define NPEDTYPES 8
-#define IMG_PED_BASE 451
+#define IMG_PED_BASE 590
 #define IMG_PED(t, f, dir) (IMG_PED_BASE + ((t) * 2 + (f)) * 8 + (dir))
-#define IMG_CORPSE_BASE 579
+#define IMG_GUN_BASE 222
+#define IMG_GUN(w, k) (IMG_GUN_BASE + ((w) - 1) * 16 + (k))
+#define IMG_CORPSE_BASE 718
 #define IMG_CORPSE(t, k) (IMG_CORPSE_BASE + (t) * 4 + (k))
-#define IMG_MUZZLE 611
-#define IMG_BULLET 612
-#define IMG_SPARK 613
-#define IMG_BLOOD_DOT 614
-#define IMG_GLOW_RED 615
-#define IMG_GLOW_BLUE 616
-#define IMG_SHADOW_CAR 617
-#define IMG_STAIN0 618
-#define IMG_STAIN1 619
-#define IMG_STAIN2 620
-#define IMG_STAIN3 621
-#define IMG_BOOM0 622
-#define IMG_BOOM1 623
-#define IMG_BOOM2 624
-#define IMG_BOOM3 625
-#define IMG_BOOM4 626
-#define IMG_BOOM5 627
-#define IMG_SMOKE0 628
-#define IMG_SMOKE1 629
-#define IMG_SMOKE2 630
-#define IMG_FIRE0 631
-#define IMG_FIRE1 632
-#define IMG_FIRE2 633
-#define IMG_PK_HEALTH 634
-#define IMG_PK_ARMOR 635
-#define IMG_PK_PISTOL 636
-#define IMG_PK_SMG 637
-#define IMG_PK_SHOTGUN 638
-#define IMG_PK_CASH 639
-#define IMG_IC_FISTS 640
-#define IMG_IC_PISTOL 641
-#define IMG_IC_SMG 642
-#define IMG_IC_SHOTGUN 643
+#define IMG_MUZZLE 750
+#define IMG_BULLET 751
+#define IMG_SPARK 752
+#define IMG_BLOOD_DOT 753
+#define IMG_GLOW_RED 754
+#define IMG_GLOW_BLUE 755
+#define IMG_SHADOW_CAR 756
+#define IMG_STAIN0 757
+#define IMG_STAIN1 758
+#define IMG_STAIN2 759
+#define IMG_STAIN3 760
+#define IMG_BOOM0 761
+#define IMG_BOOM1 762
+#define IMG_BOOM2 763
+#define IMG_BOOM3 764
+#define IMG_BOOM4 765
+#define IMG_BOOM5 766
+#define IMG_SMOKE0 767
+#define IMG_SMOKE1 768
+#define IMG_SMOKE2 769
+#define IMG_FIRE0 770
+#define IMG_FIRE1 771
+#define IMG_FIRE2 772
+#define IMG_PK_HEALTH 773
+#define IMG_PK_ARMOR 774
+#define IMG_PK_PISTOL 775
+#define IMG_PK_SMG 776
+#define IMG_PK_SHOTGUN 777
+#define IMG_PK_CASH 778
+#define IMG_PK_RIFLE 779
+#define IMG_PK_MG 780
+#define IMG_PK_SNIPER 781
+#define IMG_PK_RPG 782
+#define IMG_PK_AMMO 783
+#define IMG_ROCKET 784
+#define IMG_ROTOR0 785
+#define IMG_ROTOR1 786
+#define IMG_ROTOR2 787
+#define IMG_ROTOR3 788
+#define IMG_IC_FISTS 789
+#define IMG_IC_PISTOL 790
+#define IMG_IC_SMG 791
+#define IMG_IC_SHOTGUN 792
+#define IMG_IC_RIFLE 793
+#define IMG_IC_MG 794
+#define IMG_IC_SNIPER 795
+#define IMG_IC_RPG 796
 
-__attribute__((unused)) static const uint8_t tile_flags[NTILES] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,64,16,16,16,16,16,16,16,16,16,16,16,0,0,16,16,16,16,16,1,16,16,16,16,1,0,0,16,16,16,0,9,9,9,9,8,9,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,35,35,35,35,35,35,3,3,3,3,3,3,3,3,3,35,35,35,35,35,35,35,35,35,35,35,35,35,35,35,35,0,0,0,5,5,5,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1};
+__attribute__((unused)) static const uint8_t tile_flags[NTILES] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,64,16,16,16,16,16,16,16,16,16,16,16,16,16,0,0,16,16,16,16,16,1,16,16,16,16,1,0,0,16,16,16,0,9,9,9,9,8,9,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,0,0,0,0,0,0,0,0,0,35,35,35,35,35,35,3,3,3,3,3,3,3,3,3,35,35,35,35,35,35,35,35,35,35,35,35,35,35,35,35,0,0,0,5,5,5,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1};
 
 #ifdef HOST_PREVIEW
 __attribute__((unused)) static const char *const atlas_names[IMG_COUNT] = {
@@ -301,6 +328,8 @@ __attribute__((unused)) static const char *const atlas_names[IMG_COUNT] = {
 	"court0",
 	"spray_pad",
 	"road",
+	"road1",
+	"road2",
 	"road_hy_b",
 	"road_hy_t",
 	"road_hw_b",
@@ -390,6 +419,15 @@ __attribute__((unused)) static const char *const atlas_names[IMG_COUNT] = {
 	"hosp_6",
 	"hosp_7",
 	"hosp_8",
+	"pad_0",
+	"pad_1",
+	"pad_2",
+	"pad_3",
+	"pad_4",
+	"pad_5",
+	"pad_6",
+	"pad_7",
+	"pad_8",
 	"tower_glass0",
 	"tower_glass1",
 	"tower_dark0",
@@ -490,6 +528,118 @@ __attribute__((unused)) static const char *const atlas_names[IMG_COUNT] = {
 	"canopy1",
 	"palmtop",
 	"shadow",
+	"gun_1_0",
+	"gun_1_1",
+	"gun_1_2",
+	"gun_1_3",
+	"gun_1_4",
+	"gun_1_5",
+	"gun_1_6",
+	"gun_1_7",
+	"gun_1_8",
+	"gun_1_9",
+	"gun_1_10",
+	"gun_1_11",
+	"gun_1_12",
+	"gun_1_13",
+	"gun_1_14",
+	"gun_1_15",
+	"gun_2_0",
+	"gun_2_1",
+	"gun_2_2",
+	"gun_2_3",
+	"gun_2_4",
+	"gun_2_5",
+	"gun_2_6",
+	"gun_2_7",
+	"gun_2_8",
+	"gun_2_9",
+	"gun_2_10",
+	"gun_2_11",
+	"gun_2_12",
+	"gun_2_13",
+	"gun_2_14",
+	"gun_2_15",
+	"gun_3_0",
+	"gun_3_1",
+	"gun_3_2",
+	"gun_3_3",
+	"gun_3_4",
+	"gun_3_5",
+	"gun_3_6",
+	"gun_3_7",
+	"gun_3_8",
+	"gun_3_9",
+	"gun_3_10",
+	"gun_3_11",
+	"gun_3_12",
+	"gun_3_13",
+	"gun_3_14",
+	"gun_3_15",
+	"gun_4_0",
+	"gun_4_1",
+	"gun_4_2",
+	"gun_4_3",
+	"gun_4_4",
+	"gun_4_5",
+	"gun_4_6",
+	"gun_4_7",
+	"gun_4_8",
+	"gun_4_9",
+	"gun_4_10",
+	"gun_4_11",
+	"gun_4_12",
+	"gun_4_13",
+	"gun_4_14",
+	"gun_4_15",
+	"gun_5_0",
+	"gun_5_1",
+	"gun_5_2",
+	"gun_5_3",
+	"gun_5_4",
+	"gun_5_5",
+	"gun_5_6",
+	"gun_5_7",
+	"gun_5_8",
+	"gun_5_9",
+	"gun_5_10",
+	"gun_5_11",
+	"gun_5_12",
+	"gun_5_13",
+	"gun_5_14",
+	"gun_5_15",
+	"gun_6_0",
+	"gun_6_1",
+	"gun_6_2",
+	"gun_6_3",
+	"gun_6_4",
+	"gun_6_5",
+	"gun_6_6",
+	"gun_6_7",
+	"gun_6_8",
+	"gun_6_9",
+	"gun_6_10",
+	"gun_6_11",
+	"gun_6_12",
+	"gun_6_13",
+	"gun_6_14",
+	"gun_6_15",
+	"gun_7_0",
+	"gun_7_1",
+	"gun_7_2",
+	"gun_7_3",
+	"gun_7_4",
+	"gun_7_5",
+	"gun_7_6",
+	"gun_7_7",
+	"gun_7_8",
+	"gun_7_9",
+	"gun_7_10",
+	"gun_7_11",
+	"gun_7_12",
+	"gun_7_13",
+	"gun_7_14",
+	"gun_7_15",
 	"player_0_0",
 	"player_0_1",
 	"player_0_2",
@@ -730,6 +880,22 @@ __attribute__((unused)) static const char *const atlas_names[IMG_COUNT] = {
 	"car_10_13",
 	"car_10_14",
 	"car_10_15",
+	"car_11_0",
+	"car_11_1",
+	"car_11_2",
+	"car_11_3",
+	"car_11_4",
+	"car_11_5",
+	"car_11_6",
+	"car_11_7",
+	"car_11_8",
+	"car_11_9",
+	"car_11_10",
+	"car_11_11",
+	"car_11_12",
+	"car_11_13",
+	"car_11_14",
+	"car_11_15",
 	"ped_0_0_0",
 	"ped_0_0_1",
 	"ped_0_0_2",
@@ -919,10 +1085,24 @@ __attribute__((unused)) static const char *const atlas_names[IMG_COUNT] = {
 	"pk_smg",
 	"pk_shotgun",
 	"pk_cash",
+	"pk_rifle",
+	"pk_mg",
+	"pk_sniper",
+	"pk_rpg",
+	"pk_ammo",
+	"rocket",
+	"rotor0",
+	"rotor1",
+	"rotor2",
+	"rotor3",
 	"ic_fists",
 	"ic_pistol",
 	"ic_smg",
 	"ic_shotgun",
+	"ic_rifle",
+	"ic_mg",
+	"ic_sniper",
+	"ic_rpg",
 	"minimap",
 };
 #endif

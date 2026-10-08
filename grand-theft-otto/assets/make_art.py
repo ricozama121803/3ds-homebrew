@@ -66,9 +66,33 @@ for i in range(2):
 
 ASPH = (72, 74, 80)
 YEL, WHT = (240, 200, 40, 255), (232, 232, 226, 255)
-images["road"] = tile(ASPH, "road", 4)
+def asphalt(name, kind=0):
+    """Worn city asphalt: grain, lighter tyre-polished streaks, then (kind 1) cracks or (kind 2) an oil stain and a manhole cover."""
+    im = tile(ASPH, name, 5)
+    r = rng("asph" + name)
+    for _ in range(26):                                                      # coarse speckle
+        x, y = r.randint(0, 15), r.randint(0, 15)
+        im.putpixel((x, y), shade(ASPH, r.choice([-14, -10, 12, 16])) + (255,))
+    for x in (4, 11):                                                        # tyre tracks
+        for y in range(16):
+            if r.random() < 0.7: im.putpixel((x, y), shade(ASPH, 7) + (255,))
+    if kind == 1:
+        x, y = r.randint(2, 12), 0
+        for y in range(16):
+            im.putpixel((x, y), shade(ASPH, -34) + (255,))
+            x = max(1, min(14, x + r.choice([-1, 0, 0, 1])))
+    if kind == 2:
+        for (cx, cy, rad) in [(5, 5, 3), (7, 6, 2), (10, 4, 2)]:
+            for yy in range(16):
+                for xx in range(16):
+                    if (xx - cx) ** 2 + (yy - cy) ** 2 <= rad * rad: im.putpixel((xx, yy), shade(ASPH, -20) + (255,))
+        for yy in range(9, 14):
+            for xx in range(9, 14):
+                if (xx - 11.5) ** 2 + (yy - 11.5) ** 2 <= 6.2: im.putpixel((xx, yy), shade(ASPH, 26 if (xx + yy) % 2 else -6) + (255,))
+    return im
+images["road"] = asphalt("road"); images["road1"] = asphalt("road1", 1); images["road2"] = asphalt("road2", 2)
 def road_line(name, y0, y1, col, dashed=False):
-    im = tile(ASPH, name, 4)
+    im = asphalt(name)
     for y in range(y0, y1 + 1):
         for x in range(16):
             if dashed and (x // 4) % 2: continue
@@ -80,7 +104,7 @@ images["road_hw_b"] = road_line("hw_b", 14, 14, WHT, True)
 images["road_hw_t"] = road_line("hw_t", 1, 1, WHT, True)
 for a, b in [("road_vy_r", "road_hy_b"), ("road_vy_l", "road_hy_t"), ("road_vw_r", "road_hw_b"), ("road_vw_l", "road_hw_t")]:
     images[a] = images[b].transpose(Image.TRANSPOSE)
-cw = tile(ASPH, "cw", 3)
+cw = asphalt("cw")
 for x in range(16):
     if x % 4 < 2:
         for y in range(16): cw.putpixel((x, y), WHT)
@@ -485,11 +509,30 @@ for t, (jc, hc, sk, sh_) in enumerate(PEDS):
 
 # ------------------------------------------------------------------ cars (seen from above, drawn facing UP, then pre-rotated)
 CS = 38
-CAR_DIMS = {0: (12, 22), 1: (13, 26), 2: (13, 25), 3: (15, 30), 4: (13, 26), 5: (13, 26), 6: (15, 30)}
+CAR_DIMS = {0: (12, 22), 1: (13, 26), 2: (13, 25), 3: (15, 30), 4: (13, 26), 5: (13, 26), 6: (15, 30), 7: (14, 30)}
 CAR_COLORS = {(0, 0): (214, 54, 54), (0, 1): (64, 120, 210), (1, 0): (238, 238, 240), (1, 1): (150, 158, 170), (1, 2): (44, 58, 100),
-              (2, 0): (250, 208, 40), (2, 1): (34, 34, 40), (3, 0): (236, 236, 238), (4, 0): (248, 198, 30), (5, 0): (28, 28, 34), (6, 0): (54, 58, 68)}
+              (2, 0): (250, 208, 40), (2, 1): (34, 34, 40), (3, 0): (236, 236, 238), (4, 0): (248, 198, 30), (5, 0): (28, 28, 34), (6, 0): (54, 58, 68), (7, 0): (214, 218, 226)}
 GLASS = (36, 48, 70)
+def heli_master(body):
+    """A helicopter seen from above, nose up, rotor mast at the centre of the canvas (the rotor is a separate sprite)."""
+    im = Image.new("RGBA", (CS * S, CS * S)); d = ImageDraw.Draw(im); c = CS / 2
+    def rr(x0, y0, x1, y1, fill, rad=0.8):
+        d.rounded_rectangle([(c + x0) * S, (c + y0) * S, (c + x1) * S, (c + y1) * S], radius=rad * S, fill=fill)
+    def ell(x0, y0, x1, y1, fill): d.ellipse([(c + x0) * S, (c + y0) * S, (c + x1) * S, (c + y1) * S], fill=fill)
+    for sx in (-1, 1):                                                           # skids
+        rr(sx * 6.2 - 0.6, -9.0, sx * 6.2 + 0.6, 5.0, BLK, 0.5)
+        rr(sx * 3.4 - 2.8, -4.0, sx * 3.4 + 2.8, -3.2, (40, 40, 46), 0.2); rr(sx * 3.4 - 2.8, 2.0, sx * 3.4 + 2.8, 2.8, (40, 40, 46), 0.2)
+    rr(-1.4, 4.0, 1.4, 17.0, BLK, 0.8); rr(-0.9, 4.0, 0.9, 16.4, shade(body, -50), 0.6)       # tail boom
+    rr(-3.4, 14.4, 3.4, 17.2, BLK, 0.6); rr(-2.9, 14.9, 2.9, 16.7, (200, 40, 40), 0.4)         # tail fin
+    ell(-6.4, -12.8, 6.4, 7.4, BLK)                                                            # fuselage outline
+    ell(-5.6, -12.0, 5.6, 6.6, body)
+    ell(-4.4, -11.0, 4.4, -3.4, (52, 96, 150)); ell(-3.4, -10.4, 1.0, -6.0, (150, 200, 240))   # cockpit glass + glint
+    rr(-5.2, -1.0, 5.2, 0.6, (214, 56, 56), 0.3)                                               # stripe
+    rr(-1.6, 1.0, 1.6, 5.0, shade(body, -26), 0.8)                                             # engine cowl
+    ell(-1.3, -1.3, 1.3, 1.3, (30, 32, 38))                                                    # rotor hub
+    return im
 def car_master(model, body):
+    if model == 7: return heli_master(body)
     w, l = CAR_DIMS[model]
     im = Image.new("RGBA", (CS * S, CS * S)); d = ImageDraw.Draw(im); c = CS / 2
     def rr(x0, y0, x1, y1, fill, rad=0.8):
@@ -609,6 +652,83 @@ def ic_fists(d):
 hud_icon("ic_fists", ic_fists)
 for kind in ("pistol", "smg", "shotgun"): hud_icon(f"ic_{kind}", lambda d, k=kind: gun_icon(d, k, (255, 255, 255, 255), 4, 0))
 
+
+# ------------------------------------------------------------------ held weapons (drawn in the player's hands, 16 directions)
+GUNC = {"metal": (176, 180, 190), "dark": (74, 78, 88), "wood": (166, 112, 66), "olive": (96, 112, 70), "skin": (238, 190, 150), "lens": (120, 200, 255)}
+def gun_master(w, with_hands=True):
+    """weapon w (1 pistol .. 7 rpg) drawn barrel-up on an S-times supersampled U x U canvas; the muzzle is near the top edge."""
+    im = Image.new("RGBA", (U * S, U * S)); d = ImageDraw.Draw(im); c = U / 2
+    def r(x0, y0, x1, y1, fill, ol=True):
+        x0, x1 = x0 * 1.6, x1 * 1.6                              # chunky, so it reads at 3DS size
+        if ol: d.rectangle([(c + x0 - 0.55) * S, (c + y0 - 0.55) * S, (c + x1 + 0.55) * S, (c + y1 + 0.55) * S], fill=(8, 8, 12, 255))
+        d.rectangle([(c + x0) * S, (c + y0) * S, (c + x1) * S, (c + y1) * S], fill=fill + (255,))
+    G = GUNC
+    if w == 1:                                                    # pistol
+        r(-1.0, -11, 1.0, -4.5, G["metal"]); r(-0.9, -4.5, 0.9, -1.5, G["dark"])
+        hands = [(0, -2.5)]
+    elif w == 2:                                                  # SMG
+        r(-1.3, -11, 1.3, -3, G["metal"]); r(-0.8, -3, 0.8, 1.5, G["dark"]); r(-0.7, -11.6, 0.7, -10, G["dark"], False)
+        hands = [(0, -4.5), (0, -1)]
+    elif w == 3:                                                  # shotgun
+        r(-0.8, -11, 0.8, -1, G["metal"]); r(-1.3, -8, 1.3, -5, G["wood"]); r(-1.2, -1, 1.2, 4, G["wood"])
+        hands = [(0, -6.5), (0, 0)]
+    elif w == 4:                                                  # assault rifle
+        r(-0.6, -11, 0.6, -6, G["metal"]); r(-1.2, -6, 1.2, -0.5, G["dark"]); r(-0.8, -4, 0.8, 1.5, G["metal"]); r(-1.1, -0.5, 1.1, 4.5, G["wood"])
+        hands = [(0, -5), (0, 0.5)]
+    elif w == 5:                                                  # machine gun
+        r(-0.9, -11, 0.9, -7, G["dark"]); r(-1.7, -7, 1.7, 0, G["metal"]); r(1.7, -5, 4.0, -0.5, G["olive"]); r(-1.2, 0, 1.2, 4, G["dark"])
+        r(-3.2, -9, -2.2, -6, G["dark"], False)
+        hands = [(0, -6), (0, 0)]
+    elif w == 6:                                                  # sniper rifle
+        r(-0.5, -11.4, 0.5, -3, G["metal"]); r(-1.1, -3, 1.1, 3, G["olive"]); r(-0.8, -7, 0.8, -3.6, G["dark"]); d.rectangle([(c - 0.5) * S, (c - 7.4) * S, (c + 0.5) * S, (c - 6.6) * S], fill=G["lens"] + (255,))
+        r(-1.0, 3, 1.0, 7, G["wood"])
+        hands = [(0, -2), (0, 2)]
+    else:                                                         # RPG: olive tube, red-tipped rocket
+        r(-1.4, -8, 1.4, 3, G["olive"]); d.polygon([((c - 1.9) * S, (c - 8) * S), ((c + 1.9) * S, (c - 8) * S), (c * S, (c - 11.8) * S)], fill=(8, 8, 12, 255))
+        d.polygon([((c - 1.3) * S, (c - 8.3) * S), ((c + 1.3) * S, (c - 8.3) * S), (c * S, (c - 11) * S)], fill=(214, 60, 52, 255))
+        r(-1.9, 3, 1.9, 4.6, G["dark"]); r(-0.6, -2, 0.6, 2, G["dark"], False)
+        hands = [(0, -4), (0, 1)]
+    for (hx, hy) in (hands if with_hands else []):
+        d.ellipse([(c + hx - 1.5) * S, (c + hy - 1.5) * S, (c + hx + 1.5) * S, (c + hy + 1.5) * S], fill=(8, 8, 12, 255))
+        d.ellipse([(c + hx - 1.1) * S, (c + hy - 1.1) * S, (c + hx + 1.1) * S, (c + hy + 1.1) * S], fill=G["skin"] + (255,))
+    return im
+GUN_MASTERS = {w: gun_master(w) for w in range(1, ts.GUNS + 1)}
+for w, master in GUN_MASTERS.items():
+    for k in range(ts.DIRS): images[f"gun_{w}_{k}"] = rotate_small(master, k, ts.DIRS, U)
+GUN_NAMES = {1: "pistol", 2: "smg", 3: "shotgun", 4: "rifle", 5: "mg", 6: "sniper", 7: "rpg"}
+def gun_side(w):
+    """the weapon lying on its side (muzzle to the right), trimmed, for HUD icons and pickups"""
+    side = gun_master(w, False).rotate(-90, resample=Image.BICUBIC).resize((U * 2, U * 2), Image.LANCZOS)
+    return side.crop(side.getbbox())
+for w, kind in GUN_NAMES.items():
+    g = gun_side(w)
+    ic = Image.new("RGBA", (32, 20)); gi = g.copy(); gi.thumbnail((28, 14), Image.LANCZOS); ic.alpha_composite(gi, ((32 - gi.width) // 2, (20 - gi.height) // 2)); images[f"ic_{kind}"] = hard_alpha(ic, 90)
+    pk = Image.new("RGBA", (18, 18)); d = ImageDraw.Draw(pk); d.ellipse([2, 2, 17, 17], fill=(0, 0, 0, 90)); d.ellipse([1, 1, 16, 16], fill=(250, 232, 120, 255), outline=BLK)
+    gi = g.copy(); gi.thumbnail((13, 9), Image.LANCZOS); pk.alpha_composite(hard_alpha(gi, 90), (1 + (16 - gi.width) // 2, 1 + (16 - gi.height) // 2)); images[f"pk_{kind}"] = pk
+# ammo crate pickup
+pk = Image.new("RGBA", (18, 18)); d = ImageDraw.Draw(pk); d.ellipse([2, 2, 17, 17], fill=(0, 0, 0, 90))
+d.rectangle([2, 4, 15, 14], fill=(96, 110, 70, 255), outline=BLK); d.rectangle([2, 7, 15, 8], fill=(60, 70, 44, 255))
+for x in (4, 7, 10, 13): d.rectangle([x, 9, x + 1, 12], fill=(240, 200, 70, 255))
+images["pk_ammo"] = pk
+im = blank(8, 8); d = ImageDraw.Draw(im); d.ellipse([2, 2, 9, 9], fill=(255, 140, 40, 255)); d.ellipse([4, 4, 7, 7], fill=(255, 245, 190, 255)); images["rocket"] = im
+for k in range(4):                                                              # helicopter rotor: translucent disc + four blades, 4 phases
+    N = 40; big = Image.new("RGBA", (N * S, N * S)); d = ImageDraw.Draw(big); c = N * S / 2
+    d.ellipse([c - 18.5 * S, c - 18.5 * S, c + 18.5 * S, c + 18.5 * S], fill=(210, 220, 230, 46))
+    for j in range(4):
+        a = k * math.pi / 8 + j * math.pi / 2
+        d.line([(c, c), (c + math.cos(a) * 18 * S, c + math.sin(a) * 18 * S)], fill=(28, 30, 36, 235), width=int(1.7 * S))
+    d.ellipse([c - 2 * S, c - 2 * S, c + 2 * S, c + 2 * S], fill=(60, 64, 72, 255), outline=(8, 8, 12, 255), width=S // 2)
+    images[f"rotor{k}"] = big.resize((N, N), Image.LANCZOS)
+# helipad (3x3 tiles): concrete, yellow ring, white H
+big = Image.new("RGBA", (48, 48)); r_ = rng("pad")
+for y in range(48):
+    for x in range(48): big.putpixel((x, y), shade((112, 116, 122), r_.randint(-4, 4)) + (255,))
+d = ImageDraw.Draw(big)
+d.ellipse([3, 3, 44, 44], outline=(244, 204, 40, 255), width=3)
+d.rectangle([14, 13, 17, 34], fill=(240, 240, 244, 255)); d.rectangle([30, 13, 33, 34], fill=(240, 240, 244, 255)); d.rectangle([14, 22, 33, 25], fill=(240, 240, 244, 255))
+for (x, y) in [(0, 0), (45, 0), (0, 45), (45, 45)]: d.rectangle([x, y, x + 2, y + 2], fill=(244, 204, 40, 255))
+for i in range(9): images[f"pad_{i}"] = big.crop(((i % 3) * 16, (i // 3) * 16, (i % 3) * 16 + 16, (i // 3) * 16 + 16))
+
 # ------------------------------------------------------------------ Pay 'n' Spray pad
 im = tile((92, 52, 128), "spray", 3)
 d = ImageDraw.Draw(im); d.rectangle([0, 0, 15, 15], outline=(236, 220, 250, 255))
@@ -639,6 +759,7 @@ with open(os.path.join(HERE, "..", "source", "gen_atlas.h"), "w") as f:
     f.write(f"#define NCARVARS {len(ts.CARVARS)}\n#define IMG_CAR_BASE {ts.IMG_INDEX['car_0_0']}\n#define IMG_CAR(var, dir) (IMG_CAR_BASE + (var) * {ts.DIRS} + (dir))\n")
     f.write("__attribute__((unused)) static const uint8_t carvar_model[NCARVARS] = {" + ",".join(str(m) for m, _ in ts.CARVARS) + "};\n")
     f.write(f"#define NPEDTYPES {ts.PEDTYPES}\n#define IMG_PED_BASE {ts.IMG_INDEX['ped_0_0_0']}\n#define IMG_PED(t, f, dir) (IMG_PED_BASE + ((t) * {ts.PED_FRAMES} + (f)) * {ts.PED_DIRS} + (dir))\n")
+    f.write(f"#define IMG_GUN_BASE {ts.IMG_INDEX['gun_1_0']}\n#define IMG_GUN(w, k) (IMG_GUN_BASE + ((w) - 1) * {ts.DIRS} + (k))\n")
     f.write(f"#define IMG_CORPSE_BASE {ts.IMG_INDEX['corpse_0_0']}\n#define IMG_CORPSE(t, k) (IMG_CORPSE_BASE + (t) * 4 + (k))\n")
     for n in ts.EFFECTS: f.write(f"#define IMG_{n.upper()} {ts.IMG_INDEX[n]}\n")
     f.write("\n")

@@ -10,6 +10,10 @@ const WeaponDef weapon_defs[W_COUNT] = {
 	{"Pistol",  22.0f, 0.28f, 0.035f, 420.0f, 0.50f, 1, 200},
 	{"SMG",     11.0f, 0.085f, 0.11f, 440.0f, 0.50f, 1, 500},
 	{"Shotgun", 14.0f, 0.85f, 0.22f,  380.0f, 0.26f, 5,  60},
+	{"Assault Rifle", 17.0f, 0.105f, 0.055f, 540.0f, 0.62f, 1, 400},
+	{"Machine Gun", 13.0f, 0.052f, 0.10f, 500.0f, 0.55f, 1, 900},
+	{"Sniper Rifle", 95.0f, 1.05f, 0.0f, 950.0f, 0.95f, 1, 40},
+	{"RPG",     45.0f, 1.30f, 0.0f,  270.0f, 1.70f, 1, 12},
 };
 
 // ---------------------------------------------------------------- effects
@@ -83,6 +87,8 @@ void damage_player(Game *g, float dmg, float dx, float dy)
 {
 	Player *p = &g->p;
 	if (p->status != PL_ALIVE) return;
+	dmg *= 0.45f;                                  // Otto is tougher than he looks
+	p->calmT = 0;
 	if (p->armor > 0) {
 		float absorb = fminf(p->armor, dmg * 0.6f);
 		p->armor -= absorb; dmg -= absorb;
@@ -127,6 +133,29 @@ void damage_car(Game *g, int i, float dmg, int source)
 	if (c->hp <= 0) explode_car(g, i);
 }
 
+// a rocket going off: hurts everything near it, more the closer it is
+void blast(Game *g, float x, float y, float R, float maxdmg, int owner)
+{
+	fx_boom(g, x, y);
+	for (int k = 0; k < MAX_PEDS; k++) {
+		Ped *p = &g->peds[k];
+		if (!p->active || p->state == PS_DEAD) continue;
+		float dx = p->x - x, dy = p->y - y, d = sqrtf(dx * dx + dy * dy);
+		if (d < R) damage_ped(g, k, maxdmg * (1.0f - d / R) * 1.4f, dx, dy, owner == 0 ? 0 : 2);
+	}
+	if (g->p.status == PL_ALIVE && g->p.car < 0) {
+		float dx = g->p.x - x, dy = g->p.y - y, d = sqrtf(dx * dx + dy * dy);
+		if (d < R) damage_player(g, maxdmg * 0.7f * (1.0f - d / R), dx, dy);
+	}
+	for (int k = 0; k < MAX_CARS; k++) {
+		Car *o = &g->cars[k];
+		if (!o->active || o->state == CS_WRECK || (owner == 0 && o->state == CS_PLAYER)) continue;      // your own rocket doesn't hurt your own ride
+		float dx = o->x - x, dy = o->y - y, d = sqrtf(dx * dx + dy * dy);
+		if (d < R + 10) { if (owner == 0) o->hitT = 6.0f; damage_car(g, k, maxdmg * 1.3f * (1.0f - d / (R + 10)), owner == 0 ? 3 : 2); }
+	}
+	if (owner == 0) add_heat(g, 1.0f);
+}
+
 void explode_car(Game *g, int i)
 {
 	Car *c = &g->cars[i];
@@ -134,6 +163,7 @@ void explode_car(Game *g, int i)
 	bool byPlayer = c->hitT > 0 || c->state == CS_PLAYER;
 	Driver drv = c->driver;
 	bool playerInside = (c->state == CS_PLAYER);
+	c->alt = 0;
 	c->hp = 0; c->state = CS_WRECK; c->wreckT = 0; c->burnT = 12.0f; c->driver = DRV_NONE;
 	c->vx *= 0.3f; c->vy *= 0.3f; c->throttle = c->brake = c->steer = 0;
 	fx_boom(g, c->x, c->y);
@@ -148,8 +178,9 @@ void explode_car(Game *g, int i)
 	if (playerInside) {
 		Player *p = &g->p;
 		p->car = -1; p->x = c->x; p->y = c->y; p->vx = p->vy = 0;
-		damage_player(g, 45.0f, 0, -1);
-		popup(g, "Your car blew up!", 0xFF60C0FF);
+		bool fell = c->model == M_HELI && c->alt > 0.5f;
+		damage_player(g, fell ? 190.0f : 45.0f, 0, -1);
+		popup(g, c->model == M_HELI ? "Your helicopter went down!" : "Your car blew up!", 0xFF60C0FF);
 	} else if (g->p.status == PL_ALIVE && g->p.car < 0) {
 		float dx = g->p.x - c->x, dy = g->p.y - c->y, d = sqrtf(dx * dx + dy * dy);
 		if (d < R) damage_player(g, 75.0f * (1.0f - d / R), dx, dy);
@@ -172,7 +203,7 @@ void spawn_bullet(Game *g, float x, float y, float ang, const WeaponDef *w, int 
 		if (b->active) continue;
 		b->active = true; b->x = x; b->y = y;
 		b->vx = sinf(ang) * w->speed; b->vy = -cosf(ang) * w->speed;
-		b->life = w->life; b->owner = owner; b->dmg = w->dmg * dmgmul;
+		b->life = w->life; b->owner = owner; b->dmg = w->dmg * dmgmul; b->rocket = (w == &weapon_defs[W_RPG]);
 		return;
 	}
 }
@@ -214,7 +245,7 @@ void bullets_update(Game *g, float dt)
 			if (dead) break;
 			for (int k = 0; k < MAX_CARS && !dead; k++) {
 				Car *c = &g->cars[k];
-				if (!c->active || (b->owner == 1 && c->state == CS_CHASE)) continue;
+				if (!c->active || (b->owner == 1 && c->state == CS_CHASE) || (b->owner == 0 && c->state == CS_PLAYER)) continue;
 				float cx[3], cy[3], r;
 				car_circles(c, cx, cy, &r);
 				for (int m = 0; m < 3; m++) {
@@ -227,7 +258,35 @@ void bullets_update(Game *g, float dt)
 			}
 		}
 		b->life -= dt;
-		if (dead || b->life <= 0) b->active = false;
+		if (b->rocket && b->active && !dead) fx_part(g, P_SMOKE, b->x - b->vx * 0.02f, b->y - b->vy * 0.02f, g_rndf(g, -6, 6), g_rndf(g, -6, 6), 0.5f, g_rndi(g, 2));
+		if (dead || b->life <= 0) {
+			b->active = false;
+			if (b->rocket) blast(g, b->x, b->y, 64.0f, 170.0f, b->owner);
+		}
+	}
+}
+
+// ---------------------------------------------------------------- the helicopter's weapons: L = nose guns, X = rocket
+void heli_fire(Game *g, const Input *in, float dt)
+{
+	Player *p = &g->p;
+	Car *c = &g->cars[p->car];
+	c->fireT -= dt; p->fireT -= dt;
+	if (c->alt < 0.6f || p->status != PL_ALIVE) return;
+	float fx = sinf(c->heading), fy = -cosf(c->heading), rx = cosf(c->heading), ry = sinf(c->heading);
+	if (in->l && p->fireT <= 0) {
+		p->fireT = 0.07f;
+		float side = ((int)(g->time * 14.0f) & 1) ? 4.5f : -4.5f;
+		float ox = c->x + fx * 15.0f + rx * side, oy = c->y + fy * 15.0f + ry * side;
+		spawn_bullet(g, ox, oy, c->heading + g_rndf(g, -0.04f, 0.04f), &weapon_defs[W_MG], 0, 1.1f);
+		fx_part(g, P_MUZZLE, ox + fx * 3.0f, oy + fy * 3.0f, 0, 0, 0.05f, 0);
+		add_heat(g, 0.04f);
+	}
+	if (in->x_p && c->fireT <= 0) {
+		c->fireT = 1.1f;
+		spawn_bullet(g, c->x + fx * 16.0f, c->y + fy * 16.0f, c->heading, &weapon_defs[W_RPG], 0, 1.0f);
+		for (int k = 0; k < 4; k++) fx_part(g, P_SMOKE, c->x + fx * 12.0f, c->y + fy * 12.0f, g_rndf(g, -25, 25), g_rndf(g, -25, 25), 0.5f, g_rndi(g, 3));
+		add_heat(g, 0.8f);
 	}
 }
 
@@ -251,7 +310,7 @@ void player_fire(Game *g, const Input *in, float dt)
 		Ped *q = &g->peds[k];
 		if (!q->active || q->state == PS_DEAD) continue;
 		float dx = q->x - p->x, dy = q->y - p->y, d = sqrtf(dx * dx + dy * dy);
-		float range = p->weapon == W_FISTS ? 26.0f : 150.0f;
+		float range = p->weapon == W_FISTS ? 26.0f : p->weapon == W_SNIPER ? 300.0f : p->weapon == W_RPG ? 220.0f : 150.0f;
 		if (d > range || d < 1) continue;
 		float diff = fabsf(wrap_pi(angle_to(dx, dy) - p->heading));
 		if (diff > 0.75f) continue;
@@ -276,7 +335,12 @@ void player_fire(Game *g, const Input *in, float dt)
 		float a = aim + g_rndf(g, -w->spread, w->spread);
 		spawn_bullet(g, p->x + fx * 8.0f, p->y + fy * 8.0f, a, w, 0, 1.0f);
 	}
-	fx_part(g, P_MUZZLE, p->x + fx * 11.0f, p->y + fy * 11.0f, 0, 0, 0.05f, 0);
+	{
+		float tip = p->weapon == W_PISTOL ? 12.0f : p->weapon == W_SMG ? 13.0f : p->weapon == W_SNIPER || p->weapon == W_RPG ? 17.0f : 15.0f;
+		fx_part(g, P_MUZZLE, p->x + fx * tip, p->y + fy * tip, 0, 0, 0.07f, 0);
+		if (p->weapon != W_PISTOL && p->weapon != W_SMG) fx_part(g, P_MUZZLE, p->x + fx * (tip + 4.0f), p->y + fy * (tip + 4.0f), 0, 0, 0.05f, 0);
+		if (p->weapon == W_RPG) for (int k = 0; k < 4; k++) fx_part(g, P_SMOKE, p->x - fx * 8.0f, p->y - fy * 8.0f, -fx * g_rndf(g, 20, 60) + g_rndf(g, -15, 15), -fy * g_rndf(g, 20, 60) + g_rndf(g, -15, 15), 0.6f, g_rndi(g, 3));
+	}
 	// gunfire in front of witnesses is a crime
 	for (int k = 0; k < MAX_PEDS; k++) {
 		Ped *q = &g->peds[k];
@@ -284,7 +348,7 @@ void player_fire(Game *g, const Input *in, float dt)
 		float dx = q->x - p->x, dy = q->y - p->y;
 		if (dx * dx + dy * dy < 170.0f * 170.0f) {
 			if (q->kind == PK_CIV) { q->state = PS_FLEE; q->stateT = g_rndf(g, 4.0f, 7.0f); q->threatX = p->x; q->threatY = p->y; }
-			add_heat(g, p->weapon == W_SHOTGUN ? 0.3f : 0.1f);
+			add_heat(g, p->weapon == W_SHOTGUN || p->weapon == W_SNIPER ? 0.3f : p->weapon == W_RPG ? 1.2f : 0.1f);
 			break;
 		}
 	}

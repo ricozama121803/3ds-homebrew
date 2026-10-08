@@ -2,8 +2,8 @@
 #pragma once
 #include "world.h"
 
-#define NAV_W 160
-#define NAV_H 160
+#define NAV_W 256
+#define NAV_H 256
 #define NAV_CELLS (NAV_W * NAV_H)
 
 // A flow field: distance (in tiles) from a source tile, built a few hundred cells per frame so it never causes a hitch.

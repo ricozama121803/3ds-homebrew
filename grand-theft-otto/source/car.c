@@ -14,6 +14,7 @@ const CarDef car_defs[M_COUNT] = {
 	{26.0f, 13.0f, 185.0f, 235.0f, 2.6f, 1.2f, 110.0f},   // taxi
 	{26.0f, 13.0f, 240.0f, 315.0f, 2.8f, 1.3f, 130.0f},   // police
 	{30.0f, 15.0f, 205.0f, 255.0f, 2.2f, 2.2f, 240.0f},   // SWAT van
+	{26.0f, 14.0f, 235.0f, 190.0f, 2.4f, 2.0f, 170.0f},   // helicopter
 };
 
 static int variant_of_model(int model, int pick)
@@ -94,10 +95,12 @@ void car_remove(Game *g, int i)
 }
 
 // ---------------------------------------------------------------- physics
+static void heli_move(Game *g, int i, float dt);
 static void car_move(Game *g, int i, float dt)
 {
 	Car *c = &g->cars[i];
 	const CarDef *d = &car_defs[c->model];
+	if (c->model == M_HELI) { heli_move(g, i, dt); return; }
 
 	// steering first, then split the (unchanged) velocity into forward and sideways parts of the new heading: that's what makes drifts
 	float fx = sinf(c->heading), fy = -cosf(c->heading);
@@ -162,6 +165,40 @@ static void car_move(Game *g, int i, float dt)
 					}
 				}
 		}
+	}
+}
+
+// ---------------------------------------------------------------- helicopters
+// Flight ignores buildings entirely. Circle Pad left/right turns, A pushes forward, B brakes. Y lands (and gets out once down).
+static void heli_move(Game *g, int i, float dt)
+{
+	Car *c = &g->cars[i];
+	const CarDef *d = &car_defs[M_HELI];
+	if (c->state != CS_PLAYER) {                                       // parked on its pad, or a burning wreck
+		c->alt = 0; c->vx *= expf(-4.0f * dt); c->vy *= expf(-4.0f * dt);
+		c->x += c->vx * dt; c->y += c->vy * dt;
+		return;
+	}
+	float target = c->landing ? 0.0f : 1.0f;
+	c->alt += clampf(target - c->alt, -dt / 1.3f, dt / 1.3f);
+	bool airborne = c->alt > 0.35f;
+	if (airborne) c->heading = wrap_pi(c->heading + c->steer * d->steer * dt);
+	float fx = sinf(c->heading), fy = -cosf(c->heading), rx = cosf(c->heading), ry = sinf(c->heading);
+	float vf = c->vx * fx + c->vy * fy, vr = c->vx * rx + c->vy * ry;
+	if (airborne) {
+		if (c->throttle > 0) vf += d->accel * c->throttle * dt * (1.0f - clampf(vf / d->maxspeed, 0, 1));
+		if (c->brake > 0) vf -= d->accel * (vf > 0 ? 1.5f : -0.25f) * c->brake * dt;
+		vf = fmaxf(vf, -0.3f * d->maxspeed);
+		if (c->throttle <= 0 && c->brake <= 0) vf *= expf(-0.8f * dt);
+		vr *= expf(-2.5f * dt);
+	} else { vf *= expf(-4.0f * dt); vr *= expf(-4.0f * dt); }
+	c->vx = fx * vf + rx * vr; c->vy = fy * vf + ry * vr;
+	c->x = clampf(c->x + c->vx * dt, 10.0f, g->world.w * (float)TILE - 10.0f);
+	c->y = clampf(c->y + c->vy * dt, 10.0f, g->world.h * (float)TILE - 10.0f);
+	if (c->landing && c->alt <= 0.02f) {
+		c->alt = 0;
+		if (world_blocked(&g->world, c->x, c->y, 6.0f)) { c->landing = false; popup(g, "No room to land here", 0xFF60C0FF); }
+		else player_use(g);                                              // touched down: Otto climbs out
 	}
 }
 
@@ -234,7 +271,7 @@ static float obstacle_ahead(const Game *g, int self, float reach, float halfwidt
 	float fx = sinf(c->heading), fy = -cosf(c->heading), best = 999.0f;
 	for (int j = 0; j < MAX_CARS; j++) {
 		const Car *o = &g->cars[j];
-		if (!o->active || j == self) continue;
+		if (!o->active || j == self || (o->model == M_HELI && o->alt > 0.2f)) continue;
 		float dx = o->x - c->x, dy = o->y - c->y;
 		float along = dx * fx + dy * fy;
 		float lat = dx * cosf(c->heading) + dy * sinf(c->heading);
@@ -338,6 +375,7 @@ static void ai_chase(Game *g, int i, float dt)
 static void car_vs_car(Game *g, int i, int j)
 {
 	Car *a = &g->cars[i], *b = &g->cars[j];
+	if (a->model == M_HELI || b->model == M_HELI) return;               // helicopters don't bump into traffic
 	float ax[3], ay[3], ar, bx[3], by[3], br;
 	car_circles(a, ax, ay, &ar); car_circles(b, bx, by, &br);
 	float bestpen = 0, nx = 0, ny = 0;
@@ -378,7 +416,7 @@ static void car_vs_people(Game *g, int i)
 {
 	Car *c = &g->cars[i];
 	float v = speed_of(c);
-	if (v < 22.0f) return;
+	if (v < 22.0f || c->state != CS_PLAYER || c->model == M_HELI) return;       // traffic and police cars steer round people; only the player runs them over
 	float cx[3], cy[3], r;
 	car_circles(c, cx, cy, &r);
 	int src = c->state == CS_PLAYER ? 3 : 2;
@@ -539,7 +577,7 @@ void spawn_traffic_car(Game *g)
 void spawn_cop_car(Game *g)
 {
 	float x, y, h; int r, hf, ln;
-	if (!random_lane_spot(g, 230.0f, 380.0f, &x, &y, &h, &r, &hf, &ln)) return;
+	if (!random_lane_spot(g, 380.0f, 520.0f, &x, &y, &h, &r, &hf, &ln)) return;
 	bool swat = g->stars >= 4 && g_rndi(g, 3) == 0;
 	int model = swat ? M_SWAT : M_POLICE;
 	if (!car_area_free(g, x, y, h, model, -1)) return;
@@ -568,6 +606,24 @@ static void update_parked(Game *g)
 	}
 }
 
+// a helicopter waits on every helipad (it comes back once Otto has wandered off)
+static void update_helis(Game *g)
+{
+	for (int s = 0; s < NHELIPADS; s++) {
+		float x = helipads[s].tx * (float)TILE + 8.0f, y = helipads[s].ty * (float)TILE + 8.0f;
+		float dx = x - g->p.x, dy = y - g->p.y, d2 = dx * dx + dy * dy;
+		if (d2 < 140.0f * 140.0f || d2 > 420.0f * 420.0f) continue;
+		bool taken = false;
+		for (int i = 0; i < MAX_CARS && !taken; i++) {
+			const Car *c = &g->cars[i];
+			if (c->active && (c->x - x) * (c->x - x) + (c->y - y) * (c->y - y) < 26.0f * 26.0f) taken = true;
+		}
+		if (taken) continue;
+		int i = car_spawn(g, variant_of_model(M_HELI, 0), x, y, g_rndf(g, -PI_F, PI_F), CS_PARKED, DRV_NONE);
+		if (i >= 0) return;
+	}
+}
+
 void cars_spawn_logic(Game *g, float dt);
 void cars_spawn_logic(Game *g, float dt)
 {
@@ -578,9 +634,10 @@ void cars_spawn_logic(Game *g, float dt)
 		for (int i = 0; i < MAX_CARS; i++) if (g->cars[i].active) { if (g->cars[i].state == CS_TRAFFIC) traffic++; if (g->cars[i].state == CS_CHASE) chase++; }
 		if (traffic < 11) spawn_traffic_car(g);
 		int want = g->stars >= 5 ? 5 : g->stars >= 4 ? 4 : g->stars >= 3 ? 3 : g->stars >= 2 ? 2 : 0;
-		if (chase < want && g->spawnCopT <= 0) { spawn_cop_car(g); g->spawnCopT = 2.5f; }
+		if (chase < want && g->wantedT > 12.0f && g->spawnCopT <= 0) { spawn_cop_car(g); g->spawnCopT = 5.0f; }
 	}
 	update_parked(g);
+	update_helis(g);
 }
 
 // ---------------------------------------------------------------- the player and cars
@@ -607,6 +664,11 @@ void player_use(Game *g)
 	if (p->status != PL_ALIVE) return;
 	if (p->car >= 0) {                                             // get out
 		Car *c = &g->cars[p->car];
+		if (c->model == M_HELI && c->alt > 0.02f) {                  // in the air: Y starts the landing (press again to climb back up)
+			c->landing = !c->landing;
+			popup(g, c->landing ? "Landing..." : "Taking off", 0xFF60E0FF);
+			return;
+		}
 		if (speed_of(c) > 130.0f) return;
 		float rx = cosf(c->heading), ry = sinf(c->heading), off = car_defs[c->model].wid * 0.5f + 8.0f;
 		float cand[4][2] = {{c->x - rx * off, c->y - ry * off}, {c->x + rx * off, c->y + ry * off},
@@ -647,6 +709,7 @@ void player_use(Game *g)
 	if (c->spot >= 0 && c->spot < MAX_PARK && g->park_car[c->spot] == i) g->park_car[c->spot] = -1;
 	c->spot = -1;
 	c->state = CS_PLAYER; c->driver = DRV_PLAYER; c->wreckT = 0; c->np = 0;
+	if (c->model == M_HELI) { c->landing = false; popup(g, "Helicopter! A gas, B brake, L gun, X rocket, Y land", 0xFF60E0FF); }
 	p->car = i;
 	p->x = c->x; p->y = c->y;
 }

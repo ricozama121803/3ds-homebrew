@@ -44,13 +44,13 @@ bool los_clear(const Game *g, float x0, float y0, float x1, float y1)
 	return true;
 }
 
-static int stars_for_heat(float h) { return h >= 15 ? 5 : h >= 10 ? 4 : h >= 6 ? 3 : h >= 3 ? 2 : h >= 1 ? 1 : 0; }
+static int stars_for_heat(float h) { return h >= 24 ? 5 : h >= 16 ? 4 : h >= 9 ? 3 : h >= 4 ? 2 : h >= 1.5f ? 1 : 0; }
 
 void add_heat(Game *g, float amount)
 {
 	if (g->p.status != PL_ALIVE) return;
 	int before = g->stars;
-	g->heat = fminf(g->heat + amount, 24.0f);
+	g->heat = fminf(g->heat + amount, 34.0f);
 	g->stars = stars_for_heat(g->heat);
 	g->unseenT = 0;
 	if (g->stars > before) {
@@ -100,7 +100,12 @@ void player_busted(Game *g)
 void game_save_data(const Game *g, SaveData *out)
 {
 	out->cash = g->p.cash;
-	for (int i = 0; i < W_COUNT; i++) { out->has[i] = g->p.has[i]; out->ammo[i] = g->p.ammo[i]; }
+	memset(out, 0, sizeof *out);
+	out->cash = g->p.cash;
+	for (int i = 0; i < W_COUNT; i++) {
+		if (i < 4) { out->has[i] = g->p.has[i]; out->ammo[i] = g->p.ammo[i]; }
+		else { out->has2[i - 4] = g->p.has[i]; out->ammo2[i - 4] = g->p.ammo[i]; }
+	}
 }
 
 bool game_init(Game *g, const uint8_t *map, size_t size, const SaveData *save)
@@ -115,7 +120,11 @@ bool game_init(Game *g, const uint8_t *map, size_t size, const SaveData *save)
 	p->has[W_FISTS] = true; p->has[W_PISTOL] = true; p->ammo[W_PISTOL] = 30; p->weapon = W_PISTOL;
 	if (save) {
 		p->cash = save->cash;
-		for (int i = 0; i < W_COUNT; i++) { if (save->has[i]) { p->has[i] = true; p->ammo[i] = save->ammo[i]; } }
+		for (int i = 0; i < W_COUNT; i++) {
+			bool h = i < 4 ? save->has[i] : save->has2[i - 4];
+			int a = i < 4 ? save->ammo[i] : save->ammo2[i - 4];
+			if (h) { p->has[i] = true; p->ammo[i] = a < 0 ? 0 : a > weapon_defs[i].maxammo ? weapon_defs[i].maxammo : a; }
+		}
 		if (p->ammo[W_PISTOL] < 30) p->ammo[W_PISTOL] = 30;
 	}
 	for (int i = 0; i < MAX_PARK; i++) g->park_car[i] = -1;
@@ -175,9 +184,37 @@ static void player_foot(Game *g, const Input *in, float dt)
 	if (p->moving) p->walkT += speed * dt * 0.1f;
 }
 
+static const int ammo_load[W_COUNT] = {0, 30, 80, 14, 60, 150, 8, 3};      // rounds in one weapon pickup
+static int pickup_weapon(int kind) { return kind >= 2 && kind <= 4 ? kind - 1 : kind >= 6 && kind <= 9 ? kind - 2 : -1; }
+
+// every few seconds a random pickup turns up somewhere near Otto (weapons, ammo, health...), and goes away again if he ignores it
+static void spawn_random_pickup(Game *g)
+{
+	int temps = 0, free_slot = -1;
+	for (int i = 0; i < MAX_PICKUPS; i++) {
+		if (g->pickups[i].active && g->pickups[i].temp && g->pickups[i].kind != 5) temps++;
+		if (!g->pickups[i].active && g->pickups[i].temp && free_slot < 0) free_slot = i;
+		if (!g->pickups[i].active && !g->pickups[i].temp && g->pickups[i].respawnT <= 0 && free_slot < 0 && i >= NPICKUPS) free_slot = i;
+	}
+	if (temps >= 28 || free_slot < 0) return;
+	for (int tries = 0; tries < 12; tries++) {
+		float a = g_rndf(g, 0, 2 * PI_F), d = g_rndf(g, 110.0f, 420.0f);
+		float x = g->p.x + cosf(a) * d, y = g->p.y + sinf(a) * d;
+		int tx = (int)floorf(x / TILE), ty = (int)floorf(y / TILE);
+		if (!ped_tile_ok(&g->world, tx, ty)) continue;
+		int roll = g_rndi(g, 100), kind;
+		if (roll < 26) kind = 10; else if (roll < 38) kind = 0; else if (roll < 44) kind = 1;
+		else { static const int wk[7] = {2, 3, 4, 6, 7, 8, 9}; kind = wk[g_rndi(g, 7)]; }
+		g->pickups[free_slot] = (Pickup){true, tx * (float)TILE + 8.0f, ty * (float)TILE + 8.0f, kind, 0, 0, 55.0f, true};
+		return;
+	}
+}
+
 static void pickups_update(Game *g, float dt)
 {
 	Player *p = &g->p;
+	g->spawnPickT -= dt;
+	if (g->spawnPickT <= 0) { g->spawnPickT = 3.5f; if (p->status == PL_ALIVE) spawn_random_pickup(g); }
 	for (int i = 0; i < MAX_PICKUPS; i++) {
 		Pickup *k = &g->pickups[i];
 		if (!k->active) {
@@ -192,8 +229,19 @@ static void pickups_update(Game *g, float dt)
 		switch (k->kind) {
 		case 0: if (p->hp >= 100) continue; p->hp = fminf(100.0f, p->hp + 50.0f); popup(g, "Health", 0xFF60FF60); break;
 		case 1: if (p->armor >= 100) continue; p->armor = fminf(100.0f, p->armor + 50.0f); popup(g, "Armor", 0xFFFFA060); break;
-		case 2: case 3: case 4: {
-			int w = k->kind - 1, add = w == W_PISTOL ? 30 : w == W_SMG ? 80 : 14;
+		case 10: {                                                  // ammo crate: tops up every gun Otto is carrying
+			bool any = false;
+			for (int w = 1; w < W_COUNT; w++) {
+				if (!p->has[w] || p->ammo[w] >= weapon_defs[w].maxammo) continue;
+				int add = ammo_load[w] * (w == p->weapon ? 2 : 1) / 2 + 1;
+				p->ammo[w] = (int)fminf((float)weapon_defs[w].maxammo, (float)(p->ammo[w] + add)); any = true;
+			}
+			if (!any) continue;
+			popup(g, "Ammo", 0xFFFFE080); g->saveNeeded = true;
+			break;
+		}
+		case 2: case 3: case 4: case 6: case 7: case 8: case 9: {
+			int w = pickup_weapon(k->kind), add = ammo_load[w];
 			p->has[w] = true; p->ammo[w] = (int)fminf((float)weapon_defs[w].maxammo, (float)(p->ammo[w] + add));
 			snprintf(b, sizeof b, "%s +%d", weapon_defs[w].name, add); popup(g, b, 0xFFFFFFFF);
 			if (!(p->ammo[p->weapon] > 0 && p->weapon != W_FISTS)) p->weapon = w;
@@ -203,7 +251,7 @@ static void pickups_update(Game *g, float dt)
 		case 5: p->cash += k->amount; snprintf(b, sizeof b, "+$%d", k->amount); popup(g, b, 0xFF60E060); g->saveNeeded = true; break;
 		}
 		k->active = false;
-		k->respawnT = k->temp ? 0 : 50.0f;
+		k->respawnT = k->temp ? 0 : 35.0f;
 	}
 }
 
@@ -229,7 +277,7 @@ static void wanted_update(Game *g, float dt)
 	g->cops_see = seen;
 	if (g->stars > 0 && p->status == PL_ALIVE) {
 		if (seen) g->unseenT = 0; else g->unseenT += dt;
-		if (g->unseenT > 5.0f) {
+		if (g->unseenT > 5.0f && g->wantedT > 14.0f) {                  // the heat only cools once the cops have had their chance to turn up
 			int before = g->stars;
 			g->heat = fmaxf(0, g->heat - 0.30f * dt);
 			g->stars = stars_for_heat(g->heat);
@@ -284,10 +332,12 @@ static void police_spawning(Game *g, float dt)
 		if (q->kind == PK_CIV) civ++; else if (q->kind == PK_COP) foot++; else swat++;
 	}
 	if (g->spawnPedT <= 0) { g->spawnPedT = 0.5f; if (civ < 20) spawn_civilian(g); }
-	if (g->stars > 0 && g->p.status == PL_ALIVE && g->spawnCopT <= 0) {
-		static const int foot_target[6] = {0, 3, 4, 4, 5, 6};
-		if (foot < foot_target[g->stars]) { spawn_cop_foot(g, false); g->spawnCopT = 1.2f; }
-		else if (g->stars >= 4 && swat < 2) { spawn_cop_foot(g, true); g->spawnCopT = 2.0f; }
+	if (g->stars > 0 && g->p.status == PL_ALIVE) g->wantedT += dt; else g->wantedT = 0;
+	static const float response[6] = {0, 20.0f, 14.0f, 9.0f, 6.0f, 4.0f};     // seconds before the first cops show up
+	if (g->stars > 0 && g->p.status == PL_ALIVE && g->wantedT > response[g->stars] && g->spawnCopT <= 0) {
+		static const int foot_target[6] = {0, 2, 3, 4, 5, 6};
+		if (foot < foot_target[g->stars]) { spawn_cop_foot(g, false); g->spawnCopT = 3.5f; }
+		else if (g->stars >= 4 && swat < 2) { spawn_cop_foot(g, true); g->spawnCopT = 5.0f; }
 	}
 }
 
@@ -310,9 +360,10 @@ static void fields_update(Game *g, float dt)
 // ---------------------------------------------------------------- HUD buttons on the touch screen (layout shared with render.c)
 static bool hit_weapon_button(float tx, float ty, int *w)
 {
-	static const float bx[4] = {238, 278, 238, 278}, by[4] = {96, 96, 126, 126};
-	for (int i = 0; i < 4; i++)
-		if (tx >= bx[i] && tx < bx[i] + 38 && ty >= by[i] && ty < by[i] + 26) { *w = i; return true; }
+	for (int i = 0; i < W_COUNT; i++) {
+		float bx = 238 + (i & 1) * 40, by = 94 + (i >> 1) * 16;
+		if (tx >= bx && tx < bx + 38 && ty >= by && ty < by + 15) { *w = i; return true; }
+	}
 	return false;
 }
 
@@ -323,6 +374,7 @@ static void step(Game *g, const Input *in, float dt)
 	if (p->status == PL_ALIVE) {
 		if (p->car >= 0) {
 			player_drive_input(g, in);
+			if (g->cars[p->car].model == M_HELI) heli_fire(g, in, dt);
 			if (in->y_p) player_use(g);
 		} else {
 			player_foot(g, in, dt);
@@ -391,6 +443,8 @@ void game_update(Game *g, const Input *in, float dt)
 	for (int i = 0; i < MAX_POPUPS; i++) if (g->popups[i].t > 0) g->popups[i].t -= dt;
 	g->flashT = fmaxf(0, g->flashT - dt);
 	if (p->hurtT > 0) p->hurtT -= dt;
+	p->calmT += dt;
+	if (p->status == PL_ALIVE && p->calmT > 5.0f && p->hp < 100.0f) p->hp = fminf(100.0f, p->hp + 1.6f * dt);      // slow natural healing once nobody has hurt him for a while
 	int tx = (int)floorf(p->x / TILE), ty = (int)floorf(p->y / TILE);
 	int z = game_zone_at(tx, ty);
 	if (z != g->zone) { g->zone = z; g->zoneT = 3.0f; }

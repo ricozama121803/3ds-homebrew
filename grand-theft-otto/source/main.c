@@ -18,7 +18,9 @@ static bool load_save(SaveData *sd)
 {
 	FILE *f = fopen(SAVE_FILE, "rb");
 	if (!f) return false;
-	bool ok = fread(sd, sizeof *sd, 1, f) == 1 && sd->cash >= 0 && sd->cash < 100000000;
+	memset(sd, 0, sizeof *sd);
+	size_t n = fread(sd, 1, sizeof *sd, f);                       // older saves are shorter (fewer weapons): the rest stays zero
+	bool ok = n >= SAVE_V1_SIZE && sd->cash >= 0 && sd->cash < 100000000;
 	fclose(f);
 	return ok;
 }

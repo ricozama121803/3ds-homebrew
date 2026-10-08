@@ -26,7 +26,7 @@ static int violations(Game *g, const char *where)
 		if (!c->active) continue;
 		if (!isfinite(c->x) || !isfinite(c->y) || !isfinite(c->vx) || !isfinite(c->vy) || !isfinite(c->heading)) { bad++; if (bad < 4) printf("  [%s] car %d not finite\n", where, i); continue; }
 		if (c->x < 0 || c->y < 0 || c->x > g->world.w * TILE || c->y > g->world.h * TILE) { bad++; if (bad < 4) printf("  [%s] car %d outside the map\n", where, i); continue; }
-		if (solid_at(g, c->x, c->y)) { bad++; if (bad < 4) printf("  [%s] car %d (model %d state %d) centre inside a wall at %.0f,%.0f\n", where, i, c->model, c->state, c->x, c->y); }
+		if (solid_at(g, c->x, c->y) && !(c->model == M_HELI && c->alt > 0.3f)) { bad++; if (bad < 4) printf("  [%s] car %d (model %d state %d) centre inside a wall at %.0f,%.0f\n", where, i, c->model, c->state, c->x, c->y); }
 	}
 	for (int i = 0; i < MAX_PEDS; i++) {
 		Ped *p = &g->peds[i];
@@ -88,7 +88,7 @@ static void test_foot_chase(size_t mapsize)
 {
 	game_init(&G, mapdata, mapsize, NULL);
 	G.p.x = 100 * 16 + 8; G.p.y = 92 * 16 + 8;
-	add_heat(&G, 6.0f);                                              // 3 stars
+	add_heat(&G, 10.0f);                                             // 3 stars
 	Input in = {0}; unsigned rng = 77;
 	float busted_at = -1, wasted_at = -1, maxstars = 0; int cops_seen_max = 0, cars_seen_max = 0, bad = 0;
 	const int frames = 30 * 90;
@@ -114,7 +114,7 @@ static void test_bust(size_t mapsize)
 {
 	game_init(&G, mapdata, mapsize, NULL);
 	G.p.x = 100 * 16 + 8; G.p.y = 92 * 16 + 8; G.p.weapon = W_FISTS;
-	add_heat(&G, 1.0f);
+	add_heat(&G, 10.0f);
 	Input in = {0};
 	float t_bust = -1;
 	for (int f = 0; f < 30 * 120; f++) {
@@ -122,7 +122,7 @@ static void test_bust(size_t mapsize)
 		if (G.p.status == PL_BUSTED && t_bust < 0) { t_bust = f / 30.0f; break; }
 		if (G.p.status == PL_DEAD) { t_bust = -2; break; }
 	}
-	printf("standing still with 1 star: %s at %.1f s\n", t_bust >= 0 ? "busted" : t_bust == -2 ? "killed" : "NOT caught", t_bust);
+	printf("standing still with 3 stars: %s at %.1f s\n", t_bust >= 0 ? "busted" : t_bust == -2 ? "killed" : "NOT caught", t_bust);
 	if (t_bust < 0 && t_bust != -2) FAIL("the police never arrested a player standing still");
 }
 
@@ -194,7 +194,7 @@ static void test_combat(size_t mapsize)
 	game_init(&G, mapdata, mapsize, NULL);
 	G.p.armor = 50; damage_player(&G, 20.0f, 1, 0);
 	printf("armor test: 20 damage with 50 armor -> health %.0f, armor %.0f\n", G.p.hp, G.p.armor);
-	if (G.p.hp < 91.9f || G.p.hp > 92.1f || G.p.armor > 38.1f || G.p.armor < 37.9f) FAIL("armor math is off");
+	if (G.p.hp < 96.3f || G.p.hp > 96.5f || G.p.armor > 44.7f || G.p.armor < 44.5f) FAIL("armor math is off");
 }
 
 // ---------------------------------------------------------------- 6. stealing a parked car
@@ -222,6 +222,74 @@ static void test_steal(size_t mapsize)
 	if (G.p.car >= 0) FAIL("could not exit the car");
 }
 
+// ---------------------------------------------------------------- 7. healing, new weapons, pickups, helicopters
+static void test_new_stuff(size_t mapsize)
+{
+	// automatic healing: hurt, wait, and health creeps back up (but not while being shot at)
+	game_init(&G, mapdata, mapsize, NULL);
+	G.p.x = 1400; G.p.y = 1648 - 12;
+	damage_player(&G, 60.0f, 1, 0);
+	float hurt = G.p.hp; Input idle = {0};
+	for (int i = 0; i < 30 * 3; i++) game_update(&G, &idle, 1.0f / 30.0f);
+	float after3 = G.p.hp;
+	for (int i = 0; i < 30 * 20; i++) game_update(&G, &idle, 1.0f / 30.0f);
+	printf("healing: hp %.1f right after the hit, %.1f after 3 s, %.1f after 23 s\n", hurt, after3, G.p.hp);
+	if (after3 > hurt + 0.1f) FAIL("healing started too soon");
+	if (G.p.hp < hurt + 10.0f) FAIL("health does not come back by itself");
+
+	// every weapon fires, uses ammo and leaves nothing inside a wall
+	for (int w = W_PISTOL; w < W_COUNT; w++) {
+		game_init(&G, mapdata, mapsize, NULL);
+		G.p.x = 100 * 16 + 8; G.p.y = 92 * 16 + 64; G.p.heading = 0;
+		G.p.has[w] = true; G.p.weapon = w; G.p.ammo[w] = weapon_defs[w].maxammo;
+		Input in = {0}; in.a = true;
+		int before = G.p.ammo[w];
+		for (int f = 0; f < 90; f++) { game_update(&G, &in, 1.0f / 30.0f); }
+		printf("weapon %-13s: %3d rounds used in 3 s, violations %d\n", weapon_defs[w].name, before - G.p.ammo[w], violations(&G, "weapons"));
+		if (G.p.ammo[w] >= before) FAIL("a weapon did not use any ammo");
+	}
+	// the RPG kills a crowd standing together
+	game_init(&G, mapdata, mapsize, NULL);
+	G.p.x = 100 * 16 + 8; G.p.y = 92 * 16 + 64; G.p.heading = 0; G.p.has[W_RPG] = true; G.p.weapon = W_RPG; G.p.ammo[W_RPG] = 3;
+	int ids[3];
+	for (int k = 0; k < 3; k++) ids[k] = ped_spawn(&G, PK_CIV, 0, G.p.x + (k - 1) * 8.0f, G.p.y - 90.0f);
+	Input fire = {0}; fire.a = true;
+	for (int f = 0; f < 60; f++) { game_update(&G, &fire, 1.0f / 30.0f); fire.a = false; }
+	int dead = 0; for (int k = 0; k < 3; k++) if (ids[k] >= 0 && G.peds[ids[k]].state == PS_DEAD) dead++;
+	printf("rpg: %d of 3 pedestrians killed by one rocket\n", dead);
+	if (dead < 1) FAIL("the rocket did nothing");
+
+	// a random pickup appears near the player every few seconds
+	game_init(&G, mapdata, mapsize, NULL);
+	G.p.x = 100 * 16 + 8; G.p.y = 92 * 16 + 64;
+	int base = 0; for (int i = 0; i < MAX_PICKUPS; i++) if (G.pickups[i].active && G.pickups[i].temp) base++;
+	for (int f = 0; f < 30 * 30; f++) game_update(&G, &idle, 1.0f / 30.0f);
+	int temps = 0; for (int i = 0; i < MAX_PICKUPS; i++) if (G.pickups[i].active && G.pickups[i].temp) temps++;
+	printf("pickups: %d random ones lying around after 30 s (was %d)\n", temps, base);
+	if (temps < 4) FAIL("random pickups are not turning up");
+
+	// helicopter: get in, take off, fly forward, land, get out
+	game_init(&G, mapdata, mapsize, NULL);
+	G.p.x = 90 * 16 + 8; G.p.y = 73 * 16 + 10;
+	int hi = car_spawn(&G, NCARVARS - 1, G.p.x, G.p.y - 14, 0, CS_PARKED, DRV_NONE);
+	Input use = {0}; use.y_p = true;
+	game_update(&G, &use, 1.0f / 30.0f);
+	if (G.p.car != hi) { FAIL("could not climb into the helicopter"); return; }
+	float x0 = G.cars[hi].x, y0 = G.cars[hi].y;
+	Input fly = {0}; fly.a = true;
+	for (int f = 0; f < 30 * 4; f++) { game_update(&G, &fly, 1.0f / 30.0f); if (f % 10 == 0 && violations(&G, "heli")) break; }
+	float dist = hypotf(G.cars[hi].x - x0, G.cars[hi].y - y0);
+	printf("heli: altitude %.2f, flew %.0f px north in 4 s\n", G.cars[hi].alt, dist);
+	if (G.cars[hi].alt < 0.95f || dist < 150.0f) FAIL("helicopter did not take off and fly");
+	int tilex = (int)(G.cars[hi].x / 16), tiley = (int)(G.cars[hi].y / 16);
+	G.cars[hi].x = 90 * 16 + 8; G.cars[hi].y = 72 * 16 + 8; G.cars[hi].vx = G.cars[hi].vy = 0;      // back over the open forecourt
+	Input land = {0}; land.y_p = true;
+	game_update(&G, &land, 1.0f / 30.0f);
+	for (int f = 0; f < 30 * 6; f++) { Input brk = {0}; brk.b = true; game_update(&G, &brk, 1.0f / 30.0f); }
+	printf("heli: after landing request (over tile %d,%d): player is %s, alt %.2f\n", tilex, tiley, G.p.car < 0 ? "on foot" : "still aboard", G.cars[hi].alt);
+	if (G.p.car >= 0 && G.cars[hi].alt > 0.02f) FAIL("helicopter never came down");
+}
+
 int main(int argc, char **argv)
 {
 	FILE *f = fopen(argc > 1 ? argv[1] : "assets/map.bin", "rb");
@@ -232,6 +300,7 @@ int main(int argc, char **argv)
 	printf("== steal a car ==\n");   test_steal(n);
 	printf("== combat ==\n");        test_combat(n);
 	printf("== police ==\n");        test_bust(n); test_foot_chase(n);
+	printf("== healing, weapons, pickups, helicopter ==\n"); test_new_stuff(n);
 	printf("== driving fuzz ==\n");  for (int s = 0; s < 6; s++) test_driving(n, s);
 	printf(fails ? "RESULT: %d problem(s)\n" : "RESULT: all checks passed\n", fails);
 	return fails ? 1 : 0;

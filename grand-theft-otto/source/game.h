@@ -15,17 +15,17 @@
 #define MAX_BULLETS   64
 #define MAX_PARTS     160
 #define MAX_STAINS    80
-#define MAX_PICKUPS   80
+#define MAX_PICKUPS   280
 #define MAX_POPUPS    5
-#define MAX_PARK      160
+#define MAX_PARK      320
 
 // ---------------------------------------------------------------- weapons
-enum { W_FISTS, W_PISTOL, W_SMG, W_SHOTGUN, W_COUNT };
+enum { W_FISTS, W_PISTOL, W_SMG, W_SHOTGUN, W_RIFLE, W_MG, W_SNIPER, W_RPG, W_COUNT };
 typedef struct { const char *name; float dmg, rate, spread, speed, life; int pellets, maxammo; } WeaponDef;
 extern const WeaponDef weapon_defs[W_COUNT];
 
 // ---------------------------------------------------------------- cars
-enum { M_COMPACT, M_SEDAN, M_SPORTS, M_VAN, M_TAXI, M_POLICE, M_SWAT, M_COUNT };
+enum { M_COMPACT, M_SEDAN, M_SPORTS, M_VAN, M_TAXI, M_POLICE, M_SWAT, M_HELI, M_COUNT };
 typedef struct { float len, wid, maxspeed, accel, steer, mass, hp; } CarDef;
 extern const CarDef car_defs[M_COUNT];
 
@@ -49,6 +49,8 @@ typedef struct {
 	float fireT, sirenT, burnT, wreckT, hitT;       // hitT > 0: the player attacked this car recently
 	int spot;                                 // parking spot this car came from (-1 if none)
 	bool smoking;
+	float alt;                                // helicopters: 0 on the ground .. 1 cruising height
+	bool landing;                             // helicopters: coming down
 } Car;
 
 // ---------------------------------------------------------------- people
@@ -66,7 +68,7 @@ typedef struct {
 } Ped;
 
 // ---------------------------------------------------------------- effects
-typedef struct { bool active; float x, y, vx, vy, life; int owner; float dmg; } Bullet;      // owner: 0 player, 1 police
+typedef struct { bool active, rocket; float x, y, vx, vy, life; int owner; float dmg; } Bullet;      // owner: 0 player, 1 police
 enum { P_BLOOD, P_SMOKE, P_FIRE, P_SPARK, P_MUZZLE, P_BOOM };
 typedef struct { bool active; int type, frame; float x, y, vx, vy, life, maxlife; } Particle;
 typedef struct { float x, y; int img; } Stain;
@@ -82,7 +84,7 @@ typedef struct {
 	int weapon;
 	int ammo[W_COUNT];
 	bool has[W_COUNT];
-	float fireT, hurtT, bustT, sprayT, punchT;
+	float fireT, hurtT, bustT, sprayT, punchT, calmT;      // calmT: seconds since Otto last got hurt (he heals after a while)
 	int car;                                   // index of the car we're driving, or -1
 	PlayerStatus status;
 	float statusT;
@@ -115,20 +117,22 @@ typedef struct {
 
 	// wanted level
 	float heat; int stars;
-	float unseenT, seenT;
+	float unseenT, seenT, wantedT;
 	bool cops_see;
 
 	bool paused, quit;
 	unsigned rng;
 	Field foot_field, car_field;
 	float fieldT;
-	float spawnCarT, spawnPedT, spawnCopT, saveT;
+	float spawnCarT, spawnPedT, spawnCopT, saveT, spawnPickT;
 	bool saveNeeded;
 	float flashT;                              // damage flash on screen
 	float slow;
 } Game;
 
-typedef struct { int cash; bool has[W_COUNT]; int ammo[W_COUNT]; } SaveData;
+// the first four weapons come first so saves from older versions still load (see load_save in main.c)
+typedef struct { int cash; bool has[4]; int ammo[4]; bool has2[W_COUNT - 4]; int ammo2[W_COUNT - 4]; } SaveData;
+#define SAVE_V1_SIZE 24
 
 bool game_init(Game *g, const uint8_t *map, size_t size, const SaveData *save);
 void game_update(Game *g, const Input *in, float dt);
@@ -163,6 +167,8 @@ void damage_player(Game *g, float dmg, float dx, float dy);
 void damage_car(Game *g, int i, float dmg, int source);
 void explode_car(Game *g, int i);
 void drop_cash(Game *g, float x, float y, int amount);
+void blast(Game *g, float x, float y, float radius, float maxdmg, int owner);     // rocket / grenade explosion; owner 0 player, 1 police
+void heli_fire(Game *g, const Input *in, float dt);
 
 // ---------------------------------------------------------------- car.c
 void cars_update(Game *g, float dt);

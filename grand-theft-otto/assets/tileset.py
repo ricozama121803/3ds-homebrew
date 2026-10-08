@@ -24,7 +24,7 @@ for i in range(2): T(f"concrete{i}")
 T("court0")
 T("spray_pad", F_SPRAY)                  # Pay 'n' Spray: drive in here to lose the cops
 # ---- roads
-T("road", F_ROAD)
+T("road", F_ROAD); T("road1", F_ROAD); T("road2", F_ROAD)
 for n in ["road_hy_b", "road_hy_t", "road_hw_b", "road_hw_t", "road_vy_r", "road_vy_l", "road_vw_r", "road_vw_l", "cw_v", "cw_h"]:
     T(n, F_ROAD)
 T("parking_v"); T("parking_h")
@@ -48,6 +48,7 @@ for c in ROOF_COLORS:
 for n in ["roof_theatre", "roof_garage", "roof_police", "roof_station", "stand"]:
     T(n, F_SOLID | F_BUILDING)
 for i in range(9): T(f"hosp_{i}", F_SOLID | F_BUILDING)
+for i in range(9): T(f"pad_{i}")                                                 # helipads (3x3)
 for n in ["tower_glass", "tower_dark", "tower_stone"]:
     for v in range(2): T(f"{n}{v}", F_SOLID | F_BUILDING | F_TALL)
 for i in range(9): T(f"obs_{i}", F_SOLID | F_BUILDING)                       # Griffith Observatory
@@ -70,14 +71,17 @@ PED_DIRS = 8                   # pedestrians get 8 directions
 WALK_FRAMES = 4                # player walk cycle
 PED_FRAMES = 2
 OVERLAYS = ["edge_n", "edge_e", "edge_s", "edge_w"]          # dark outline drawn over building roofs
-# car variants: (model, colour). Models: 0 compact, 1 sedan, 2 sports, 3 van, 4 taxi, 5 police, 6 SWAT
-CARVARS = [(0, 0), (0, 1), (1, 0), (1, 1), (1, 2), (2, 0), (2, 1), (3, 0), (4, 0), (5, 0), (6, 0)]
+# car variants: (model, colour). Models: 0 compact, 1 sedan, 2 sports, 3 van, 4 taxi, 5 police, 6 SWAT, 7 helicopter
+CARVARS = [(0, 0), (0, 1), (1, 0), (1, 1), (1, 2), (2, 0), (2, 1), (3, 0), (4, 0), (5, 0), (6, 0), (7, 0)]
 PEDTYPES = 8                   # 0-5 civilians, 6 cop, 7 SWAT
 EFFECTS = (["muzzle", "bullet", "spark", "blood_dot", "glow_red", "glow_blue", "shadow_car"]
            + [f"stain{i}" for i in range(4)] + [f"boom{i}" for i in range(6)] + [f"smoke{i}" for i in range(3)] + [f"fire{i}" for i in range(3)]
            + ["pk_health", "pk_armor", "pk_pistol", "pk_smg", "pk_shotgun", "pk_cash"]
-           + ["ic_fists", "ic_pistol", "ic_smg", "ic_shotgun"])
+           + ["pk_rifle", "pk_mg", "pk_sniper", "pk_rpg", "pk_ammo", "rocket", "rotor0", "rotor1", "rotor2", "rotor3"]
+           + ["ic_fists", "ic_pistol", "ic_smg", "ic_shotgun", "ic_rifle", "ic_mg", "ic_sniper", "ic_rpg"])
 SPRITES = ["canopy0", "canopy1", "palmtop", "shadow"]
+GUNS = 7                       # held-weapon sprites for weapons 1..7 (16 directions each)
+SPRITES += [f"gun_{w}_{d}" for w in range(1, GUNS + 1) for d in range(DIRS)]
 SPRITES += [f"player_{f}_{d}" for f in range(WALK_FRAMES) for d in range(DIRS)]
 SPRITES += [f"car_{v}_{d}" for v in range(len(CARVARS)) for d in range(DIRS)]
 SPRITES += [f"ped_{t}_{f}_{d}" for t in range(PEDTYPES) for f in range(PED_FRAMES) for d in range(PED_DIRS)]

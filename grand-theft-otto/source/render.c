@@ -31,7 +31,7 @@ static C2D_TextBuf s_static, s_dyn;
 static C2D_Text t_zone[NZONES], t_land[NLANDMARKS];
 static C2D_Text t_wname[W_COUNT], t_cashv, t_ammo[W_COUNT], t_pop[MAX_POPUPS];
 static C2D_Text t_cash, t_wanted, t_paused, t_resume, t_quit, t_wasted, t_busted, t_car;
-static C2D_Text t_foot[4], t_drive[4];
+static C2D_Text t_foot[4], t_drive[4], t_fly[4], t_heli;
 
 void render_init(void)
 {
@@ -44,6 +44,7 @@ void render_init(void)
 	STATIC_TEXT(t_cash, "CASH");  STATIC_TEXT(t_wanted, "WANTED"); STATIC_TEXT(t_car, "CAR");
 	STATIC_TEXT(t_paused, "PAUSED"); STATIC_TEXT(t_resume, "START: resume"); STATIC_TEXT(t_quit, "SELECT: quit game");
 	STATIC_TEXT(t_wasted, "WASTED"); STATIC_TEXT(t_busted, "BUSTED");
+	STATIC_TEXT(t_heli, "HELICOPTER"); STATIC_TEXT(t_fly[0], "A: fly forward"); STATIC_TEXT(t_fly[1], "B: brake"); STATIC_TEXT(t_fly[2], "L: gun   X: rocket"); STATIC_TEXT(t_fly[3], "Y: land / get out");
 	STATIC_TEXT(t_foot[0], "A: fire");  STATIC_TEXT(t_foot[1], "Y: enter car"); STATIC_TEXT(t_foot[2], "X / L: weapon"); STATIC_TEXT(t_foot[3], "R: run");
 	STATIC_TEXT(t_drive[0], "A: gas"); STATIC_TEXT(t_drive[1], "B: brake"); STATIC_TEXT(t_drive[2], "L: handbrake"); STATIC_TEXT(t_drive[3], "Y: get out");
 
@@ -133,10 +134,20 @@ static int dir_index(float heading, int n)
 // ---- entities ----------------------------------------------------------
 static void draw_car(const Game *g, const Car *c, int camx, int camy)
 {
+	if (c->model == M_HELI) return;                                  // drawn later, above the roofs (draw_heli)
 	float sx = floorf(c->x) - camx, sy = floorf(c->y) - camy;
 	if (sx < -40 || sx > SCREEN_W + 40 || sy < -40 || sy > SCREEN_H + 40) return;
 	int id = IMG_CAR(c->variant, dir_index(c->heading, DIRS));
 	float x = floorf(sx - IMG_W(im[id]) * 0.5f), y = floorf(sy - IMG_H(im[id]) * 0.5f);
+	{   // soft drop shadow: round blobs strung along the car's axis (works at any heading)
+		const CarDef *cd = &car_defs[c->model];
+		float ax = sinf(c->heading), ay = -cosf(c->heading);
+		for (int k = -1; k <= 1; k++) {
+			float off = k * (cd->len * 0.5f - cd->wid * 0.35f);
+			float ss = cd->wid * 1.25f / 22.0f;
+			C2D_DrawImageAt(im[IMG_SHADOW], floorf(sx + ax * off - 11 * ss + 3), floorf(sy + ay * off - 7 * ss + 4), 0, NULL, ss, ss);
+		}
+	}
 	if (c->state == CS_WRECK) draw_tint(id, x, y, RGB(22, 20, 18), 0.72f);
 	else draw(id, x, y);
 
@@ -161,6 +172,7 @@ static void draw_ped(const Game *g, const Ped *p, int camx, int camy)
 	draw_c(IMG_SHADOW, sx, sy + 3);
 	int id = IMG_PED(p->type, ((int)p->walkT) & 1, dir_index(p->heading, PED_DIRS));
 	draw_c(id, sx, sy);
+	if (p->kind != PK_CIV && p->state == PS_ATTACK) draw_c(IMG_GUN(p->kind == PK_SWAT ? W_RIFLE : W_PISTOL, dir_index(p->heading, DIRS)), sx, sy);
 	(void)g;
 }
 
@@ -175,11 +187,19 @@ static void draw_player(const Game *g, int camx, int camy)
 	int id = IMG_PLAYER(frame, dir_index(p->heading, DIRS));
 	float x = floorf(sx - IMG_W(im[id]) * 0.5f), y = floorf(sy - IMG_H(im[id]) * 0.5f);
 	if (p->hurtT > 0) draw_tint(id, x, y, RGB(255, 40, 40), 0.65f); else draw(id, x, y);
+	if (p->weapon != W_FISTS) {                                     // the weapon in his hands (kicks back a little when it fires)
+		float kick = p->fireT > weapon_defs[p->weapon].rate * 0.55f ? 1.5f : 0.0f;
+		draw_c(IMG_GUN(p->weapon, dir_index(p->heading, DIRS)), sx - sinf(p->heading) * kick, sy + cosf(p->heading) * kick);
+	}
 }
 
 static int pickup_img(int kind)
 {
-	switch (kind) { case 0: return IMG_PK_HEALTH; case 1: return IMG_PK_ARMOR; case 2: return IMG_PK_PISTOL; case 3: return IMG_PK_SMG; case 4: return IMG_PK_SHOTGUN; default: return IMG_PK_CASH; }
+	switch (kind) {
+	case 0: return IMG_PK_HEALTH; case 1: return IMG_PK_ARMOR; case 2: return IMG_PK_PISTOL; case 3: return IMG_PK_SMG; case 4: return IMG_PK_SHOTGUN;
+	case 6: return IMG_PK_RIFLE; case 7: return IMG_PK_MG; case 8: return IMG_PK_SNIPER; case 9: return IMG_PK_RPG; case 10: return IMG_PK_AMMO;
+	default: return IMG_PK_CASH;
+	}
 }
 
 static void draw_entities(const Game *g, int camx, int camy)
@@ -211,7 +231,7 @@ static void draw_effects(const Game *g, int camx, int camy)
 {
 	for (int i = 0; i < MAX_BULLETS; i++) {
 		const Bullet *b = &g->bullets[i];
-		if (b->active) draw_c(IMG_BULLET, b->x - camx, b->y - camy);
+		if (b->active) draw_c(b->rocket ? IMG_ROCKET : IMG_BULLET, b->x - camx, b->y - camy);
 	}
 	for (int i = 0; i < MAX_PARTS; i++) {
 		const Particle *p = &g->parts[i];
@@ -227,6 +247,23 @@ static void draw_effects(const Game *g, int camx, int camy)
 		case P_BOOM:   draw_c(IMG_BOOM0 + (p->frame > 5 ? 5 : p->frame), sx, sy); break;
 		}
 	}
+}
+
+// helicopters fly above everything: shifted by height for the 3D slider, with a shadow down on the ground and spinning rotor blades
+static void draw_heli(const Game *g, const Car *c, int camx, int camy, float eye, float sep)
+{
+	float sx = floorf(c->x) - camx, sy = floorf(c->y) - camy;
+	if (sx < -50 || sx > SCREEN_W + 50 || sy < -50 || sy > SCREEN_H + 50) return;
+	float alt = c->alt;
+	float ss = 1.7f;
+	C2D_DrawImageAt(im[IMG_SHADOW], floorf(sx + alt * 10.0f - 11 * ss), floorf(sy + alt * 14.0f - 7 * ss), 0, NULL, ss, ss);
+	float hx = floorf(sx + eye * sep * (1.0f + 4.5f * alt)), hy = floorf(sy - alt * 7.0f);
+	int id = IMG_CAR(c->variant, dir_index(c->heading, DIRS));
+	float x = floorf(hx - IMG_W(im[id]) * 0.5f), y = floorf(hy - IMG_H(im[id]) * 0.5f);
+	if (c->state == CS_WRECK) { draw_tint(id, x, y, RGB(22, 20, 18), 0.72f); return; }
+	draw(id, x, y);
+	int rf = c->state == CS_PLAYER ? ((int)(g->time * 30.0f) & 3) : 0;
+	draw_c(IMG_ROTOR0 + rf, hx, hy - 1.0f);
 }
 
 // ---- top screen: the city ----------------------------------------------
@@ -264,6 +301,32 @@ void render_top(const Game *g, float eye, float slider)
 		}
 	}
 
+	// curbs: a dark gutter and a bright lip where pavement meets the road
+	for (int j = 0; j < NY; j++) {
+		for (int i = 0; i < NX; i++) {
+			int id = world_tile(w, tx0 + i, ty0 + j);
+			if (id != TILE_SIDEWALK0 && id != TILE_SIDEWALK1) continue;
+			float x = (float)(ox + i * TILE), y = (float)(oy + j * TILE);
+			static const int dxs[4] = {0, 0, -1, 1}, dys[4] = {-1, 1, 0, 0};
+			for (int k = 0; k < 4; k++) {
+				int nid = world_tile(w, tx0 + i + dxs[k], ty0 + j + dys[k]);
+				if (nid < 0 || !(tile_flags[nid] & F_ROAD)) continue;
+				float rx = k == 3 ? x + TILE - 2 : x, ry = k == 1 ? y + TILE - 2 : y;
+				float rw = k < 2 ? TILE : 2, rh = k < 2 ? 2 : TILE;
+				C2D_DrawRectSolid(rx, ry, 0, rw, rh, RGB(226, 222, 210));
+				C2D_DrawRectSolid(k == 3 ? x + TILE - 1 : rx, k == 1 ? y + TILE - 1 : ry, 0, k < 2 ? TILE : 1, k < 2 ? 1 : TILE, RGB(52, 52, 58));
+			}
+		}
+	}
+
+	// long shadows: every building throws one down and to the right (taller ones, further)
+	for (int k = 0; k < nb; k++) {
+		int gx = tx0 + bx[k], gy = ty0 + by[k];
+		if (world_flags(w, gx + 1, gy) & F_BUILDING && world_flags(w, gx, gy + 1) & F_BUILDING && world_flags(w, gx + 1, gy + 1) & F_BUILDING) continue;
+		float len = (tile_flags[bid[k]] & F_TALL) ? 10.0f : 5.0f;
+		C2D_DrawRectSolid((float)(ox + bx[k] * TILE) + len, (float)(oy + by[k] * TILE) + len, 0, TILE, TILE, RGBA(0, 0, 8, 70));
+	}
+
 	// ground-level things: blood, pickups, bodies, cars, people
 	draw_entities(g, camx, camy);
 
@@ -296,6 +359,8 @@ void render_top(const Game *g, float eye, float slider)
 			draw(ci, (float)(ox + i * TILE + TILE / 2) - cw * 0.5f + canopy_dx, (float)(oy + j * TILE + TILE / 2) - ch * 0.5f - 2.0f);
 		}
 	}
+
+	for (int i = 0; i < MAX_CARS; i++) if (g->cars[i].active && g->cars[i].model == M_HELI) draw_heli(g, &g->cars[i], camx, camy, eye, sep);
 
 	// pass 4: bullets, smoke, fire, explosions on top of everything
 	draw_effects(g, camx, camy);
@@ -352,8 +417,7 @@ void render_top(const Game *g, float eye, float slider)
 // ---- bottom screen: map and HUD ---------------------------------------
 static bool weapon_button(int i, float *x, float *y)
 {
-	static const float bx[4] = {238, 278, 238, 278}, by[4] = {96, 96, 126, 126};
-	*x = bx[i]; *y = by[i];
+	*x = 238.0f + (i & 1) * 40.0f; *y = 94.0f + (i >> 1) * 16.0f;                  // two columns of four
 	return true;
 }
 
@@ -369,9 +433,9 @@ void render_bottom(const Game *g)
 	C2D_DrawRectangle(0, 0, 0, 320, 240, NAVY, NAVY, navy2, navy2);
 	C2D_DrawRectSolid(0, 0, 0, 320, 3, ORANGE);
 
-	// whole-city map, north up (1.375 map pixels per tile -> 220 px)
-	const float MS = 1.375f, MX = 6, MY = 6;
-	C2D_DrawRectSolid(MX - 2, MY - 2, 0, 160 * MS + 4, 160 * MS + 4, RGB(8, 10, 20));
+	// whole-city map, north up (220 px)
+	const float MS = 220.0f / MAP_W, MX = 6, MY = 6;
+	C2D_DrawRectSolid(MX - 2, MY - 2, 0, MAP_W * MS + 4, MAP_W * MS + 4, RGB(8, 10, 20));
 	C2D_DrawImageAt(im[IMG_MINIMAP], MX, MY, 0, NULL, MS, MS);
 	float vx = MX + g->camx / TILE * MS, vy = MY + g->camy / TILE * MS, vw = SCREEN_W / TILE * MS, vh = SCREEN_H / TILE * MS;
 	u32 vc = RGBA(255, 255, 255, 150);
@@ -382,6 +446,7 @@ void render_bottom(const Game *g)
 	blip(MX + (HOSPITAL_X + 0.5f) * MS, MY + (HOSPITAL_Y + 0.5f) * MS, RGB(255, 255, 255));
 	blip(MX + (POLICE_X + 0.5f) * MS, MY + (POLICE_Y + 0.5f) * MS, RGB(70, 120, 255));
 	for (int i = 0; i < NSPRAY; i++) blip(MX + (spray_pads[i].x0 + spray_pads[i].x1 + 1) * 0.5f * MS, MY + (spray_pads[i].y0 + spray_pads[i].y1 + 1) * 0.5f * MS, RGB(220, 120, 255));
+	for (int i = 0; i < NHELIPADS; i++) blip(MX + (helipads[i].tx + 0.5f) * MS, MY + (helipads[i].ty + 0.5f) * MS, RGB(255, 220, 60));
 	// police on the map: flashing red and blue
 	int ph = (int)(g->time * 4.0f);
 	for (int i = 0; i < MAX_PEDS; i++) {
@@ -401,7 +466,7 @@ void render_bottom(const Game *g)
 	C2D_DrawTriangle(px + sinf(h) * 4.5f, py - cosf(h) * 4.5f, me, px + sinf(h + 2.5f) * 3.2f, py - cosf(h + 2.5f) * 3.2f, me, px + sinf(h - 2.5f) * 3.2f, py - cosf(h - 2.5f) * 3.2f, me, 0);
 
 	// district name under the map
-	text(&t_zone[g->zone], 6 + 160 * MS * 0.5f, 6 + 160 * MS + 3, 0.5f, RGB(255, 255, 255), true);
+	text(&t_zone[g->zone], 6 + MAP_W * MS * 0.5f, 6 + MAP_W * MS + 3, 0.5f, RGB(255, 255, 255), true);
 
 	// ---- HUD column ----
 	const float X = 236;
@@ -423,23 +488,26 @@ void render_bottom(const Game *g)
 		float bx, by;
 		weapon_button(i, &bx, &by);
 		bool sel = g->p.weapon == i, own = g->p.has[i];
-		C2D_DrawRectSolid(bx - 1, by - 1, 0, 40, 28, sel ? ORANGE : RGB(50, 70, 110));
-		C2D_DrawRectSolid(bx, by, 0, 38, 26, sel ? RGB(60, 40, 20) : RGB(10, 18, 40));
+		C2D_DrawRectSolid(bx - 1, by - 1, 0, 40, 16, sel ? ORANGE : RGB(50, 70, 110));
+		C2D_DrawRectSolid(bx, by, 0, 38, 14, sel ? RGB(60, 40, 20) : RGB(10, 18, 40));
 		int ic = IMG_IC_FISTS + i;
-		float ix = bx + (38 - IMG_W(im[ic])) * 0.5f, iy = by + 1;
-		if (own) draw(ic, ix, iy); else draw_tint(ic, ix, iy, RGB(40, 48, 70), 0.85f);
-		if (own && i != W_FISTS) text(&t_ammo[i], bx + 3, by + 14, 0.34f, RGB(255, 230, 160), false);
+		const float sc = 0.62f;
+		float ix = bx - 2, iy = by + (14 - IMG_H(im[ic]) * sc) * 0.5f;
+		C2D_ImageTint dim; C2D_PlainImageTint(&dim, RGB(40, 48, 70), 0.85f);
+		C2D_DrawImageAt(im[ic], ix, iy, 0, own ? NULL : &dim, sc, sc);
+		if (own && i != W_FISTS) text(&t_ammo[i], bx + 21, by + 1, 0.3f, RGB(255, 230, 160), false);
 	}
 	// what's being held / the car
 	if (g->p.car >= 0) {
 		const Car *c = &g->cars[g->p.car];
-		text(&t_car, X, 160, 0.36f, RGB(255, 190, 120), false);
+		bool heli = c->model == M_HELI;
+		text(heli ? &t_heli : &t_car, X, 160, 0.36f, RGB(255, 190, 120), false);
 		float f = clampf(c->hp / car_defs[c->model].hp, 0, 1);
 		C2D_DrawRectSolid(X, 172, 0, 76, 9, RGB(10, 14, 30));
 		C2D_DrawRectSolid(X + 1, 173, 0, 74.0f * f, 7, f > 0.5f ? RGB(80, 200, 90) : f > 0.25f ? RGB(240, 180, 40) : RGB(220, 50, 40));
-		for (int i = 0; i < 4; i++) text(&t_drive[i], X, 186 + i * 12, 0.36f, RGB(200, 220, 255), false);
+		for (int i = 0; i < 4; i++) text(heli ? &t_fly[i] : &t_drive[i], X, 186 + i * 12, 0.36f, RGB(200, 220, 255), false);
 	} else {
-		text(&t_wname[g->p.weapon], X, 160, 0.5f, RGB(255, 255, 255), false);
+		text(&t_wname[g->p.weapon], X, 160, 0.42f, RGB(255, 255, 255), false);
 		for (int i = 0; i < 4; i++) text(&t_foot[i], X, 186 + i * 12, 0.36f, RGB(200, 220, 255), false);
 	}
 	if (g->paused) {

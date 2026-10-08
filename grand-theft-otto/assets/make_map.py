@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Lays out the 160x160-tile city (a stylised, squeezed Los Angeles) and writes:
+"""Lays out the 256x256-tile city (a stylised, squeezed Los Angeles plus its suburbs, forest and harbour) and writes:
    assets/map.bin          tile ids (header: u16 W, H, spawn x, spawn y, then W*H bytes)
    assets/gfx/minimap.png  1 pixel per tile, for the bottom-screen map
    source/gen_map.h        district names and landmark labels
@@ -9,7 +9,8 @@ from PIL import Image
 import tileset as ts
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-W = H = 160
+W = H = 256
+SEA_Y = 246                                  # rows from here south are the harbour
 R = random.Random(90210)
 tiles = [["grass0"] * W for _ in range(H)]
 kind = [[None] * W for _ in range(H)]       # 'road' / 'fw' / 'rail' for tiles that count as street
@@ -37,15 +38,20 @@ for y in range(H):
         elif x < c + 2: tiles[y][x] = "wetsand"
         elif x < c + 8 or (x < 28 and y >= 20): tiles[y][x] = R.choice(["sand0", "sand1"])
         elif y < 20 and x < 138: tiles[y][x] = R.choice(["scrub0", "scrub1"])        # the Hollywood Hills
+for y in range(SEA_Y, H):
+    for x in range(W): tiles[y][x] = R.choice(["ocean0", "ocean1"]) if y >= SEA_Y + 3 else R.choice(["sand0", "sand1"] if y == SEA_Y else ["wetsand"])
 
 # ---------------------------------------------------------------- streets
 # (y0, y1, x0, x1) / (x0, x1, y0, y1); every street is 8 wide (2 lanes each way) except the minor ones (4 wide)
-HROADS = [(20, 27, 24, 159), (40, 47, 24, 137), (58, 65, 24, 159), (96, 103, 24, 159), (140, 147, 24, 137)]
-VROADS = [(28, 35, 20, 147), (76, 83, 0, 147), (96, 103, 20, 147), (116, 123, 20, 147)]
-FREEWAYS = [("v", 60, 68, 0, 159),       # the 405
+HROADS = [(20, 27, 24, 255), (40, 47, 24, 255), (58, 65, 24, 255), (80, 87, 156, 255), (96, 103, 24, 255), (120, 127, 156, 255), (140, 147, 24, 255),
+          (160, 167, 24, 255), (186, 193, 24, 255), (212, 219, 24, 255), (238, 245, 24, 255)]
+VROADS = [(28, 35, 20, 147), (76, 83, 0, 147), (96, 103, 20, 147), (116, 123, 20, 147),
+          (28, 35, 160, 245), (76, 83, 160, 245), (96, 103, 160, 245), (116, 123, 160, 245),
+          (156, 163, 0, 245), (188, 195, 0, 245), (220, 227, 0, 245)]
+FREEWAYS = [("v", 60, 68, 0, 245),       # the 405
             ("h", 118, 126, 22, 137),    # the 10
             ("h", 78, 86, 69, 137),      # the 101
-            ("v", 147, 155, 0, 159)]     # the 5
+            ("v", 147, 155, 0, 245)]     # the 5
 RIVER = (138, 145)                       # the concrete LA River channel
 
 HMARK = {8: ["road", "road_hw_b", "road", "road_hy_b", "road_hy_t", "road_hw_b", "road", "road"], 4: ["road", "road_hy_b", "road_hy_t", "road"]}
@@ -78,7 +84,7 @@ for (y0, y1, hx0, hx1) in HROADS:
                 if inside(x, y) and vmask[y][x] and not hmask[y][x] and tiles[y][x] != "road": tiles[y][x] = "cw_v"
 
 # the LA River: a concrete channel with a trickle of water down the middle
-for y in range(H):
+for y in range(SEA_Y):
     for x in range(RIVER[0], RIVER[1] + 1):
         if hmask[y][x] or vmask[y][x]: continue                    # streets cross it on bridges
         tiles[y][x] = "stream" if x in (141, 142) else R.choice(["concrete0", "concrete1"])
@@ -310,7 +316,6 @@ bld(125, 88, 136, 92, "roof_station", False); rect(125, 93, 131, 95, "plaza0"); 
 parking(125, 105, 131, 116); shops(134, 104, 136, 116, colors=("gray", "dark", "orange"))                           # rail yard neighbours
 # --- industrial along the river and the freeway
 shops(125, 67, 136, 77, colors=("gray", "dark", "tan", "orange"), paving="sidewalk1")
-shops(156, 0, 159, 159, colors=("gray", "dark", "tan", "orange"), paving="sidewalk1")
 # --- mid-city: Koreatown apartments, strip malls, hospital
 shops(70, 88, 75, 116, colors=("tan", "white", "blue", "orange"))
 shops(70, 128, 75, 138, colors=("tan", "white", "blue", "orange", "teal"))
@@ -333,10 +338,63 @@ for x in range(24, 137):
     if (x // 8) % 2 == 0: put(x, 154, "runway_dash"); put(x, 155, "runway_dash")
 rect(24, 157, 137, 159, "grass0"); rect(24, 157, 137, 157, "runway")
 rect(28, 153, 32, 152, "runway")
+
+# ---------------------------------------------------------------- the greater city: forest, suburbs, theme park, harbour
+OFFICE = ("tan", "white", "blue", "orange", "gray")
+WARE = ("gray", "dark", "tan", "orange")
+# --- Angeles National Forest
+hills(164, 0, 255, 19, 0.10)
+trees(164, 0, 255, 19, 0.16, ["tree0", "tree1", "bush", "tree0"], on=("scrub0", "scrub1"))
+# --- Pasadena: Rose Bowl, estates, a park
+houses(164, 28, 187, 39, ("tan", "white", "red", "teal"))
+stadium(197, 28, 218, 39, ring=2); 
+estates(228, 28, 255, 39)
+park(166, 49, 185, 56, pond=(176, 52, 4, 2), palms=True)
+shops(196, 48, 219, 57, colors=OFFICE); houses(228, 48, 255, 57, ("red", "tan", "white", "brown"))
+# --- Burbank and Glendale: studio lots, strip malls, hills
+shops(164, 66, 187, 79, colors=OFFICE)
+bld(198, 67, 216, 71, "roof_white0"); bld(198, 74, 208, 78, "roof_gray0"); rect(210, 74, 218, 79, "parking_v"); rect(198, 72, 218, 73, "sidewalk1")
+houses(228, 66, 255, 79, ("white", "tan", "dark", "red"))
+shops(164, 88, 255, 95, colors=OFFICE)
+# --- East LA, Alhambra, Monterey Park
+houses(164, 104, 187, 119, ("red", "tan", "brown", "white"))
+towers(196, 104, 219, 119)
+houses(228, 104, 255, 119, ("red", "tan", "brown", "white"))
+shops(164, 128, 187, 139, colors=OFFICE); park(198, 128, 217, 139, pond=(207, 133, 4, 2)); houses(228, 128, 255, 139, ("teal", "tan", "red"))
+# --- Vernon: warehouses, rail yards and parking
+shops(164, 148, 255, 159, colors=WARE)
+# --- Compton / Watts / Carson
+houses(36, 168, 59, 185, ("red", "tan", "brown", "white", "teal")); shops(69, 168, 75, 185, colors=OFFICE)
+shops(84, 168, 95, 185, colors=OFFICE); houses(104, 168, 115, 185, ("red", "tan", "white"))
+shops(124, 168, 137, 185, colors=WARE); parking(125, 175, 136, 184, False)
+# --- Anaheim: a theme park with a Ferris wheel, then houses and the stadium
+park(166, 169, 185, 184, pond=(172, 178, 3, 2), palms=True)
+for i in range(16): put(176 + i % 4, 172 + i // 4, f"ferris_{i}")
+shops(196, 168, 219, 185, colors=OFFICE); houses(228, 168, 255, 185, ("tan", "white", "red", "teal"))
+# --- Palos Verdes estates, Torrance, the ballpark
+estates(36, 194, 59, 211); houses(69, 194, 75, 211); shops(84, 194, 95, 211, colors=OFFICE)
+stadium(104, 195, 115, 210, ring=2); parking(124, 196, 137, 210)
+houses(164, 194, 187, 211, ("white", "tan", "red")); stadium(197, 195, 218, 210, ring=3); parking(220, 196, 221, 210)
+houses(228, 194, 255, 211, ("teal", "white", "tan", "red"))
+# --- Port of Long Beach: shipping containers and warehouses
+shops(36, 220, 59, 237, colors=WARE); shops(69, 220, 75, 237, colors=WARE)
+shops(84, 220, 137, 237, colors=("orange", "blue", "red", "gray", "dark", "orange", "brown"))
+parking(124, 221, 136, 236)
+shops(164, 220, 187, 237, colors=("orange", "blue", "red", "gray", "dark", "orange", "brown")); houses(196, 220, 219, 237, ("tan", "white", "teal"))
+shops(228, 220, 255, 237, colors=OFFICE)
+# --- two more Pay 'n' Sprays, so the cops can be shaken off anywhere
+rect(164, 70, 175, 79, "sidewalk1"); bld(165, 71, 171, 73, "roof_garage", False); rect(165, 74, 171, 76, "spray_pad")                 # Burbank
+rect(84, 174, 95, 185, "sidewalk1"); bld(85, 175, 91, 177, "roof_garage", False); rect(85, 178, 91, 180, "spray_pad")                 # Carson
+rect(164, 216, 255, 217, "sidewalk1")
+
 # north-of-Hollywood x 96..103 etc. are streets; fill the gaps between: apartments near the 101 and 10
 shops(37, 66, 58, 66, colors=("white",))
+# --- helipads: a helicopter waits on each one
+HELIPADS = [(90, 72), (30, 150), (128, 94), (121, 14), (25, 52), (130, 50), (214, 77), (130, 228), (180, 181)]
+for (hx, hy) in HELIPADS:
+    for i in range(9): put(hx - 1 + i % 3, hy - 1 + i // 3, f"pad_{i}")
 # --- palm-lined boulevards (Beverly Hills, Hollywood, Wilshire)
-PALM_ZONES = [(36, 28, 59, 95), (69, 28, 115, 77), (36, 104, 59, 139)]
+PALM_ZONES = [(36, 28, 59, 95), (69, 28, 115, 77), (36, 104, 59, 139), (164, 28, 255, 79), (36, 168, 137, 211)]
 for (px0, py0, px1, py1) in PALM_ZONES:
     for y in range(py0, py1 + 1):
         for x in range(px0, px1 + 1):
@@ -349,6 +407,7 @@ for y in range(H):
     for x in range(W):
         n = tiles[y][x]
         if n == "sidewalk0": tiles[y][x] = R.choice(["sidewalk0", "sidewalk0", "sidewalk1"])
+        elif n == "road" and R.random() < 0.16: tiles[y][x] = R.choice(["road1", "road2"])
         elif n in GRASSES: tiles[y][x] = R.choice(list(GRASSES))
         elif n == "dirt0": tiles[y][x] = R.choice(["dirt0", "dirt1"])
 
@@ -388,8 +447,20 @@ if ts.TILE_FLAGS[tiles[SPAWN[1]][SPAWN[0]]] & ts.F_SOLID:
 
 # ---------------------------------------------------------------- districts and landmark labels (for the HUD)
 ZONES = [   # name, x0, y0, x1, y1 (tiles); later entries win
-    ("Los Angeles", 0, 0, 159, 159),
-    ("Pacific Ocean", 0, 0, 15, 159),
+    ("Los Angeles", 0, 0, 255, 255),
+    ("Pacific Ocean", 0, 0, 15, 255),
+    ("Angeles Forest", 164, 0, 255, 19),
+    ("Pasadena", 164, 28, 255, 57),
+    ("Rose Bowl", 196, 28, 219, 39),
+    ("Burbank", 164, 58, 255, 95),
+    ("East LA", 164, 96, 255, 139),
+    ("Vernon", 164, 140, 255, 167),
+    ("Anaheim", 164, 168, 255, 245),
+    ("Angel Stadium", 196, 194, 219, 211),
+    ("Compton", 24, 160, 137, 187),
+    ("Palos Verdes", 24, 188, 137, 219),
+    ("Port of Long Beach", 24, 220, 255, 245),
+    ("Long Beach Harbor", 0, 246, 255, 255),
     ("Malibu", 10, 0, 40, 19),
     ("Hollywood Hills", 28, 0, 137, 19),
     ("Griffith Park", 104, 0, 137, 19),
@@ -410,22 +481,24 @@ ZONES = [   # name, x0, y0, x1, y1 (tiles); later entries win
     ("Inglewood", 24, 127, 59, 139),
     ("Exposition Park", 96, 127, 137, 139),
     ("LAX", 22, 148, 137, 159),
-    ("LA River", 138, 0, 146, 159),
-    ("Freeway 405", 60, 0, 68, 159),
-    ("Freeway 5", 147, 0, 155, 159),
-    ("Industrial", 156, 0, 159, 159),
+    ("LA River", 138, 0, 146, 245),
+    ("Freeway 405", 60, 0, 68, 245),
+    ("Freeway 5", 147, 0, 155, 245),
+    ("Alameda Street", 156, 0, 163, 245),
 ]
 LANDMARKS = [   # label, tile x, tile y
     ("Santa Monica Pier", 20, 60), ("Pacific Park", 8, 59), ("Venice Boardwalk", 22, 74), ("Muscle Beach", 21, 86), ("Venice Canals", 48, 103),
     ("Rodeo Drive", 48, 66), ("Hollywood Sign", 95, 2), ("Griffith Observatory", 121, 8), ("Chinese Theatre", 90, 66), ("Walk of Fame", 100, 55),
     ("Capitol Records", 111, 66), ("Silver Lake", 90, 48), ("Dodger Stadium", 130, 28), ("City Hall", 110, 87), ("Union Station", 130, 86),
     ("LA River", 141, 40), ("LA Coliseum", 110, 127), ("LAX", 94, 147), ("Theme Building", 73, 147), ("Sunset Blvd", 60, 38),
+    ("Rose Bowl", 207, 28), ("Angeles Forest", 210, 8), ("Burbank Studios", 207, 69), ("Theme Park", 176, 170), ("Angel Stadium", 207, 194),
+    ("Port of Long Beach", 100, 224), ("Palos Verdes", 48, 196), ("Watts", 48, 172),
 ]
 
 # ---------------------------------------------------------------- gameplay data
 HOSPITAL_RESPAWN = (89, 137)
 POLICE_RESPAWN = (43, 95)
-SPRAY_PADS = [(105, 67, 109, 69), (42, 135, 48, 137)]
+SPRAY_PADS = [(105, 67, 109, 69), (42, 135, 48, 137), (165, 74, 171, 76), (85, 178, 91, 180)]
 for (x, y) in (HOSPITAL_RESPAWN, POLICE_RESPAWN):
     assert not (ts.TILE_FLAGS[tiles[y][x]] & ts.F_SOLID), (x, y, tiles[y][x])
 def walkable_floor(x, y):
@@ -436,18 +509,19 @@ def add_pickups(kind, count, min_dist=9):
     tries = 0
     while count and tries < 4000:
         tries += 1
-        x, y = PR.randint(24, 155), PR.randint(2, 156)
+        x, y = PR.randint(24, 251), PR.randint(2, 244)
         if not walkable_floor(x, y): continue
         if any(abs(x - px) + abs(y - py) < min_dist for (px, py, _) in pickups): continue
         pickups.append((x, y, kind)); count -= 1
-add_pickups(0, 10); add_pickups(1, 8); add_pickups(2, 6); add_pickups(3, 6); add_pickups(4, 5); add_pickups(5, 16)
+add_pickups(0, 24); add_pickups(1, 18); add_pickups(2, 10); add_pickups(3, 12); add_pickups(4, 10); add_pickups(5, 30)
+add_pickups(6, 14); add_pickups(7, 10); add_pickups(8, 8); add_pickups(9, 8); add_pickups(10, 40)       # rifle, machine gun, sniper, RPG, ammo crates
 parked = []
 for y in range(H):
     for x in range(W):
         n = tiles[y][x]
-        if n == "parking_v" and x % 2 == 0 and y % 3 == 0 and tiles[y + 1][x] == "parking_v" and len(parked) < 140:
+        if n == "parking_v" and x % 2 == 0 and y % 3 == 0 and tiles[y + 1][x] == "parking_v" and len(parked) < 300:
             parked.append((x, y, PR.choice([0, 8])))
-        elif n == "parking_h" and x % 3 == 0 and y % 2 == 0 and tiles[y][x + 1] == "parking_h" and len(parked) < 140:
+        elif n == "parking_h" and x % 3 == 0 and y % 2 == 0 and tiles[y][x + 1] == "parking_h" and len(parked) < 300:
             parked.append((x, y, PR.choice([4, 12])))
 
 # ---------------------------------------------------------------- write outputs
@@ -458,6 +532,7 @@ with open(os.path.join(HERE, "map.bin"), "wb") as f:
 def mm_color(n):
     if n.startswith("hsign_"): return (240, 240, 244)
     if n.startswith("hosp_"): return (230, 60, 60)
+    if n.startswith("pad_"): return (110, 114, 122)
     if n.startswith("obs_"): return (120, 200, 170)
     if n.startswith("ferris_"): return (250, 200, 60)
     if n.startswith("tower_"): return {"tower_glass": (86, 140, 200), "tower_dark": (52, 62, 92), "tower_stone": (206, 196, 174)}[n[:-1]]
@@ -511,6 +586,7 @@ with open(os.path.join(HERE, "..", "source", "gen_map.h"), "w") as f:
     f.write("__attribute__((unused)) static const RoadDef hroads[] = {\n" + "".join(f"\t{{{y0}, {y1}, {x0}, {x1}}},\n" for (y0, y1, x0, x1) in HROADS) + "};\n")
     f.write("__attribute__((unused)) static const RoadDef vroads[] = {\n" + "".join(f"\t{{{x0}, {x1}, {y0}, {y1}}},\n" for (x0, x1, y0, y1) in VROADS) + "};\n")
     f.write("#define NHROADS (int)(sizeof hroads / sizeof hroads[0])\n#define NVROADS (int)(sizeof vroads / sizeof vroads[0])\n\n")
+    f.write("typedef struct { int tx, ty; } Helipad;\n__attribute__((unused)) static const Helipad helipads[] = {" + ", ".join(f"{{{x}, {y}}}" for (x, y) in HELIPADS) + "};\n#define NHELIPADS (int)(sizeof helipads / sizeof helipads[0])\n\n")
     f.write(f"#define HOSPITAL_X {HOSPITAL_RESPAWN[0]}\n#define HOSPITAL_Y {HOSPITAL_RESPAWN[1]}\n#define POLICE_X {POLICE_RESPAWN[0]}\n#define POLICE_Y {POLICE_RESPAWN[1]}\n\n")
     f.write("typedef struct { int x0, y0, x1, y1; } SprayPad;\n__attribute__((unused)) static const SprayPad spray_pads[] = {\n" + "".join(f"\t{{{a}, {b}, {c}, {d}}},\n" for (a, b, c, d) in SPRAY_PADS) + "};\n#define NSPRAY (int)(sizeof spray_pads / sizeof spray_pads[0])\n\n")
     f.write("typedef struct { int tx, ty, kind; } PickupSpot;      // kind: 0 health, 1 armor, 2 pistol, 3 smg, 4 shotgun, 5 cash\n")

@@ -181,6 +181,6 @@ void spawn_civilian(Game *g)
 void spawn_cop_foot(Game *g, bool swat)
 {
 	float x, y;
-	if (!find_walk_spot(g, 200.0f, 320.0f, &x, &y, false)) return;
+	if (!find_walk_spot(g, 330.0f, 470.0f, &x, &y, false)) return;
 	ped_spawn(g, swat ? PK_SWAT : PK_COP, swat ? 7 : 6, x, y);
 }

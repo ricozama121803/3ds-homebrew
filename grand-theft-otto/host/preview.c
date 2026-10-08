@@ -117,6 +117,26 @@ int main(int argc, char **argv)
 	add_heat(&G, 4.0f);
 	snap("spray", 0.7f);
 
+	// 8. an assault rifle in Otto's hands, mid-burst
+	fresh(mapdata, n); place(92, 57, 1.5708f);
+	G.p.has[W_RIFLE] = true; G.p.ammo[W_RIFLE] = 300; G.p.weapon = W_RIFLE;
+	{ Input in = none; in.a = true; run(0.45f, in); }
+	snap("rifle", 0.7f);
+
+	// 9. a helicopter climbing over Hollywood, with its rocket on the way
+	fresh(mapdata, n); place(90, 73, 0.0f);
+	{ int hc = car_spawn(&G, NCARVARS - 1, G.p.x, G.p.y - 16, 0.0f, CS_PARKED, DRV_NONE);
+	  Input in = none; in.y_p = true; run(0.1f, in);
+	  in = none; in.a = true; run(2.2f, in); in.x_p = true; in.l = true; run(0.4f, in);
+	  (void)hc; }
+	snap("heli", 0.7f);
+
+	// 10. an RPG blast
+	fresh(mapdata, n); place(92, 57, 1.5708f);
+	G.p.has[W_RPG] = true; G.p.ammo[W_RPG] = 3; G.p.weapon = W_RPG;
+	{ int a1 = ped_spawn(&G, PK_CIV, 1, G.p.x + 110, G.p.y); (void)a1; Input in = none; in.a = true; run(0.1f, in); in.a = false; run(0.5f, in); }
+	snap("rpg", 0.7f);
+
 	render_exit();
 	return 0;
 }
