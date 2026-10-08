@@ -86,4 +86,4 @@ Player is now a human criminal (was Tuffy), blood is red (was orange), city is L
 - `source/r3d_3ds.c` + `source/r3d.v.pica` draw them with citro3d (stereoscopic: the buffer is built once, drawn once per eye). The HUD is still citro2d, drawn over the scene.
 - Textures come from `assets/make_world3d.py` (32px world atlas with facades, day and night variants; sprite atlas).
 - Sun shadows and ambient occlusion are baked per tile corner at start-up (`r3d_init`); a day/night cycle (8 minutes) tints everything and lights lamps, windows and headlights.
-- Safety net: while a 3D session is young a lock file exists on the SD card (`3ds/grandtheft otto.3d.lock`); if the game dies in that window the next launch starts in the 2D view. Pause + X toggles 2D / 3D.
+- Safety net: while a 3D session is young a lock file exists on the SD card (`3ds/grandtheftotto.3d.lock`); if the game dies in that window the next launch starts in the 2D view. Pause + X toggles 2D / 3D.
