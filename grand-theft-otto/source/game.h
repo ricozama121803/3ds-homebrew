@@ -113,6 +113,8 @@ typedef struct {
 	int park_car[MAX_PARK];                    // car index occupying each parking spot, or -1
 
 	float camx, camy, time;
+	float camyaw;                              // 3D view: which way the camera looks (radians clockwise from north)
+	bool view3d;                               // set by main.c: the 3D renderer is on
 	int zone; float zoneT;
 
 	// wanted level

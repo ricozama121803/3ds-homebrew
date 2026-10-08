@@ -147,6 +147,11 @@ static void player_foot(Game *g, const Input *in, float dt)
 	Player *p = &g->p;
 	float mx = in->mx, my = in->my, mag = sqrtf(mx * mx + my * my);
 	if (mag > 1.0f) { mx /= mag; my /= mag; mag = 1.0f; }
+	if (g->view3d && mag > 0) {                                     // the stick is relative to where the 3D camera is looking
+		float sy = sinf(g->camyaw), cy = cosf(g->camyaw);
+		float wx = mx * cy - my * sy, wy = mx * sy + my * cy;
+		mx = wx; my = wy;
+	}
 	float top = in->run ? RUN_SPEED : WALK_SPEED;
 	float k = fminf(1.0f, dt * 14.0f);
 	p->vx += (mx * top - p->vx) * k;
@@ -453,8 +458,18 @@ void game_update(Game *g, const Input *in, float dt)
 	// camera: follow, and look further ahead when driving fast
 	float fx = p->x, fy = p->y, lvx = p->vx, lvy = p->vy, look = 0.4f;
 	if (p->car >= 0) { const Car *c = &g->cars[p->car]; fx = c->x; fy = c->y; lvx = c->vx; lvy = c->vy; look = 0.55f; }
-	float maxx = g->world.w * TILE - SCREEN_W, maxy = g->world.h * TILE - SCREEN_H;
-	float tcx = clampf(fx + lvx * look - SCREEN_W * 0.5f, 0, maxx), tcy = clampf(fy + lvy * look - SCREEN_H * 0.5f, 0, maxy);
+	float minx = 0, miny = 0, maxx = g->world.w * TILE - SCREEN_W, maxy = g->world.h * TILE - SCREEN_H;
+	if (g->view3d) { minx = -SCREEN_W * 0.5f; miny = -SCREEN_H * 0.5f; maxx = g->world.w * TILE - SCREEN_W * 0.5f; maxy = g->world.h * TILE - SCREEN_H * 0.5f; }   // the 3D camera may sit right at the edge
+	float tcx = clampf(fx + lvx * look - SCREEN_W * 0.5f, minx, maxx), tcy = clampf(fy + lvy * look - SCREEN_H * 0.5f, miny, maxy);
+	if (g->view3d) {                                                // chase camera: swings round behind the vehicle, back to north-up on foot
+		float want = p->car >= 0 ? g->cars[p->car].heading : 0.0f;
+		if (p->car >= 0 && g->cars[p->car].model != M_HELI && sqrtf(g->cars[p->car].vx * g->cars[p->car].vx + g->cars[p->car].vy * g->cars[p->car].vy) < 25.0f) want = g->camyaw;   // parked or crawling: hold still
+		if (p->car < 0 && p->status == PL_ALIVE) want = 0.0f;
+		g->camyaw = wrap_pi(g->camyaw + wrap_pi(want - g->camyaw) * fminf(1.0f, dt * 2.2f));
+		float k3 = p->car >= 0 ? 0.9f : 0.5f;                        // the look-ahead follows the camera direction
+		tcx = clampf(fx + (sinf(g->camyaw) * 55.0f * k3) - SCREEN_W * 0.5f, minx, maxx); tcy = clampf(fy - (cosf(g->camyaw) * 55.0f * k3) - SCREEN_H * 0.5f, miny, maxy);
+		if (p->car < 0) { tcx = clampf(fx - SCREEN_W * 0.5f, minx, maxx); tcy = clampf(fy - 20.0f - SCREEN_H * 0.5f, miny, maxy); }
+	}
 	float c = fminf(1.0f, dt * (p->car >= 0 ? 7.0f : 6.0f));
 	g->camx += (tcx - g->camx) * c;
 	g->camy += (tcy - g->camy) * c;

@@ -24,7 +24,7 @@ static void dump(const char *name, const char *suffix, int w, int h, float eye, 
 	shim_begin(w, h, C2D_Color32(20, 24, 40, 255));
 	snprintf(path, sizeof path, "%s/%s_%s.txt", outdir, name, suffix);
 	shim_textlog = fopen(path, "w");
-	if (bottom) render_bottom(&G); else render_top(&G, eye, slider);
+	if (bottom) render_bottom(&G); else { render_top(&G, eye, slider); render_top_hud(&G, eye, slider); }
 	fclose(shim_textlog); shim_textlog = NULL;
 	printf("%-12s %s: %ld draws\n", name, suffix, shim_tris);
 	snprintf(path, sizeof path, "%s/%s_%s.ppm", outdir, name, suffix);

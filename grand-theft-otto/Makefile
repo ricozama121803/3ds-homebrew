@@ -11,7 +11,7 @@ SOURCES  := $(wildcard source/*.c)
 APP_TITLE := Grand Theft Otto
 APP_DESC  := Top-down LA crime as Otto
 APP_AUTH  := ricozama
-OBJS     := $(patsubst source/%.c,$(BUILD)/%.o,$(SOURCES)) $(BUILD)/atlas_t3x.o $(BUILD)/map_bin.o
+OBJS     := $(patsubst source/%.c,$(BUILD)/%.o,$(SOURCES)) $(BUILD)/atlas_t3x.o $(BUILD)/map_bin.o $(BUILD)/r3d_shbin.o $(BUILD)/tex_world_t3x.o $(BUILD)/tex_sprites_t3x.o
 GFX_PNG  := $(wildcard assets/gfx/*.png)
 PY       := $(CURDIR)/../tools/venv/bin/python
 
@@ -40,11 +40,24 @@ $(BUILD):
 # Regenerate art + map from the scripts in assets/
 .PHONY: assets
 assets:
-	cd assets && $(PY) make_map.py && $(PY) make_art.py && $(PY) make_assets.py
+	cd assets && $(PY) make_map.py && $(PY) make_art.py && $(PY) make_world3d.py && $(PY) make_assets.py
 
 # texture atlas (.t3x) and city map (.bin) -> object files linked into the game (no romfs needed)
 $(BUILD)/atlas.t3x: assets/atlas.t3s $(GFX_PNG) | $(BUILD)
 	tex3ds -i $< -o $@
+
+# 3D view: vertex shader and the two textures (world atlas, sprite atlas)
+$(BUILD)/r3d.shbin: source/r3d.v.pica | $(BUILD)
+	picasso -o $@ $<
+
+$(BUILD)/%_shbin.o $(BUILD)/%_shbin.h: $(BUILD)/%.shbin
+	cd $(BUILD) && bin2s -a 4 -H $*_shbin.h $*.shbin | $(AS) -o $*_shbin.o
+
+$(BUILD)/tex_world.t3x: assets/gfx3d/world.png | $(BUILD)
+	tex3ds -f rgba -z auto -o $@ $<
+
+$(BUILD)/tex_sprites.t3x: assets/gfx3d/sprites.png | $(BUILD)
+	tex3ds -f rgba -z auto -o $@ $<
 
 $(BUILD)/map.bin: assets/map.bin | $(BUILD)
 	cp $< $@
@@ -56,6 +69,7 @@ $(BUILD)/%_bin.o $(BUILD)/%_bin.h: $(BUILD)/%.bin
 	cd $(BUILD) && bin2s -a 4 -H $*_bin.h $*.bin | $(AS) -o $*_bin.o
 
 $(BUILD)/render.o: $(BUILD)/atlas_t3x.h
+$(BUILD)/r3d_3ds.o: $(BUILD)/r3d_shbin.h $(BUILD)/tex_world_t3x.h $(BUILD)/tex_sprites_t3x.h
 $(BUILD)/main.o: $(BUILD)/map_bin.h
 
 $(TARGET).elf: $(OBJS)

@@ -8,7 +8,7 @@ Nintendo 3DS homebrew games written in C with [devkitPro](https://devkitpro.org/
 | --- | --- |
 | `hello3ds/` | Minimal starter app: console output and touch input |
 | `tuffyrun/` | Endless runner with landmarks, audio and an SD-card high score |
-| `grand-theft-otto/` | Top-down open-world crime sandbox (LA-inspired city, cars, wanted levels). Design notes in [`PLAN.md`](grand-theft-otto/PLAN.md) |
+| `grand-theft-otto/` | Open-world crime sandbox with a real 3D city (extruded buildings, baked sun shadows, day/night cycle, stereoscopic 3D), a 256x256-tile LA, eight weapons, cars and helicopters. Pause + X switches to the classic top-down 2D view. Design notes in [`PLAN.md`](grand-theft-otto/PLAN.md) |
 
 ## Setup
 

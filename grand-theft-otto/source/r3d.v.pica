@@ -1,0 +1,31 @@
+; Vertex shader for the 3D city. All lighting is baked into the vertex colours by r3d.c, so this only transforms and passes through.
+; PICA200 note: only the FIRST source operand of an instruction may be a uniform, so uniforms are written first.
+.fvec projection[4]      ; from citro3d (includes the screen tilt and the stereo offset)
+.fvec modelView[4]       ; rows of the world -> view matrix (rigid)
+
+.constf k0(0.0, 1.0, 0.5, 0.0)
+.alias ones k0.yyyy
+
+.out outpos position
+.out outtc0 texcoord0
+.out outclr color
+
+.in inpos v0
+.in intc v1
+.in inclr v2
+
+.proc main
+	mov r0.xyz, inpos
+	mov r0.w, ones
+	dp4 r1.x, modelView[0], r0
+	dp4 r1.y, modelView[1], r0
+	dp4 r1.z, modelView[2], r0
+	mov r1.w, ones
+	dp4 outpos.x, projection[0], r1
+	dp4 outpos.y, projection[1], r1
+	dp4 outpos.z, projection[2], r1
+	dp4 outpos.w, projection[3], r1
+	mov outtc0, intc
+	mov outclr, inclr
+	end
+.end

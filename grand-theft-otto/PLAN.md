@@ -80,3 +80,10 @@ Player is now a human criminal (was Tuffy), blood is red (was orange), city is L
 - Wanted level 1-5 from 'heat'; decays when unseen. BUSTED (lose guns + 20% cash, respawn at police station), WASTED (lose 10% cash, respawn at hospital). Cash/weapons saved to sdmc:/3ds/grandtheftotto.sav.
 - Tests: host/simtest.c (traffic soak, steal, combat, police, driving fuzz), host/maptest.c (reachability, street continuity, walking fuzz), host/preview.sh (frames).
 - Not done yet: sound, roadblocks/helicopter, freeway traffic, missions, better pedestrian/cop variety.
+
+## 3D view (added)
+- `source/r3d.c` builds the whole frame as triangle lists (ground tiles, extruded buildings with facade textures, low-poly cars / people / trees / helicopters, billboard effects) with all lighting baked into vertex colours. It has no 3DS dependencies: `host/preview3d.c` rasterises the same triangles on the PC (`host/preview3d.sh`, plus a `stress` mode that checks buffer caps and NaNs).
+- `source/r3d_3ds.c` + `source/r3d.v.pica` draw them with citro3d (stereoscopic: the buffer is built once, drawn once per eye). The HUD is still citro2d, drawn over the scene.
+- Textures come from `assets/make_world3d.py` (32px world atlas with facades, day and night variants; sprite atlas).
+- Sun shadows and ambient occlusion are baked per tile corner at start-up (`r3d_init`); a day/night cycle (8 minutes) tints everything and lights lamps, windows and headlights.
+- Safety net: while a 3D session is young a lock file exists on the SD card (`3ds/grandtheft otto.3d.lock`); if the game dies in that window the next launch starts in the 2D view. Pause + X toggles 2D / 3D.

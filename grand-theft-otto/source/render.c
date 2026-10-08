@@ -31,7 +31,7 @@ static C2D_TextBuf s_static, s_dyn;
 static C2D_Text t_zone[NZONES], t_land[NLANDMARKS];
 static C2D_Text t_wname[W_COUNT], t_cashv, t_ammo[W_COUNT], t_pop[MAX_POPUPS];
 static C2D_Text t_cash, t_wanted, t_paused, t_resume, t_quit, t_wasted, t_busted, t_car;
-static C2D_Text t_foot[4], t_drive[4], t_fly[4], t_heli;
+static C2D_Text t_foot[4], t_drive[4], t_fly[4], t_heli, t_view;
 
 void render_init(void)
 {
@@ -45,6 +45,7 @@ void render_init(void)
 	STATIC_TEXT(t_paused, "PAUSED"); STATIC_TEXT(t_resume, "START: resume"); STATIC_TEXT(t_quit, "SELECT: quit game");
 	STATIC_TEXT(t_wasted, "WASTED"); STATIC_TEXT(t_busted, "BUSTED");
 	STATIC_TEXT(t_heli, "HELICOPTER"); STATIC_TEXT(t_fly[0], "A: fly forward"); STATIC_TEXT(t_fly[1], "B: brake"); STATIC_TEXT(t_fly[2], "L: gun   X: rocket"); STATIC_TEXT(t_fly[3], "Y: land / get out");
+	STATIC_TEXT(t_view, "X: switch 3D / 2D view");
 	STATIC_TEXT(t_foot[0], "A: fire");  STATIC_TEXT(t_foot[1], "Y: enter car"); STATIC_TEXT(t_foot[2], "X / L: weapon"); STATIC_TEXT(t_foot[3], "R: run");
 	STATIC_TEXT(t_drive[0], "A: gas"); STATIC_TEXT(t_drive[1], "B: brake"); STATIC_TEXT(t_drive[2], "L: handbrake"); STATIC_TEXT(t_drive[3], "Y: get out");
 
@@ -365,8 +366,16 @@ void render_top(const Game *g, float eye, float slider)
 	// pass 4: bullets, smoke, fire, explosions on top of everything
 	draw_effects(g, camx, camy);
 
-	// landmark labels (only when you're close and on foot)
-	if (g->p.car < 0) {
+}
+
+// the heads-up display on the top screen (drawn over either the 2D tile view or the 3D scene)
+void render_top_hud(const Game *g, float eye, float slider)
+{
+	int camx = (int)floorf(g->camx), camy = (int)floorf(g->camy);
+	float sep = slider * 3.0f;
+	(void)camy;
+	// landmark labels (only when you're close and on foot; the 2D view only)
+	if (g->p.car < 0 && !g->view3d) {
 		for (int k = 0; k < NLANDMARKS; k++) {
 			float lx = landmarks[k].tx * TILE + TILE * 0.5f - camx, ly = landmarks[k].ty * TILE - camy;
 			float dx = lx + camx - g->p.x, dy = ly + camy - g->p.y;
@@ -515,5 +524,6 @@ void render_bottom(const Game *g)
 		text(&t_paused, 160, 70, 1.2f, RGB(255, 255, 255), true);
 		text(&t_resume, 160, 130, 0.7f, RGB(255, 255, 255), true);
 		text(&t_quit, 160, 160, 0.7f, RGB(255, 190, 120), true);
+		text(&t_view, 160, 190, 0.6f, RGB(160, 220, 255), true);
 	}
 }

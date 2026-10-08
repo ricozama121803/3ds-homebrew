@@ -9,6 +9,7 @@
 
 #include "game.h"
 #include "render.h"
+#include "r3d_3ds.h"
 #include "map_bin.h"                        // the city, embedded from assets/map.bin (see Makefile)
 
 // ---- high scores / cash on the SD card --------------------------------
@@ -33,6 +34,12 @@ static void write_save(const Game *g)
 	if (f) { fwrite(&sd, sizeof sd, 1, f); fclose(f); }
 }
 
+// ---- crash guard for the 3D view: a lock file exists while a 3D session is young; if the game dies in that window the next start uses 2D
+#define LOCK_FILE "sdmc:/3ds/grandtheftotto.3d.lock"
+static bool file_exists(const char *p) { FILE *f = fopen(p, "rb"); if (f) { fclose(f); return true; } return false; }
+static void lock_set(void) { mkdir(SAVE_DIR, 0777); FILE *f = fopen(LOCK_FILE, "wb"); if (f) { fputc('1', f); fclose(f); } }
+static void lock_clear(void) { remove(LOCK_FILE); }
+
 static Game g;                                    // big: lives in static memory, not on the stack
 
 int main(void)
@@ -45,8 +52,12 @@ int main(void)
 	C2D_Prepare();
 	osSetSpeedupEnable(true);                // New 3DS: full speed (ignored on old models)
 
-	C3D_RenderTarget *topL = C2D_CreateScreenTarget(GFX_TOP, GFX_LEFT);
-	C3D_RenderTarget *topR = C2D_CreateScreenTarget(GFX_TOP, GFX_RIGHT);
+	// the top screen targets carry a depth buffer, so the 3D view can use the same ones as the 2D view
+	const u32 xfer = GX_TRANSFER_FLIP_VERT(0) | GX_TRANSFER_OUT_TILED(0) | GX_TRANSFER_RAW_COPY(0) | GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGBA8) | GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGB8) | GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_NO);
+	C3D_RenderTarget *topL = C3D_RenderTargetCreate(240, 400, GPU_RB_RGBA8, GPU_RB_DEPTH24_STENCIL8);
+	C3D_RenderTargetSetOutput(topL, GFX_TOP, GFX_LEFT, xfer);
+	C3D_RenderTarget *topR = C3D_RenderTargetCreate(240, 400, GPU_RB_RGBA8, GPU_RB_DEPTH24_STENCIL8);
+	C3D_RenderTargetSetOutput(topR, GFX_TOP, GFX_RIGHT, xfer);
 	C3D_RenderTarget *bot  = C2D_CreateScreenTarget(GFX_BOTTOM, GFX_LEFT);
 	render_init();
 
@@ -57,6 +68,18 @@ int main(void)
 		return 1;
 	}
 	g.rng ^= (unsigned)osGetTime();          // a different city every time you launch
+
+	bool use3d = false, r3d_ready = false;
+	int frames3d = 0;
+	if (file_exists(LOCK_FILE)) {
+		popup(&g, "3D view crashed last time: using 2D (pause, X to retry)", 0xFF60C0FF);
+	} else {
+		lock_set();
+		r3d_ready = r3d3ds_init();
+		use3d = r3d_ready;
+		if (use3d) r3d_init(&g.world); else lock_clear();
+	}
+	g.view3d = use3d;
 
 	const u32 clear = C2D_Color32(20, 24, 40, 255);
 	u64 last = svcGetSystemTick();
@@ -94,6 +117,17 @@ int main(void)
 		in.select_p = (down & KEY_SELECT) != 0;
 		if (down & KEY_TOUCH) { touchPosition tp; hidTouchRead(&tp); in.tap = true; in.tx = tp.px; in.ty = tp.py; }
 
+		if (g.paused && (down & KEY_X)) {                            // pause menu: X switches between the 3D and the 2D view
+			if (use3d) { use3d = false; lock_clear(); g.camyaw = 0; }
+			else {
+				lock_set();
+				if (!r3d_ready) { r3d_ready = r3d3ds_init(); if (r3d_ready) r3d_init(&g.world); }
+				use3d = r3d_ready; frames3d = 0;
+				if (!use3d) lock_clear();
+			}
+			g.view3d = use3d;
+		}
+		in.x_p = in.x_p && !g.paused;
 		game_update(&g, &in, dt);
 		if (g.saveNeeded && g.saveT > 3.0f) { write_save(&g); g.saveNeeded = false; g.saveT = 0; }
 
@@ -102,14 +136,19 @@ int main(void)
 		render_prepare(&g);
 
 		C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
-		C2D_TargetClear(topL, clear);
+		R3DScene *scene = use3d ? r3d3ds_begin(&g) : NULL;
+		const u32 sky = scene ? C2D_Color32f(scene->sky[0], scene->sky[1], scene->sky[2], 1.0f) : clear;
+		C2D_TargetClear(topL, sky);
 		C2D_SceneBegin(topL);
-		render_top(&g, -1.0f, slider);
+		if (scene) { r3d3ds_draw(scene, -1.0f, slider); r3d3ds_end_3d(); } else render_top(&g, -1.0f, slider);
+		render_top_hud(&g, -1.0f, slider);
 		if (slider > 0) {
-			C2D_TargetClear(topR, clear);
+			C2D_TargetClear(topR, sky);
 			C2D_SceneBegin(topR);
-			render_top(&g, +1.0f, slider);
+			if (scene) { r3d3ds_draw(scene, +1.0f, slider); r3d3ds_end_3d(); } else render_top(&g, +1.0f, slider);
+			render_top_hud(&g, +1.0f, slider);
 		}
+		if (use3d && frames3d < 100000 && ++frames3d == 900) lock_clear();                   // survived 30 seconds of 3D: not a crash-on-start problem
 		C2D_TargetClear(bot, clear);
 		C2D_SceneBegin(bot);
 		render_bottom(&g);
@@ -117,6 +156,8 @@ int main(void)
 	}
 
 	write_save(&g);
+	lock_clear();
+	if (r3d_ready) r3d3ds_exit();
 	render_exit();
 	C2D_Fini();
 	C3D_Fini();
