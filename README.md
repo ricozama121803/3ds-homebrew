@@ -2,15 +2,12 @@
 
 Nintendo 3DS homebrew games written in C with [devkitPro](https://devkitpro.org/) (libctru + citro2d/citro3d). Each project also has a small PC-side harness for rendering preview frames and running logic tests without a console.
 
-![Ringside](docs/ringside.png)
-
 ## Projects
 
 | Folder | What it is |
 | --- | --- |
 | `hello3ds/` | Minimal starter app: console output and touch input |
 | `tuffyrun/` | Endless runner with landmarks, audio and an SD-card high score |
-| `ringside/` | 3D kickboxing game with fighter AI, meshes and a custom PICA200 shader |
 | `grand-theft-otto/` | Top-down open-world crime sandbox (LA-inspired city, cars, wanted levels). Design notes in [`PLAN.md`](grand-theft-otto/PLAN.md) |
 
 ## Setup
@@ -28,7 +25,7 @@ source env.sh          # sets DEVKITPRO / DEVKITARM / PATH
 
 ```bash
 source env.sh
-cd ringside && make     # produces .3dsx, .cia, .elf and .smdh
+cd grand-theft-otto && make     # produces .3dsx, .cia, .elf and .smdh
 ```
 
 Copy the `.3dsx` to `sdmc:/3ds/` and launch it from the Homebrew Launcher, or load the `.cia` with FBI, or run it in the [Citra](https://citra-emu.org/) emulator.
@@ -37,10 +34,10 @@ Build output (`build/`, `.elf`, `.cia`, `.3dsx`, `.smdh`) is git-ignored.
 
 ## PC preview and tests
 
-`tuffyrun`, `ringside` and `grand-theft-otto` have a `host/` folder that compiles the game logic with `gcc` against a small graphics shim:
+`tuffyrun` and `grand-theft-otto` have a `host/` folder that compiles the game logic with `gcc` against a small graphics shim:
 
 ```bash
-ringside/host/preview.sh [outdir]   # renders sample frames to PNG (needs gcc and Pillow)
+grand-theft-otto/host/preview.sh [outdir]   # renders sample frames to PNG (needs gcc and Pillow)
 ```
 
 `simtest.c` in each `host/` folder runs headless simulation checks.
