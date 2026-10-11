@@ -52,6 +52,7 @@ float rndf(unsigned *s);
 #define BODY_HW 0.4f
 #define BODY_H  1.8f
 #define TRICK_DUR 0.8f
+#define ROLL_DUR  0.65f
 
 // ---- game -----------------------------------------------------------------------------------------------------------------
 typedef struct {
@@ -76,6 +77,7 @@ typedef struct {
 	float face;                              // body heading (yaw, same convention as the camera)
 	float phase;                             // run / climb animation phase
 	float speed;                             // smoothed total speed
+	float rollT, rollDir[2];                 // landing roll: time left, heading
 	float airT, swingT, landT, noAnchorT, lean;
 	int stall, bumps; float wallPush;
 	float aimDir[3];                         // last heading used to pick an anchor

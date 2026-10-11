@@ -298,6 +298,12 @@ int main(int argc, char **argv)
 			if (G.p.rope && G.p.swingT > 1.5f && G.p.p[1] > 30 && (shot > 0 || G.p.swingT > 1.6f)) { if (shot == 0 || t - 1e9 < 0) {} char nm[32]; snprintf(nm, sizeof nm, "f%d_swing", shot++); hero_close(out, nm, PI_F / 2); for (int q = 0; q < 2; q++) { game_bot(&G, &bi, 1.0f / 30, G.bc.p); game_update(&G, &bi, 1.0f / 30); scene_build(&G, &S); } }
 		}
 	}
+	// landing roll filmstrip
+	{
+		game_start(&G, MODE_FREE); memset(&G.p, 0, sizeof G.p); G.p.p[0] = 4 * PITCH + 4; G.p.p[1] = 1.5f; G.p.p[2] = 3 * PITCH + 4; G.p.state = ST_AIR; G.p.face = DEG(90); G.cam.yaw = DEG(90);
+		G.p.v[0] = 14; G.p.v[1] = -10; G.p.airT = 1.5f; Input in = idle; in.lx = 1;
+		for (int k = 0; k < 10; k++) { run(k ? 0.07f : 0.1f, in); char nm[32]; snprintf(nm, sizeof nm, "r%d_roll", k); hero_close(out, nm, PI_F / 2); }
+	}
 	// 3: a wall climb
 	{
 		float wx = 4 * PITCH + 0.2f * PITCH - BODY_HW - 0.01f; place(wx - 0.0f, 20, 4.5f * PITCH + 20, DEG(90)); G.p.state = ST_AIR; G.p.v[0] = 6;

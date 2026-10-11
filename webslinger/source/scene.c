@@ -508,7 +508,8 @@ static void draw_hero(const Game *g)
 	float sd[2] = { -1, 1 };
 	float ph = p->phase, tm = g->time;
 	bool roped = p->state == ST_AIR && p->rope;
-	if (p->state == ST_GROUND) {
+	bool rolling = p->state == ST_GROUND && p->rollT > 0;
+	if (p->state == ST_GROUND && !rolling) {
 		float amp = sat(hs / 9.0f), sprint = sat((hs - 9.0f) / 6.0f), crouch = fmaxf(p->landT > 0 ? 0.6f : 0.0f, p->charge * 0.95f);
 		float lean = sat(hs / 15.0f) * 0.34f + an.lean;
 		u = norm(add(mul(up, cosf(lean)), mul(f, sinf(lean))));
@@ -524,9 +525,11 @@ static void draw_hero(const Game *g)
 			foot[s] = add(add(P, mul(R0, sd[s] * (0.12f + 0.1f * idle))), add(mul(f0, sa * (0.42f + 0.18f * sprint) * amp + 0.05f), mul(up, fmaxf(0, ca) * (0.26f + 0.12f * sprint) * amp)));
 			legHint[s] = add(f0, mul(R0, sd[s] * 0.5f * idle));
 			V3 sh = add(add(H, mul(u, 0.52f)), mul(RT, sd[s] * 0.25f));
-			float swing = -sa * (0.42f + 0.16f * sprint) * amp;                                // arms drive opposite to the legs
-			hand[s] = add(add(sh, add(mul(up, -0.5f + 0.1f * crouch + fmaxf(0, swing) * 0.3f + sinf(tm * 1.9f + s) * 0.012f * idle), mul(RT, sd[s] * (0.14f + 0.02f * idle)))), mul(fT, swing));
-			armHint[s] = add(mul(fT, -0.6f), mul(RT, sd[s] * 0.8f));
+			float swing = -sa * amp;                                                           // -1..1, arms drive opposite to the legs
+			float pump = 0.30f + 0.10f * sprint;                                                // elbows stay bent ~90 deg: hands pump between chest and hip
+			float fwd = amp * (0.06f + pump * swing), dn = -0.5f + amp * (0.12f + 0.16f * swing + 0.04f * sprint) + 0.1f * crouch;
+			hand[s] = add(add(sh, add(mul(up, dn + sinf(tm * 1.9f + s) * 0.012f * idle), mul(RT, sd[s] * (0.14f + 0.02f * idle + 0.05f * amp)))), mul(fT, fwd));
+			armHint[s] = add(add(mul(fT, -0.6f), mul(RT, sd[s] * (0.8f - 0.3f * amp))), mul(up, -0.25f * amp));
 		}
 		f = fT; R = RT;                                                                      // the torso frame carries the twist
 	} else if (p->state == ST_WALL) {
@@ -550,14 +553,16 @@ static void draw_hero(const Game *g)
 		u = norm(add(mul(up, roped ? 0.38f : 0.55f), mul(vd, k)));
 		if (!roped && sp > 25 && vel.y < -10) u = norm(add(mul(up, 0.2f), mul(vd, 0.8f)));
 		u = norm(add(u, mul(R, bank * 0.7f)));
-		V3 M0 = add(P, mul(u, 1.05f));                                                       // body centre: tricks rotate the hero about it
-		bool trick = p->trickT > 0 && !roped;
+		if (rolling) u = up;
+		V3 M0 = add(P, mul(u, rolling ? 0.62f : 1.05f));                                                       // body centre: tricks rotate the hero about it
+		bool trick = rolling || (p->trickT > 0 && !roped);
+		int ttype = rolling ? 1 : p->trickType;
 		if (trick) {
-			float kk = 1.0f - p->trickT / TRICK_DUR; kk = kk * kk * (3.0f - 2.0f * kk);
+			float kk = rolling ? 1.0f - p->rollT / ROLL_DUR : 1.0f - p->trickT / TRICK_DUR; kk = kk * kk * (3.0f - 2.0f * kk);
 			float th = 2.0f * PI_F * kk, c = cosf(th), sn = sinf(th);
 			V3 u0 = u, f0 = f;
-			if (p->trickType == 1 || p->trickType == 2) { float sg = p->trickType == 1 ? 1.0f : -1.0f; u = add(mul(u0, c), mul(f0, sn * sg)); f = sub(mul(f0, c), mul(u0, sn * sg)); }
-			else { float sg = p->trickType == 4 ? 1.0f : -1.0f; u = add(mul(u0, c), mul(R, sn * sg)); R = sub(mul(R, c), mul(u0, sn * sg)); }
+			if (ttype == 1 || ttype == 2) { float sg = ttype == 1 ? 1.0f : -1.0f; u = add(mul(u0, c), mul(f0, sn * sg)); f = sub(mul(f0, c), mul(u0, sn * sg)); }
+			else { float sg = ttype == 4 ? 1.0f : -1.0f; u = add(mul(u0, c), mul(R, sn * sg)); R = sub(mul(R, c), mul(u0, sn * sg)); }
 		}
 		H = sub(M0, mul(u, 0.15f));
 		float flap = sinf(tm * 3.1f) * 0.05f;                                                // small life in the limbs while airborne
@@ -590,7 +595,7 @@ static void draw_hero(const Game *g)
 		l_ah[s] = to_local(armHint[s], Rr, Ur, Fr); l_lh[s] = to_local(legHint[s], Rr, Ur, Fr);
 	}
 	V3 dH = sub(H, P);
-	bool trickNow = p->trickT > 0 && !roped;
+	bool trickNow = rolling || (p->trickT > 0 && !roped);
 	if (snap) {
 		an.init = true; an.dH = dH; an.dHv = v3(0, 0, 0); an.u = Ur; an.uv = v3(0, 0, 0); an.R = Rr; an.Rv = v3(0, 0, 0);
 		for (int s = 0; s < 2; s++) { an.hand[s] = l_hand[s]; an.foot[s] = l_foot[s]; an.ah[s] = l_ah[s]; an.lh[s] = l_lh[s]; an.handV[s] = an.footV[s] = an.ahV[s] = an.lhV[s] = v3(0, 0, 0); }

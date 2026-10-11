@@ -184,6 +184,7 @@ static void player_update(Game *g, const Input *in, float dt, bool allowCam)
 	if (p->noAnchorT > 0) p->noAnchorT -= dt;
 	if (p->wallCd > 0) p->wallCd -= dt;
 	if (p->landT > 0) p->landT -= dt;
+	if (p->rollT > 0) p->rollT -= dt;
 	if (p->boostWin > 0) p->boostWin -= dt;
 	if (p->aTapT > 0) p->aTapT -= dt;
 	if (p->trickT > 0) p->trickT -= dt;
@@ -191,14 +192,17 @@ static void player_update(Game *g, const Input *in, float dt, bool allowCam)
 
 	if (p->state == ST_GROUND) {
 		bool doJump = false;
-		if (in->jump_p && p->landT <= 0) p->charge = 0.001f;                                   // press A: crouch; hold to charge; release to jump
+		if (in->jump_p && p->landT <= 0 && p->rollT <= 0) p->charge = 0.001f;                                   // press A: crouch; hold to charge; release to jump
 		if (p->charge > 0) { if (in->swing) p->charge = 0; else if (in->a_held) p->charge = fminf(1.0f, p->charge + dt / CHARGE_TIME); else doJump = true; }
+		bool rolling = p->rollT > 0;
+		if (rolling) p->charge = 0;
 		float spd = (in->sprint ? SPRINT_SPEED : RUN_SPEED) * (p->landT > 0 ? 0.35f : 1.0f) * (1.0f - 0.65f * p->charge);
+		if (rolling) { float k = p->rollT / ROLL_DUR; spd = 6.0f + 6.0f * k; mx = p->rollDir[0]; mz = p->rollDir[1]; mag = 1.0f; }     // momentum carries the roll; no steering
 		float tx = mx * spd, tz = mz * spd, dx = tx - p->v[0], dz = tz - p->v[2], dl = sqrtf(dx * dx + dz * dz), step = (mag > 0.05f ? 60.0f : 45.0f) * dt;
 		if (dl > step) { dx *= step / dl; dz *= step / dl; }
 		p->v[0] += dx; p->v[2] += dz; p->v[1] = -4.0f;
 		float vh = sqrtf(p->v[0] * p->v[0] + p->v[2] * p->v[2]);
-		if (vh > 0.8f) { float want = yaw_of(p->v[0], p->v[2]); p->face += wrap_pi(want - p->face) * fminf(1.0f, dt * 12.0f); p->phase += 4.4f * sqrtf(vh) * dt; }
+		if (vh > 0.8f && !rolling) { float want = yaw_of(p->v[0], p->v[2]); p->face += wrap_pi(want - p->face) * fminf(1.0f, dt * 12.0f); p->phase += 4.4f * sqrtf(vh) * dt; }
 		float d[3] = { p->v[0] * dt, p->v[1] * dt, p->v[2] * dt };
 		Contact k; city_move(&g->w, p->p, d, &k);
 		p->airT = 0;
@@ -324,7 +328,12 @@ static void player_update(Game *g, const Input *in, float dt, bool allowCam)
 		}
 		if (k.head && p->v[1] > 0) p->v[1] = 0;
 		if (k.landed) {
-			if (p->v[1] < -32.0f) p->landT = 0.4f;
+			float lh = sqrtf(p->v[0] * p->v[0] + p->v[2] * p->v[2]);
+			if (p->airT > 0.45f && (lh > 3.0f || p->v[1] < -14.0f)) {                         // came down from a swing or a fall: tuck and roll
+				p->rollT = ROLL_DUR; p->trickT = 0;
+				if (lh > 1.0f) { p->rollDir[0] = p->v[0] / lh; p->rollDir[1] = p->v[2] / lh; } else { p->rollDir[0] = sinf(p->face); p->rollDir[1] = -cosf(p->face); }
+				p->face = yaw_of(p->rollDir[0], p->rollDir[1]);
+			}
 			p->v[1] = 0; release_rope(p); p->state = ST_GROUND; p->swingT = 0; p->trickT = 0; p->trickCount = 0; p->boostWin = 0;
 		} else if (k.hitx || k.hitz) {
 			float nx = k.hitx ? k.nx : 0, nz = k.hitz ? k.nz : 0;
