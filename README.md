@@ -2,6 +2,24 @@
 
 Nintendo 3DS homebrew games written in C with [devkitPro](https://devkitpro.org/) (libctru + citro2d/citro3d). Each project also has a small PC-side harness for rendering preview frames and running logic tests without a console.
 
+## Sunset Ops
+
+| | |
+| --- | --- |
+| ![Sun](docs/sunset-sun.png) | ![Aiming](docs/sunset-ads.png) |
+| ![Blast](docs/sunset-blast.png) | ![Shotgun](docs/sunset-shotgun.png) |
+
+*Frames from the PC preview renderer (`sunset-ops/host/preview.sh`) with the HUD drawn by the same code the 3DS runs.*
+
+## Web Slinger
+
+| | |
+| --- | --- |
+| ![Title](docs/webslinger-title.png) | ![City](docs/webslinger-city.png) |
+| ![Swinging](docs/webslinger-swing.png) | ![Swinging between towers](docs/webslinger-swing2.png) |
+
+*Frames from the PC preview renderer (`webslinger/host/preview.sh`). The top-screen HUD is not shown.*
+
 ## Grand Theft Otto
 
 | | |
@@ -19,6 +37,8 @@ Nintendo 3DS homebrew games written in C with [devkitPro](https://devkitpro.org/
 | `hello3ds/` | Minimal starter app: console output and touch input |
 | `tuffyrun/` | Endless runner with landmarks, audio and an SD-card high score |
 | `grand-theft-otto/` | Open-world crime sandbox with a real 3D city (extruded buildings, baked sun shadows, day/night cycle, stereoscopic 3D), a 256x256-tile LA, eight weapons, cars and helicopters. Pause + X switches to the classic top-down 2D view. Design notes in [`PLAN.md`](grand-theft-otto/PLAN.md) |
+| `sunset-ops/` | First-person team deathmatch (4 vs 4 against bots) on a Nuketown-style suburban cul-de-sac in the desert (two enterable houses, bus and truck): red-dot sights, four weapons, grenades, medkits, radar and kill feed, stereoscopic 3D. X/Y/A/B move, Circle Pad looks, R shoots, L aims, D-pad changes weapon / throws a grenade / heals. Design notes in [`PLAN.md`](sunset-ops/PLAN.md) |
+| `webslinger/` | Third-person web-swinging through a procedural Manhattan (576 m island, ~370 buildings up to a stepped landmark tower, park, water, traffic). R holds a web swing (pendulum physics, auto-chains), A jumps / lets go with a boost, X web-zips to a high point, run into a building to climb it, L sprints, B dives; Circle Pad steers, D-pad / C-stick / touch drag move the camera. Free Roam and a timed Beacon Run, city map on the bottom screen, stereoscopic 3D. Host tests: `host/simtest.c`, `host/movetest.c` |
 
 ## Setup
 

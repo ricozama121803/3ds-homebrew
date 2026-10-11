@@ -9,6 +9,6 @@ build/
 *.smdh
 *.bnr
 *.icn
-
+samples/
 # host preview output
 *.ppm
