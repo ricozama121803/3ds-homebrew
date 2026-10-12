@@ -12,7 +12,7 @@ static int fails;
 static Input idle;
 static void step(Input in, float secs)
 {
-	for (float t = 0; t < secs; t += 1 / 30.0f) { game_update(&G, &in, 1 / 30.0f); in.jump_p = in.zip_p = in.start_p = in.a_p = in.b_p = in.select_p = false; }
+	for (float t = 0; t < secs; t += 1 / 30.0f) { game_update(&G, &in, 1 / 30.0f); in.wing_p = in.jump_p = in.zip_p = in.start_p = in.a_p = in.b_p = in.select_p = false; }
 }
 
 int main(void)

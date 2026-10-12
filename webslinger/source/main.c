@@ -140,6 +140,7 @@ int main(void)
 		if (!rH) chordUsed = false;
 		in.swing = rH && !chordUsed && tHeldR >= CHORD;                         // a lone R press waits one chord window before the web fires
 		in.sprint = lH;
+		in.wing_p = lH && !rH && !chordUsed && tHeldL >= CHORD && tHeldL - dt < CHORD;          // L tapped on its own: wingsuit toggle (after the chord window)
 		in.dive = (held & KEY_B) != 0;
 		in.a_held = (held & KEY_A) != 0;
 		in.a_rel = (hidKeysUp() & KEY_A) != 0;

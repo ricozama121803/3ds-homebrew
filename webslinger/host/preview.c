@@ -215,7 +215,7 @@ static void snap(const char *dir, const char *name)
 static Input idle;
 static void run(float seconds, Input in)
 {
-	for (float t = 0; t < seconds; t += 1.0f / 30.0f) { game_update(&G, &in, 1.0f / 30.0f); if (S.dyn) scene_build(&G, &S); in.jump_p = in.zip_p = in.start_p = in.a_p = in.b_p = in.up_p = in.down_p = in.select_p = in.recenter_p = false; }
+	for (float t = 0; t < seconds; t += 1.0f / 30.0f) { game_update(&G, &in, 1.0f / 30.0f); if (S.dyn) scene_build(&G, &S); in.wing_p = in.jump_p = in.zip_p = in.start_p = in.a_p = in.b_p = in.up_p = in.down_p = in.select_p = in.recenter_p = false; }
 }
 static void place(float x, float y, float z, float yaw)
 {
@@ -299,6 +299,21 @@ int main(int argc, char **argv)
 			Input bi; game_bot(&G, &bi, 1.0f / 30, G.bc.p); game_update(&G, &bi, 1.0f / 30); scene_build(&G, &S);
 			if (G.p.rope && G.p.swingT > 1.5f && G.p.p[1] > 30 && (shot > 0 || G.p.swingT > 1.6f)) { if (shot == 0 || t - 1e9 < 0) {} char nm[32]; snprintf(nm, sizeof nm, "f%d_swing", shot++); hero_close(out, nm, PI_F / 2); for (int q = 0; q < 2; q++) { game_bot(&G, &bi, 1.0f / 30, G.bc.p); game_update(&G, &bi, 1.0f / 30); scene_build(&G, &S); } }
 		}
+	}
+	// wingsuit
+	{
+		game_start(&G, MODE_FREE); memset(&G.p, 0, sizeof G.p); G.p.p[0] = MID * PITCH; G.p.p[1] = 160; G.p.p[2] = (MID - 2) * PITCH; G.p.state = ST_AIR; G.p.face = DEG(90); G.cam.yaw = DEG(90);
+		G.p.v[0] = 30; G.p.airT = 1; Input in = idle; in.wing_p = true; run(0.05f, in); in.wing_p = false; in.lx = 0.3f; run(1.5f, in);
+		hero_close(out, "w2_wing_side", PI_F / 2); hero_close(out, "w3_wing_front", PI_F); hero_close(out, "w4_wing_above", 0.6f);
+		printf("wing: speed %.1f vy %.1f wing %d\n", len3(G.p.v), G.p.v[1], G.p.wing);
+	}
+	// running on a wall
+	{
+		const Box *b = &G.w.box[G.w.bfirst[2][2]];
+		game_start(&G, MODE_FREE); memset(&G.p, 0, sizeof G.p); G.p.p[0] = 0.5f * (b->x0 + b->x1); G.p.p[1] = 12; G.p.p[2] = b->z0 - BODY_HW - 0.01f; G.p.state = ST_WALL; G.p.wn[0] = 0; G.p.wn[1] = -1; G.p.face = 0; G.cam.yaw = DEG(90);
+		Input in = idle; in.sprint = true; in.ly = 1; run(0.5f, in);
+		for (int k = 0; k < 6; k++) { G.p.p[1] = 12; run(0.07f, in); G.p.p[1] = 12; char nm[32]; snprintf(nm, sizeof nm, "wr%d_wallrun", k); hero_close(out, nm, PI_F / 2); }
+		printf("wallrun: state %d y %.1f\n", G.p.state, G.p.p[1]);
 	}
 	// landing roll filmstrip
 	{

@@ -129,6 +129,7 @@ void hud_top(const Game *g, const Scene *s)
 			T("R swing   A jump (hold = higher)   A at swing end = boost   A A = trick", 200, 214, 0.36f, with_alpha(WHITE, a), AL_C);
 		}
 		if (g->state == GS_PLAY && !g->paused && g->p.state == ST_AIR && !g->p.rope && g->p.airT > 0.4f && g->p.airT < 3.0f) T("hold R to swing", 200, 188, 0.42f, with_alpha(WHITE, 200), AL_C);
+		if (g->state == GS_PLAY && !g->paused && g->p.wing) T("WINGSUIT   L: off    R: swing", 200, 204, 0.42f, with_alpha(GOLD, 230), AL_C);
 		if (g->p.charge > 0.02f && g->state == GS_PLAY) {                                                       // jump charge bar
 			panel(150, 196, 100, 8, RGBA(0, 0, 0, 140)); panel(151, 197, 98 * g->p.charge, 6, g->p.charge > 0.85f ? GOLD : WHITE);
 			T("release to jump", 200, 180, 0.36f, with_alpha(WHITE, 220), AL_C);
@@ -209,14 +210,14 @@ static void side_panel(const Game *g)
 
 static void help_page(void)
 {
-	T("CONTROLS", 160, 6, 0.6f, GOLD, AL_C);
+	T("CONTROLS", 160, 4, 0.55f, GOLD, AL_C);
 	static const char *rows[][2] = {
 		{ "Circle Pad", "run / steer" }, { "R  (hold)", "web swing" }, { "A  (tap)", "jump" },
-		{ "A  (hold, release)", "charge a super jump" }, { "A  at end of swing", "launch boost" }, { "A A  in the air", "flip / roll (stick = direction)" },
-		{ "L + R", "web zip to a roof" }, { "L  (hold)", "sprint / climb faster" }, { "B", "dive  (in the air)" },
+		{ "A  (hold, release)", "charge a super jump" }, { "A  end of swing / zip", "launch boost" }, { "A A  in the air", "flip / roll (stick = direction)" },
+		{ "L + R  together", "web zip to a roof" }, { "L  (tap, in the air)", "wingsuit on / off (R swing ends it)" }, { "L  (hold, on ground)", "sprint" },
+		{ "Run into a wall", "climb;  hold L to run up / along it" }, { "B", "dive  (in the air)" },
 		{ "D-pad / C-stick / touch", "move the camera" }, { "Y   SELECT   START", "camera behind / street / pause" } };
-	for (int i = 0; i < 11; i++) { T(rows[i][0], 8, 30 + i * 16.5f, 0.38f, WHITE, AL_L); T(rows[i][1], 122, 30 + i * 16.5f, 0.38f, RGBA(255, 255, 255, 200), AL_L); }
-	T("Touch a wall in the air to cling to it.", 160, 222, 0.34f, GOLD, AL_C);
+	for (int i = 0; i < 13; i++) { T(rows[i][0], 6, 24 + i * 15.3f, 0.34f, WHITE, AL_L); T(rows[i][1], 116, 24 + i * 15.3f, 0.34f, RGBA(255, 255, 255, 200), AL_L); }
 }
 
 void hud_bottom(const Game *g)
@@ -239,6 +240,7 @@ void hud_bottom(const Game *g)
 		return;
 	}
 	panel(0, 0, 320, 240, RGBA(8, 14, 28, 255));
+	if (g->paused) { help_page(); return; }                                    // pause shows the controls
 	city_map(g);
 	side_panel(g);
 }

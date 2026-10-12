@@ -6,6 +6,7 @@
 #define MAX_ROPE    95.0f
 #define ZIP_RANGE   130.0f
 #define ZIP_SPEED   70.0f
+#define WALLRUN_SPEED 19.0f
 #define RUN_SPEED   8.5f
 #define SPRINT_SPEED 15.0f
 #define JUMP_V      12.5f
@@ -186,6 +187,7 @@ static bool fire_web(Game *g, bool zip, float mx, float mz, float mag)
 		p->retryT = 0.2f;
 		return false;
 	}
+	p->wing = false;
 	const float c[3] = { p->p[0], p->p[1] + 1.0f, p->p[2] };
 	memcpy(p->anchor, a, sizeof a); memcpy(p->avis, av, sizeof av); p->zipN[0] = zn[0]; p->zipN[1] = zn[1];
 	p->ropeLen = sqrtf((a[0] - c[0]) * (a[0] - c[0]) + (a[1] - c[1]) * (a[1] - c[1]) + (a[2] - c[2]) * (a[2] - c[2]));
@@ -200,7 +202,7 @@ static void release_rope(Player *p) { if (p->rope && !p->zip) p->boostWin = 0.45
 // ---- player ----------------------------------------------------------------------------------------------------------------
 static void enter_wall(Player *p, const Contact *k)
 {
-	p->state = ST_WALL; p->wn[0] = k->nx; p->wn[1] = k->nz;
+	p->state = ST_WALL; p->wn[0] = k->nx; p->wn[1] = k->nz; p->wing = false; p->wallRun = false;
 	p->v[0] = p->v[1] = p->v[2] = 0;
 	release_rope(p);
 	p->face = yaw_of(-k->nx, -k->nz);
@@ -263,6 +265,11 @@ static void player_update(Game *g, const Input *in, float dt, bool allowCam)
 		} else if (!k.landed) { p->state = ST_AIR; p->airT = 0; }
 	} else if (p->state == ST_AIR) {
 		p->airT += dt;
+		if (in->wing_p && !p->rope && !in->swing) {                                                   // L in the air: wingsuit on / off
+			p->wing = !p->wing;
+			if (p->wing) { p->trickT = 0; game_popup(g, "Wingsuit", 0xFFFFE080); }
+		}
+		if (p->rope) p->wing = false;
 		if (in->swing && !p->rope && p->fireCd <= 0 && p->retryT <= 0) fire_web(g, false, mx, mz, mag);
 		if (in->zip_p && !p->zip && p->fireCd <= 0) { release_rope(p); if (fire_web(g, true, mx, mz, mag)) p->zipT = 0; }
 		if (!in->swing && p->rope && !p->zip) release_rope(p);
@@ -306,6 +313,16 @@ static void player_update(Game *g, const Input *in, float dt, bool allowCam)
 				p->v[1] = fmaxf(p->v[1], 14.0f);
 				if (sp0 > 20.0f) { p->trickType = 1; p->trickT = TRICK_DUR; p->trickCount = 0; }
 			}
+		} else if (p->wing) {                                                                          // wingsuit: steer with the pad, push forward to dive fast, pull back to flare
+			float vh = sqrtf(p->v[0] * p->v[0] + p->v[2] * p->v[2]);
+			float psi = vh > 2.0f ? yaw_of(p->v[0], p->v[2]) : p->face;
+			psi += in->lx * 1.3f * dt;
+			float d = clampf(in->ly, -1.0f, 1.0f), tgt = 36.0f + 24.0f * fmaxf(0.0f, d) - 12.0f * fmaxf(0.0f, -d);
+			vh += (tgt - vh) * fminf(1.0f, 1.4f * dt);
+			float sink = 6.0f + 20.0f * fmaxf(0.0f, d) - 5.5f * fmaxf(0.0f, -d);
+			p->v[1] += (-sink - p->v[1]) * fminf(1.0f, 3.0f * dt);
+			p->v[0] = sinf(psi) * vh; p->v[2] = -cosf(psi) * vh;
+			p->wingBank += (in->lx - p->wingBank) * fminf(1.0f, 5.0f * dt);
 		} else {
 			float gr = (GRAV + (in->dive && !p->rope ? 40.0f : 0.0f)) * (p->trickT > 0 ? 0.6f : 1.0f);
 			p->v[1] -= gr * dt;
@@ -381,7 +398,7 @@ static void player_update(Game *g, const Input *in, float dt, bool allowCam)
 				if (lh > 1.0f) { p->rollDir[0] = p->v[0] / lh; p->rollDir[1] = p->v[2] / lh; } else { p->rollDir[0] = sinf(p->face); p->rollDir[1] = -cosf(p->face); }
 				p->face = yaw_of(p->rollDir[0], p->rollDir[1]);
 			}
-			p->v[1] = 0; release_rope(p); p->state = ST_GROUND; p->swingT = 0; p->trickT = 0; p->trickCount = 0; p->boostWin = 0;
+			p->v[1] = 0; p->wing = false; release_rope(p); p->state = ST_GROUND; p->swingT = 0; p->trickT = 0; p->trickCount = 0; p->boostWin = 0;
 		} else if (k.hitx || k.hitz) {
 			float nx = k.hitx ? k.nx : 0, nz = k.hitz ? k.nz : 0;
 			float into = -(p->v[0] * nx + p->v[2] * nz);
@@ -398,13 +415,14 @@ static void player_update(Game *g, const Input *in, float dt, bool allowCam)
 	} else {                                                                                            // ST_WALL
 		float nx = p->wn[0], nz = p->wn[1], tx = -nz, tz = nx;
 		float side = (mx * tx + mz * tz);
-		float climb = in->sprint ? 11.0f : 6.5f;
+		float climb = in->sprint ? WALLRUN_SPEED : 6.5f;                                                // hold L: run up and along the wall
+		p->wallRun = in->sprint;
 		p->v[0] = tx * side * climb - nx * 1.5f; p->v[2] = tz * side * climb - nz * 1.5f; p->v[1] = in->ly * climb;
 		float d[3] = { p->v[0] * dt, p->v[1] * dt, p->v[2] * dt };
 		Contact k; city_move(&g->w, p->p, d, &k);
 		p->face = yaw_of(-nx, -nz);
 		float sp = fabsf(side) + fabsf(in->ly);
-		if (sp > 0.1f) p->phase += sp * climb * dt * 0.5f;
+		if (sp > 0.1f) p->phase += in->sprint ? 4.4f * sqrtf(climb * sp) * dt : sp * climb * dt * 0.5f;
 		if (k.landed && in->ly < 0) { p->state = ST_GROUND; }
 		else if (!(k.hitx || k.hitz)) {                                                                 // ran out of wall: vault onto the roof or just drop
 			p->state = ST_AIR; p->wallCd = 0.35f;

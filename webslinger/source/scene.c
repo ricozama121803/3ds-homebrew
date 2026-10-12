@@ -631,15 +631,24 @@ static void draw_hero(const Game *g)
 	if (snap) { an.bank = bankT; an.bankV = 0; an.lean = leanT; an.leanV = 0; }
 	else { spring1(&an.bank, &an.bankV, bankT, 7.0f, 1.0f, dt); spring1(&an.lean, &an.leanV, leanT, 8.0f, 1.0f, dt); }
 	float bank = an.bank;
+	bool wallRun = p->state == ST_WALL && p->wallRun;
+	if (wallRun) {                                                          // running on a wall: the ground run cycle, with the wall as the floor
+		V3 n = v3(p->wn[0], 0, p->wn[1]);
+		V3 mv = sub(vel, mul(n, dot(vel, n)));
+		float ms = vlen(mv);
+		up = n; P = sub(P, mul(n, 0.30f));
+		f = ms > 1.0f ? mul(mv, 1.0f / ms) : v3(0, 1, 0);
+		R = norm(cross(f, up)); hs = ms;
+	}
 
 	V3 u = up, H, hand[2], foot[2], armHint[2], legHint[2];                // index 0 = left (-R), 1 = right (+R)
 	float sd[2] = { -1, 1 };
 	float ph = p->phase, tm = g->time;
 	bool roped = p->state == ST_AIR && p->rope;
 	bool rolling = p->state == ST_GROUND && p->rollT > 0;
-	if (p->state == ST_GROUND && !rolling) {
+	if ((p->state == ST_GROUND && !rolling) || wallRun) {
 		float amp = sat(hs / 9.0f), sprint = sat((hs - 9.0f) / 6.0f), crouch = fmaxf(p->landT > 0 ? 0.6f : 0.0f, p->charge * 0.95f);
-		float lean = sat(hs / 15.0f) * 0.34f + an.lean;
+		float lean = sat(hs / 15.0f) * 0.34f + an.lean + (wallRun ? 0.5f : 0.0f);
 		u = norm(add(mul(up, cosf(lean)), mul(f, sinf(lean))));
 		u = norm(add(u, mul(R, bank * 0.8f)));
 		float idle = 1.0f - amp;
@@ -685,8 +694,10 @@ static void draw_hero(const Game *g)
 		u = norm(add(mul(up, roped ? 0.38f : 0.55f), mul(vd, k)));
 		if (!roped && sp > 25 && vel.y < -10) u = norm(add(mul(up, 0.2f), mul(vd, 0.8f)));
 		u = norm(add(u, mul(R, bank * 0.7f)));
+		bool wing = p->wing && !roped && !rolling;
+		if (wing) { V3 hv = v3(vel.x, 0, vel.z); hv = vlen(hv) > 1 ? norm(hv) : f; u = norm(add(add(mul(vd, 0.8f), mul(hv, 0.3f)), mul(up, 0.1f))); u = norm(add(u, mul(R, bank * 0.7f))); }
 		if (rolling) u = up;
-		V3 M0 = add(P, mul(u, rolling ? 0.62f : 1.05f));                                                       // body centre: tricks rotate the hero about it
+		V3 M0 = add(P, wing ? mul(up, 1.0f) : mul(u, rolling ? 0.62f : 1.05f));                                                       // body centre: tricks rotate the hero about it
 		bool trick = rolling || (p->trickT > 0 && !roped);
 		int ttype = rolling ? 1 : p->trickType;
 		if (trick) {
@@ -709,6 +720,11 @@ static void draw_hero(const Game *g)
 				float sway = clampf(latA * 0.004f, -0.25f, 0.25f);
 				foot[s] = add(add(H, mul(u, -0.78f + 0.2f * s - 0.06f * (1 - s))), add(mul(R, sd[s] * 0.14f - sway), mul(f, -0.1f - 0.16f * (1 - s))));
 				legHint[s] = add(mul(f, -0.4f + 0.7f * s), mul(R, sd[s] * 0.6f));
+			} else if (wing) {                                                  // superman pose, arms and legs spread to stretch the wing membrane
+				hand[s] = add(add(sh, mul(R, sd[s] * 0.95f)), add(mul(u, 0.12f), mul(f, 0.0f)));
+				armHint[s] = add(mul(f, -0.6f), mul(R, sd[s] * 0.2f));
+				foot[s] = add(add(H, mul(u, -0.86f)), mul(R, sd[s] * 0.5f));
+				legHint[s] = add(mul(f, -0.5f), mul(R, sd[s] * 0.2f));
 			} else {
 				hand[s] = add(add(sh, mul(R, sd[s] * (0.6f - 0.25f * tuck))), add(mul(u, 0.2f - 0.5f * tuck), mul(f, 0.15f + 0.3f * tuck + flap * sd[s])));
 				armHint[s] = add(mul(up, -0.5f), mul(R, sd[s] * 0.3f));
@@ -759,16 +775,16 @@ static void draw_hero(const Game *g)
 	frame_of(u, L, fw, &X, &Y, &Z);
 	hero_part(HP_TORSO, H, X, Y, Z, false);
 	hero_part(HP_HEAD, add(H, mul(u, 0.70f)), X, Y, Z, false);
-	bool ground = p->state == ST_GROUND;
+	bool ground = p->state == ST_GROUND || wallRun;
 	for (int s = 0; s < 2; s++) {
 		bool mir = s == 1;                                                                    // s = 0 is the hero's left
 		V3 hip = add(H, mul(R, sd[s] * 0.12f)), ankle = add(foot[s], mul(up, 0.10f));
 		V3 knee = ik(hip, ankle, 0.46f, 0.46f, legHint[s]);
 		frame_of(sub(hip, knee), L, fw, &X, &Y, &Z); hero_part(HP_THIGH, hip, X, Y, Z, mir);
 		frame_of(sub(knee, ankle), L, fw, &X, &Y, &Z); hero_part(HP_SHIN, knee, X, Y, Z, mir);
-		if (p->state == ST_WALL) frame_of(mul(f, -1.0f), L, up, &X, &Y, &Z);                  // toes up the wall, soles on it
+		if (p->state == ST_WALL && !wallRun) frame_of(mul(f, -1.0f), L, up, &X, &Y, &Z);                  // toes up the wall, soles on it
 		else frame_of(ground ? up : norm(add(sub(knee, ankle), mul(up, 0.15f))), L, fw, &X, &Y, &Z);
-		if (p->state == ST_WALL) { Z = up; X = L; Y = cross(Z, X); }
+		if (p->state == ST_WALL && !wallRun) { Z = up; X = L; Y = cross(Z, X); }
 		hero_part(HP_FOOT, ankle, X, Y, Z, mir);
 		V3 sh = add(add(H, mul(u, 0.53f)), mul(R, sd[s] * 0.255f));
 		V3 elbow = ik(sh, hand[s], 0.3f, 0.29f, armHint[s]);
@@ -777,6 +793,20 @@ static void draw_hero(const Game *g)
 		hero_part(HP_HAND, hand[s], X, Y, Z, mir);
 	}
 	g_hand = Q(hand[p->hand]);
+	if (p->wing && p->state == ST_AIR && !p->rope && !rolling) {                         // the wing membrane: shoulder - hand - ankle - hip on each side, and a tail between the legs
+		static const V3 cA = { 0.78f, 0.1f, 0.12f }, cB = { 0.1f, 0.14f, 0.5f };
+		V3 shp[2], hip[2], ank[2], hnd[2];
+		for (int s = 0; s < 2; s++) {
+			shp[s] = Q(add(add(H, mul(u, 0.50f)), mul(R, sd[s] * 0.22f))); hip[s] = Q(add(H, mul(R, sd[s] * 0.1f)));
+			ank[s] = Q(add(foot[s], mul(up, 0.1f))); hnd[s] = Q(hand[s]);
+			V3 nrm = norm(cross(sub(hnd[s], shp[s]), sub(ank[s], shp[s])));
+			float k = fmaxf(shade(nrm.x, nrm.y, nrm.z), shade(-nrm.x, -nrm.y, -nrm.z)) * 0.95f;
+			dquad(&dm[D_OPAQUE], shp[s], hnd[s], ank[s], hip[s], cB, k);
+			V3 m1 = lerp3(shp[s], hnd[s], 0.5f), m2 = lerp3(hip[s], ank[s], 0.5f);                            // a red panel down the middle of each wing
+			dquad(&dm[D_OPAQUE], lerp3(shp[s], m1, 0.3f), lerp3(shp[s], hnd[s], 0.85f), lerp3(hip[s], ank[s], 0.85f), lerp3(hip[s], m2, 0.3f), cA, k * 0.95f);
+		}
+		dquad(&dm[D_OPAQUE], hip[0], hip[1], ank[1], ank[0], cB, 0.9f);
+	}
 }
 
 static void build_rope(const Game *g)
@@ -788,10 +818,36 @@ static void build_rope(const Game *g)
 	V3 e = lerp3(a, b, t);
 	V3 d = sub(e, a), mid = mul(add(a, e), 0.5f);
 	V3 side = cross(d, sub(EYE, mid)); if (vlen(side) < 1e-5f) return; side = norm(side);
-	float wa = 0.007f * vlen(sub(a, EYE)) + 0.015f, wb = 0.007f * vlen(sub(e, EYE)) + 0.015f;
-	const V3 col = { 1, 1, 1 };
-	V3 p0 = sub(a, mul(side, wa)), p1 = add(a, mul(side, wa)), p2 = add(e, mul(side, wb)), p3 = sub(e, mul(side, wb));
-	dquad(&dm[D_OPAQUE], p0, p1, p2, p3, col, 0.96f);
+	V3 dn = norm(d), side2 = norm(cross(dn, side));                                    // two axes perpendicular to the rope (side faces the camera)
+	float len = vlen(d);
+	int N = (int)fminf(24.0f, fmaxf(4.0f, len / 3.0f));
+	static const V3 core = { 0.96f, 0.98f, 1.0f }, thread = { 0.78f, 0.86f, 1.0f };
+	float tm = g->time, wob = (1.0f - t) * 1.2f + (p->zip ? 0.0f : 0.0f);
+	V3 prev[3]; bool have = false;
+	for (int i = 0; i <= N; i++) {
+		float u = (float)i / N, taper = 0.5f + 0.5f * sinf(PI_F * u);                  // the strand narrows toward both ends
+		V3 c = lerp3(a, e, u);
+		c = add(c, mul(side2, sinf(u * 9.0f - tm * 25.0f) * wob * 0.35f * taper));       // the shot web ripples as it flies out
+		float dist = vlen(sub(c, EYE));
+		float w = (0.006f * dist + 0.012f) * (0.45f + 0.55f * taper);
+		V3 cur[3];
+		cur[0] = c;                                                                   // core strand
+		for (int s = 0; s < 2; s++) {                                                  // two fine threads twisting around it
+			float ph = u * len * 1.6f + (s ? PI_F : 0.0f) - tm * 3.0f, r = w * 1.6f;
+			cur[1 + s] = add(c, add(mul(side, cosf(ph) * r), mul(side2, sinf(ph) * r)));
+		}
+		if (have) {
+			for (int k = 0; k < 3; k++) {
+				float ww = k == 0 ? w : w * 0.45f;
+				dquad(&dm[D_OPAQUE], sub(prev[k], mul(side, ww)), add(prev[k], mul(side, ww)), add(cur[k], mul(side, ww)), sub(cur[k], mul(side, ww)), k == 0 ? core : thread, k == 0 ? 0.98f : 0.9f);
+			}
+		}
+		memcpy(prev, cur, sizeof prev); have = true;
+		if (i > 0 && i < N && (i & 1) == 0) {                                          // tiny cross-fibres, like silk catching the light
+			float fl = w * 7.0f * taper;
+			dquad(&dm[D_OPAQUE], sub(c, mul(side, fl)), sub(add(c, mul(dn, w * 0.8f)), mul(side, fl)), add(add(c, mul(dn, w * 0.8f)), mul(side, fl)), add(c, mul(side, fl)), thread, 0.85f);
+		}
+	}
 	// the splat where it sticks
 	if (t >= 1) {
 		float r = 0.9f + 0.004f * vlen(sub(b, EYE));

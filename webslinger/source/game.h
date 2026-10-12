@@ -62,6 +62,7 @@ typedef struct {
 	float tdx, tdy;                          // touch drag on the bottom screen (pixels this frame)
 	bool swing, sprint, dive, a_held;        // held: R, L, B, A
 	bool a_rel;                              // A released this frame
+	bool wing_p;                             // L tapped (toggles the wingsuit in the air)
 	bool jump_p, zip_p, recenter_p, start_p, select_p, a_p, b_p, up_p, down_p, touch_p;
 	float tx, ty;                            // touch position (valid when touch_p)
 } Input;
@@ -71,6 +72,7 @@ typedef struct {
 	float p[3], v[3];                        // feet position, velocity
 	int state;
 	bool rope, zip; float anchor[3], avis[3], ropeLen, webT, zipT; int hand;
+	bool wing, wallRun; float wingBank;      // wingsuit on; running on a wall (L held while climbing)
 	float zipN[2], zipOut;                   // zip target wall normal (x, z); time left to boost right after a zip ends
 	float fireCd, retryT, wallCd;
 	float charge, boostWin, aTapT, trickT;   // jump charge 0..1; time left to boost after a web lets go; double-tap window; trick time left
