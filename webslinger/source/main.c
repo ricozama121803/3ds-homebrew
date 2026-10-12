@@ -108,6 +108,7 @@ int main(void)
 	const u32 clearBot = C2D_Color32(8, 14, 28, 255), clearTop = C2D_Color32(204, 224, 247, 255);
 	u64 last = svcGetSystemTick();
 	touchPosition lastTouch = { 0, 0 };
+	float tHeldR = 0, tHeldL = 0; bool chordUsed = false;                      // L+R pressed together = web zip
 
 	while (aptMainLoop() && !g.quit) {
 		u64 now = svcGetSystemTick();
@@ -132,14 +133,19 @@ int main(void)
 		if (held & KEY_DUP) in.cy += 1.0f;
 		if (held & KEY_DDOWN) in.cy -= 1.0f;
 		in.cx = in.cx > 1 ? 1 : in.cx < -1 ? -1 : in.cx; in.cy = in.cy > 1 ? 1 : in.cy < -1 ? -1 : in.cy;
-		in.swing = (held & (KEY_R | KEY_ZR)) != 0;
-		in.sprint = (held & (KEY_L | KEY_ZL)) != 0;
+		bool rH = (held & (KEY_R | KEY_ZR)) != 0, lH = (held & (KEY_L | KEY_ZL)) != 0;
+		tHeldR = rH ? tHeldR + dt : 0; tHeldL = lH ? tHeldL + dt : 0;
+		const float CHORD = 0.09f;                                              // both bumpers within 90 ms of each other
+		if (rH && lH && !chordUsed && ((down & (KEY_R | KEY_ZR | KEY_L | KEY_ZL)) != 0) && tHeldR < CHORD + 0.05f && tHeldL < CHORD + 0.05f && fabsf(tHeldR - tHeldL) < CHORD) { in.zip_p = true; chordUsed = true; }
+		if (!rH) chordUsed = false;
+		in.swing = rH && !chordUsed && tHeldR >= CHORD;                         // a lone R press waits one chord window before the web fires
+		in.sprint = lH;
 		in.dive = (held & KEY_B) != 0;
 		in.a_held = (held & KEY_A) != 0;
 		in.a_rel = (hidKeysUp() & KEY_A) != 0;
 		in.jump_p = in.a_p = (down & KEY_A) != 0;
 		in.b_p = (down & KEY_B) != 0;
-		in.zip_p = (down & KEY_X) != 0;
+		in.zip_p |= (down & KEY_X) != 0;
 		in.recenter_p = (down & KEY_Y) != 0;
 		in.start_p = (down & KEY_START) != 0;
 		in.select_p = (down & KEY_SELECT) != 0;

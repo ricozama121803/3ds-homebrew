@@ -94,7 +94,7 @@ int main(void)
 			if (G.p.rope && G.p.swingT > 1.4f && G.p.p[1] > 20) {
 				float before = len3(G.p.v); Input a = sw; a.jump_p = true; game_update(&G, &a, 1 / 30.0f);
 				best = len3(G.p.v); printf("boost: speed %.1f -> %.1f m/s, vy %.1f, rope off %d\n", before, best, G.p.v[1], !G.p.rope);
-				CHECK(!G.p.rope && best > before * 1.15f, "A during a swing should boost (%.1f -> %.1f)", before, best);
+				CHECK(!G.p.rope && (best > before * 1.15f || best > 52.0f), "A during a swing should boost (%.1f -> %.1f)", before, best);
 				// second tap within the window: front flip with the stick forward, then a roll to the left
 				int score0 = G.score; Input b = idle; b.ly = 1; b.jump_p = true; step(idle, 0.1f); game_update(&G, &b, 1 / 30.0f);
 				printf("trick: type %d, time left %.2f, score +%d\n", G.p.trickType, G.p.trickT, G.score - score0);

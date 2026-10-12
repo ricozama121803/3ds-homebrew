@@ -13,11 +13,12 @@ static inline float lerpf(float a, float b, float t) { return a + (b - a) * t; }
 enum { MAT_WHITE, MAT_ROAD, MAT_GLASS, MAT_CREAM, MAT_RED, MAT_TAN, MAT_COPPER, MAT_ROOF, MAT_GRASS, MAT_WATER, MAT_HERO, MAT_GLOW, MAT_CLOUD, MAT_STORE, MAT_COUNT };
 
 // ---- the city: NB x NB blocks, one road texture tile (PITCH metres) per block --------------------------------------------
-#define NB        9
+#define NB        15
 #define PITCH     64.0f
 #define CITY      (NB * PITCH)
-#define MAX_BOX   1100
-#define MAX_CAR   34
+#define MAX_BOX   2000
+#define MAX_CAR   56
+#define MID       (NB / 2)                   // the centre block (landmark tower)
 #define BLOCK_LO  0.2f                       // buildings stand between 20% and 80% of the tile (the rest is street and pavement)
 #define BLOCK_HI  0.8f
 #define WATER_Y   (-3.0f)
@@ -70,6 +71,7 @@ typedef struct {
 	float p[3], v[3];                        // feet position, velocity
 	int state;
 	bool rope, zip; float anchor[3], avis[3], ropeLen, webT, zipT; int hand;
+	float zipN[2], zipOut;                   // zip target wall normal (x, z); time left to boost right after a zip ends
 	float fireCd, retryT, wallCd;
 	float charge, boostWin, aTapT, trickT;   // jump charge 0..1; time left to boost after a web lets go; double-tap window; trick time left
 	int trickType, trickCount;               // 1 front flip, 2 back flip, 3 roll left, 4 roll right

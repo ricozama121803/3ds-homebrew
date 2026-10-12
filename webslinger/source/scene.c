@@ -62,7 +62,28 @@ static float shadev(V3 n) { return shade(n.x, n.y, n.z); }
 // static world
 // =============================================================================================================================
 static const Game *SG;
-static Mesh sm[GRP_COUNT];
+#define DETAIL_RANGE 150.0f                                   // props and cornices are drawn only this close (chunk edge distance)
+static Mesh sm[GRP_COUNT][NCH + 1];
+static int curChunk = NCH;
+#define SM(g) sm[g][curChunk]
+static void chunk_at(float x, float z)
+{
+	int i = (int)(x / PITCH) / CH_BLOCKS, j = (int)(z / PITCH) / CH_BLOCKS;
+	if (x < 0 || z < 0 || i >= CH_N || j >= CH_N) { curChunk = NCH; return; }
+	curChunk = j * CH_N + i;
+}
+bool scene_chunk_visible(const Scene *s, int c)
+{
+	if (c >= NCH) return true;
+	float cx = ((c % CH_N) + 0.5f) * CH_BLOCKS * PITCH, cz = ((c / CH_N) + 0.5f) * CH_BLOCKS * PITCH, cy = 120.0f, r = 0.5f * CH_BLOCKS * PITCH * 1.42f + 135.0f;
+	float vx = cx - s->eye[0], vy = cy - s->eye[1], vz = cz - s->eye[2], d = sqrtf(vx * vx + vy * vy + vz * vz);
+	if (d < r) return true;
+	if (d - r > 820.0f) return false;
+	float ca = (vx * s->fwd[0] + vy * s->fwd[1] + vz * s->fwd[2]) / d;
+	float half = atanf(tanf(s->fov * 0.5f * PI_F / 180.0f) * 1.667f);                          // vertical -> horizontal half angle (400x240), the corner of the screen is a bit more
+	float lim = sqrtf(half * half + (s->fov * 0.5f * PI_F / 180.0f) * (s->fov * 0.5f * PI_F / 180.0f)) + 0.12f + asinf(r / d);
+	return acosf(clampf(ca, -1.0f, 1.0f)) < lim;
+}
 
 static void wall(const Box *b, int side)
 {
@@ -94,7 +115,7 @@ static void wall(const Box *b, int side)
 		if (b->mat == MAT_COPPER) { for (int k = 0; k < 3; k++) { c0[k] = k0; c1[k] = k1; } }
 		SV a = sv(ax, y0, az, (ca * usx) + uoff, (y0 - voff) * vsx, c0, 1), bb = sv(bx, y0, bz, (cb * usx) + uoff, (y0 - voff) * vsx, c0, 1);
 		SV c = sv(bx, y1, bz, (cb * usx) + uoff, (y1 - voff) * vsx, c1, 1), d = sv(ax, y1, az, (ca * usx) + uoff, (y1 - voff) * vsx, c1, 1);
-		quad(&sm[mt], &a, &bb, &c, &d);
+		quad(&SM(mt), &a, &bb, &c, &d);
 	}
 }
 
@@ -103,7 +124,7 @@ static void roof_top(const Box *b)
 	float k = shade(0, 1, 0) * 0.93f, c[3] = { k * b->tint[0], k * b->tint[1], k * b->tint[2] };
 	SV a = sv(b->x0, b->y1, b->z0, b->x0 / 8, b->z0 / 8, c, 1), bb = sv(b->x1, b->y1, b->z0, b->x1 / 8, b->z0 / 8, c, 1);
 	SV cc = sv(b->x1, b->y1, b->z1, b->x1 / 8, b->z1 / 8, c, 1), d = sv(b->x0, b->y1, b->z1, b->x0 / 8, b->z1 / 8, c, 1);
-	quad(&sm[MAT_ROOF], &a, &bb, &cc, &d);
+	quad(&SM(MAT_ROOF), &a, &bb, &cc, &d);
 }
 
 // a pyramid (cap or spire): apex above the middle of the base rectangle
@@ -118,7 +139,7 @@ static void pyramid(int mat, float x0, float z0, float x1, float z1, float y, fl
 		float sh = shadev(n), c[3] = { sh * tint[0], sh * tint[1], sh * tint[2] }, ct[3] = { sh * tint[0] * 1.15f, sh * tint[1] * 1.15f, sh * tint[2] * 1.15f };
 		SV a = sv(bx[i], y, bz[i], bx[i] / 8, y / 8, c, 1), b = sv(bx[j], y, bz[j], bx[j] / 8, y / 8, c, 1), t = sv(cx, y + h, cz, cx / 8, (y + h) / 8, textured ? ct : c, 1);
 		if (!textured) { a.u = a.v = b.u = b.v = t.u = t.v = 0.5f; }
-		tri(&sm[mat], &a, &b, &t);
+		tri(&SM(mat), &a, &b, &t);
 	}
 }
 
@@ -130,7 +151,7 @@ static void water_tower(const Box *b)
 		float lx = cx + ((i & 1) ? 1.2f : -1.2f), lz = cz + ((i & 2) ? 1.2f : -1.2f);
 		float c[3] = { 0.25f * 1.4f, 0.22f * 1.4f, 0.2f * 1.4f };
 		SV a = sv(lx - 0.12f, y, lz, 0.5f, 0.5f, c, 1), bb = sv(lx + 0.12f, y, lz, 0.5f, 0.5f, c, 1), cc = sv(lx + 0.12f, y + 3.0f, lz, 0.5f, 0.5f, c, 1), d = sv(lx - 0.12f, y + 3.0f, lz, 0.5f, 0.5f, c, 1);
-		quad(&sm[MAT_WHITE], &a, &bb, &cc, &d);
+		quad(&SM(MAT_WHITE), &a, &bb, &cc, &d);
 	}
 	const int N = 8;
 	for (int i = 0; i < N; i++) {
@@ -138,10 +159,10 @@ static void water_tower(const Box *b)
 		float sh = shade(cosf(am), 0, sinf(am)), c[3] = { wood[0] * sh * 1.7f, wood[1] * sh * 1.7f, wood[2] * sh * 1.7f };
 		SV p0 = sv(cx + r * cosf(a0), y + 3.0f, cz + r * sinf(a0), 0.5f, 0.5f, c, 1), p1 = sv(cx + r * cosf(a1), y + 3.0f, cz + r * sinf(a1), 0.5f, 0.5f, c, 1);
 		SV p2 = sv(cx + r * cosf(a1), y + 6.0f, cz + r * sinf(a1), 0.5f, 0.5f, c, 1), p3 = sv(cx + r * cosf(a0), y + 6.0f, cz + r * sinf(a0), 0.5f, 0.5f, c, 1);
-		quad(&sm[MAT_WHITE], &p0, &p1, &p2, &p3);
+		quad(&SM(MAT_WHITE), &p0, &p1, &p2, &p3);
 		float sh2 = shade(cosf(am) * 0.5f, 0.85f, sinf(am) * 0.5f), c2[3] = { dark[0] * sh2 * 1.6f, dark[1] * sh2 * 1.6f, dark[2] * sh2 * 1.6f };
 		SV t0 = sv(cx + (r + 0.1f) * cosf(a0), y + 6.0f, cz + (r + 0.1f) * sinf(a0), 0.5f, 0.5f, c2, 1), t1 = sv(cx + (r + 0.1f) * cosf(a1), y + 6.0f, cz + (r + 0.1f) * sinf(a1), 0.5f, 0.5f, c2, 1), t2 = sv(cx, y + 7.5f, cz, 0.5f, 0.5f, c2, 1);
-		tri(&sm[MAT_WHITE], &t0, &t1, &t2);
+		tri(&SM(MAT_WHITE), &t0, &t1, &t2);
 	}
 }
 
@@ -157,7 +178,7 @@ static void dome(const Box *b)
 		float r0 = ring_r[k] * r, r1 = ring_r[k + 1] * r, y0 = y + ring_h[k] * r, y1 = y + ring_h[k + 1] * r;
 		SV p0 = sv(cx + r0 * cosf(a0), y0, cz + r0 * sinf(a0), (cx + r0 * cosf(a0)) / 8, y0 / 8, c, 1), p1 = sv(cx + r0 * cosf(a1), y0, cz + r0 * sinf(a1), (cx + r0 * cosf(a1)) / 8, y0 / 8, c, 1);
 		SV p2 = sv(cx + r1 * cosf(a1), y1, cz + r1 * sinf(a1), (cx + r1 * cosf(a1)) / 8, y1 / 8, c, 1), p3 = sv(cx + r1 * cosf(a0), y1, cz + r1 * sinf(a0), (cx + r1 * cosf(a0)) / 8, y1 / 8, c, 1);
-		if (k == R - 1) tri(&sm[MAT_COPPER], &p0, &p1, &p2); else quad(&sm[MAT_COPPER], &p0, &p1, &p2, &p3);
+		if (k == R - 1) tri(&SM(MAT_COPPER), &p0, &p1, &p2); else quad(&SM(MAT_COPPER), &p0, &p1, &p2, &p3);
 	}
 }
 
@@ -167,7 +188,7 @@ static void prop(int id, float x, float y, float z, float yaw, float sc, const f
 {
 	const PropMesh *pm = &PROPS[id];
 	float cy = cosf(yaw), sy = sinf(yaw);
-	Mesh *m = &sm[MAT_WHITE];
+	Mesh *m = &SM(GRP_DETAIL);
 	for (int t = 0; t < pm->ni; t++) {
 		const float *v = pm->v + pm->i[t] * 9;
 		float nx = v[3] * cy + v[5] * sy, nz = -v[3] * sy + v[5] * cy;
@@ -188,16 +209,16 @@ static void cornice(const Box *b)
 	float tc[3] = { 0.9f * t, 0.88f * t, 0.82f * t };
 	#define LC(k) (const float[3]){ tc[0] * (k), tc[1] * (k), tc[2] * (k) }
 	SV a, b2, c, d;
-	a = sv(x0, y0, z0, 0.5f, 0.5f, LC(sh0 * 0.75f), 1); b2 = sv(x1, y0, z0, 0.5f, 0.5f, LC(sh0 * 0.75f), 1); c = sv(x1, y1, z0, 0.5f, 0.5f, LC(sh0), 1); d = sv(x0, y1, z0, 0.5f, 0.5f, LC(sh0), 1); quad(&sm[MAT_WHITE], &a, &b2, &c, &d);
-	a = sv(x1, y0, z1, 0.5f, 0.5f, LC(sh1 * 0.75f), 1); b2 = sv(x0, y0, z1, 0.5f, 0.5f, LC(sh1 * 0.75f), 1); c = sv(x0, y1, z1, 0.5f, 0.5f, LC(sh1), 1); d = sv(x1, y1, z1, 0.5f, 0.5f, LC(sh1), 1); quad(&sm[MAT_WHITE], &a, &b2, &c, &d);
-	a = sv(x0, y0, z1, 0.5f, 0.5f, LC(sh2 * 0.75f), 1); b2 = sv(x0, y0, z0, 0.5f, 0.5f, LC(sh2 * 0.75f), 1); c = sv(x0, y1, z0, 0.5f, 0.5f, LC(sh2), 1); d = sv(x0, y1, z1, 0.5f, 0.5f, LC(sh2), 1); quad(&sm[MAT_WHITE], &a, &b2, &c, &d);
-	a = sv(x1, y0, z0, 0.5f, 0.5f, LC(sh3 * 0.75f), 1); b2 = sv(x1, y0, z1, 0.5f, 0.5f, LC(sh3 * 0.75f), 1); c = sv(x1, y1, z1, 0.5f, 0.5f, LC(sh3), 1); d = sv(x1, y1, z0, 0.5f, 0.5f, LC(sh3), 1); quad(&sm[MAT_WHITE], &a, &b2, &c, &d);
+	a = sv(x0, y0, z0, 0.5f, 0.5f, LC(sh0 * 0.75f), 1); b2 = sv(x1, y0, z0, 0.5f, 0.5f, LC(sh0 * 0.75f), 1); c = sv(x1, y1, z0, 0.5f, 0.5f, LC(sh0), 1); d = sv(x0, y1, z0, 0.5f, 0.5f, LC(sh0), 1); quad(&SM(GRP_DETAIL), &a, &b2, &c, &d);
+	a = sv(x1, y0, z1, 0.5f, 0.5f, LC(sh1 * 0.75f), 1); b2 = sv(x0, y0, z1, 0.5f, 0.5f, LC(sh1 * 0.75f), 1); c = sv(x0, y1, z1, 0.5f, 0.5f, LC(sh1), 1); d = sv(x1, y1, z1, 0.5f, 0.5f, LC(sh1), 1); quad(&SM(GRP_DETAIL), &a, &b2, &c, &d);
+	a = sv(x0, y0, z1, 0.5f, 0.5f, LC(sh2 * 0.75f), 1); b2 = sv(x0, y0, z0, 0.5f, 0.5f, LC(sh2 * 0.75f), 1); c = sv(x0, y1, z0, 0.5f, 0.5f, LC(sh2), 1); d = sv(x0, y1, z1, 0.5f, 0.5f, LC(sh2), 1); quad(&SM(GRP_DETAIL), &a, &b2, &c, &d);
+	a = sv(x1, y0, z0, 0.5f, 0.5f, LC(sh3 * 0.75f), 1); b2 = sv(x1, y0, z1, 0.5f, 0.5f, LC(sh3 * 0.75f), 1); c = sv(x1, y1, z1, 0.5f, 0.5f, LC(sh3), 1); d = sv(x1, y1, z0, 0.5f, 0.5f, LC(sh3), 1); quad(&SM(GRP_DETAIL), &a, &b2, &c, &d);
 	const float *tp = LC(st);
 	float X[4] = { x0, b->x0, b->x1, x1 }, Z[4] = { z0, b->z0, b->z1, z1 };
 	for (int i = 0; i < 3; i++) for (int j = 0; j < 3; j++) {                       // the 8 ring cells of the 3x3 grid (the middle one is the roof itself)
 		if (i == 1 && j == 1) continue;
 		a = sv(X[i], y1, Z[j], 0.5f, 0.5f, tp, 1); b2 = sv(X[i + 1], y1, Z[j], 0.5f, 0.5f, tp, 1); c = sv(X[i + 1], y1, Z[j + 1], 0.5f, 0.5f, tp, 1); d = sv(X[i], y1, Z[j + 1], 0.5f, 0.5f, tp, 1);
-		quad(&sm[MAT_WHITE], &a, &b2, &c, &d);
+		quad(&SM(GRP_DETAIL), &a, &b2, &c, &d);
 	}
 	#undef LC
 }
@@ -213,6 +234,7 @@ static void street_props(void)
 	for (int j = 0; j < NB; j++) for (int i = 0; i < NB; i++) {
 		if (w->park[j][i]) continue;
 		float x0 = i * PITCH, z0 = j * PITCH, e = 0.174f * PITCH;
+		chunk_at(x0 + 1, z0 + 1);
 		for (int s = 0; s < 4; s++) {
 			unsigned h = hash2(i * 4 + s, j * 7 + 1);
 			bool horiz = s < 2;                                                   // sides 0/1 run along x (north/south), 2/3 along z
@@ -238,8 +260,8 @@ static void roof_props(const Box *b)
 	if (tw < 9 || td < 9 || b->roof != RF_FLAT) return;
 	unsigned h = hash2((int)(b->x0 * 7), (int)(b->z0 * 11));
 	static const float one[3] = { 1, 1, 1 };
-	if (hf(h) < 0.3f) prop(PR_AC, b->x0 + 2.5f + hf(h >> 3) * (tw - 5.0f), b->y1, b->z0 + 2.5f + hf(h >> 5) * (td - 5.0f), hf(h >> 7) < 0.5f ? 0.0f : PI_F / 2, 1.0f, one);
-	if (hf(h >> 9) < 0.3f) prop(PR_VENT, b->x0 + 1.5f + hf(h >> 11) * (tw - 3.0f), b->y1, b->z0 + 1.5f + hf(h >> 13) * (td - 3.0f), 0.0f, 1.0f, one);
+	if (hf(h) < 0.22f) prop(PR_AC, b->x0 + 2.5f + hf(h >> 3) * (tw - 5.0f), b->y1, b->z0 + 2.5f + hf(h >> 5) * (td - 5.0f), hf(h >> 7) < 0.5f ? 0.0f : PI_F / 2, 1.0f, one);
+	if (hf(h >> 9) < 0.2f) prop(PR_VENT, b->x0 + 1.5f + hf(h >> 11) * (tw - 3.0f), b->y1, b->z0 + 1.5f + hf(h >> 13) * (td - 3.0f), 0.0f, 1.0f, one);
 }
 
 // ---- shadows: each building's silhouette projected along the sun onto the street --------------------------------------------------
@@ -271,6 +293,7 @@ static void shadows(void)
 	float kx = -SUN[0] / SUN[1], kz = -SUN[2] / SUN[1];
 	for (int i = 0; i < w->nbox;) {
 		int j = i; P2 pts[40]; int n = 0;
+		chunk_at(0.5f * (w->box[i].x0 + w->box[i].x1), 0.5f * (w->box[i].z0 + w->box[i].z1));
 		while (j < w->nbox && w->box[j].bld == w->box[i].bld) {
 			const Box *b = &w->box[j];
 			if (b->kind == BK_BLDG && n + 8 <= 40) {
@@ -294,7 +317,7 @@ static void shadows(void)
 		const float col[3] = { 0.02f, 0.05f, 0.14f };
 		for (int t = 1; t + 1 < m; t++) {
 			SV p0 = sv(b2[0].x, 0.12f, b2[0].z, 0.5f, 0.5f, col, 0.36f), p1 = sv(b2[t].x, 0.12f, b2[t].z, 0.5f, 0.5f, col, 0.36f), p2 = sv(b2[t + 1].x, 0.12f, b2[t + 1].z, 0.5f, 0.5f, col, 0.36f);
-			tri(&sm[GRP_SHADOW], &p0, &p1, &p2);
+			tri(&SM(GRP_SHADOW), &p0, &p1, &p2);
 		}
 	}
 }
@@ -302,29 +325,32 @@ static void shadows(void)
 // ---- ground, water, trees, backdrop ------------------------------------------------------------------------------------------------
 static void ground(void)
 {
+	curChunk = NCH;
 	const float c[3] = { 0.92f, 0.92f, 0.92f };
 	for (int j = 0; j < NB; j++) for (int i = 0; i < NB; i++) {
 		float x0 = i * PITCH, x1 = x0 + PITCH, z0 = j * PITCH, z1 = z0 + PITCH;
+		chunk_at(x0 + 1, z0 + 1);
 		SV a = sv(x0, 0, z0, 0, 0, c, 1), b = sv(x1, 0, z0, 1, 0, c, 1), cc = sv(x1, 0, z1, 1, 1, c, 1), d = sv(x0, 0, z1, 0, 1, c, 1);
-		quad(&sm[MAT_ROAD], &a, &b, &cc, &d);
+		quad(&SM(MAT_ROAD), &a, &b, &cc, &d);
 		if (SG->w.park[j][i]) {
 			float gx0 = x0 + 0.148f * PITCH, gx1 = x0 + 0.852f * PITCH, gz0 = z0 + 0.148f * PITCH, gz1 = z0 + 0.852f * PITCH, gc[3] = { 0.85f, 0.88f, 0.85f };
 			SV g0 = sv(gx0, 0.1f, gz0, gx0 / 12, gz0 / 12, gc, 1), g1 = sv(gx1, 0.1f, gz0, gx1 / 12, gz0 / 12, gc, 1), g2 = sv(gx1, 0.1f, gz1, gx1 / 12, gz1 / 12, gc, 1), g3 = sv(gx0, 0.1f, gz1, gx0 / 12, gz1 / 12, gc, 1);
-			quad(&sm[MAT_GRASS], &g0, &g1, &g2, &g3);
-			if (j == 3) {                                            // a pond in the middle of the park
+			quad(&SM(MAT_GRASS), &g0, &g1, &g2, &g3);
+			if (j == MID - 1 || j == MID + 3) {                      // a pond in the middle of the park
 				float px0 = x0 + 0.3f * PITCH, px1 = x0 + 0.7f * PITCH, pz0 = z0 + 0.3f * PITCH, pz1 = z0 + 0.7f * PITCH, pc[3] = { 0.9f, 0.95f, 1.0f };
 				SV q0 = sv(px0, 0.16f, pz0, px0 / 20, pz0 / 20, pc, 1), q1 = sv(px1, 0.16f, pz0, px1 / 20, pz0 / 20, pc, 1), q2 = sv(px1, 0.16f, pz1, px1 / 20, pz1 / 20, pc, 1), q3 = sv(px0, 0.16f, pz1, px0 / 20, pz1 / 20, pc, 1);
-				quad(&sm[MAT_WATER], &q0, &q1, &q2, &q3);
+				quad(&SM(MAT_WATER), &q0, &q1, &q2, &q3);
 			}
 		}
 	}
+	curChunk = NCH;
 	// the sea: a coarse grid so the per-vertex haze still works, and a quay wall around the island
-	const int G = 20; const float ext = 1500.0f, cx = CITY * 0.5f, cell = 2 * ext / G;
+	const int G = 24; const float ext = 1800.0f, cx = CITY * 0.5f, cell = 2 * ext / G;
 	const float wc[3] = { 0.85f, 0.92f, 1.0f };
 	for (int j = 0; j < G; j++) for (int i = 0; i < G; i++) {
 		float x0 = cx - ext + i * cell, x1 = x0 + cell, z0 = cx - ext + j * cell, z1 = z0 + cell;
 		SV a = sv(x0, WATER_Y, z0, x0 / 50, z0 / 50, wc, 1), b = sv(x1, WATER_Y, z0, x1 / 50, z0 / 50, wc, 1), cc = sv(x1, WATER_Y, z1, x1 / 50, z1 / 50, wc, 1), d = sv(x0, WATER_Y, z1, x0 / 50, z1 / 50, wc, 1);
-		quad(&sm[MAT_WATER], &a, &b, &cc, &d);
+		quad(&SM(MAT_WATER), &a, &b, &cc, &d);
 	}
 	Box q; memset(&q, 0, sizeof q);
 	q.x0 = 0; q.z0 = 0; q.x1 = CITY; q.z1 = CITY; q.y0 = q.yb = WATER_Y; q.y1 = 0; q.mat = MAT_ROOF; q.tint[0] = q.tint[1] = q.tint[2] = 0.7f;
@@ -358,11 +384,12 @@ static void trees(void)
 	const World *w = &SG->w;
 	for (int j = 0; j < NB; j++) for (int i = 0; i < NB; i++) {
 		if (w->park[j][i]) {
+			chunk_at(i * PITCH + 1, j * PITCH + 1);
 			for (int k = 0; k < (SG->lowq ? 16 : 9); k++) {
 				float x = (i + 0.2f + 0.6f * rndf(&st)) * PITCH, z = (j + 0.2f + 0.6f * rndf(&st)) * PITCH;
-				if (j == 3 && x > (i + 0.28f) * PITCH && x < (i + 0.72f) * PITCH && z > (j + 0.28f) * PITCH && z < (j + 0.72f) * PITCH) continue;   // pond
+				if ((j == MID - 1 || j == MID + 3) && x > (i + 0.28f) * PITCH && x < (i + 0.72f) * PITCH && z > (j + 0.28f) * PITCH && z < (j + 0.72f) * PITCH) continue;   // pond
 				float tn[3] = { 0.85f + 0.3f * rndf(&st), 0.9f + 0.2f * rndf(&st), 0.85f + 0.3f * rndf(&st) };
-				if (SG->lowq) tree(&sm[MAT_WHITE], x, z, 1.1f + rndf(&st) * 0.9f, pal[rnd_next(&st) % 5]);
+				if (SG->lowq) tree(&SM(MAT_WHITE), x, z, 1.1f + rndf(&st) * 0.9f, pal[rnd_next(&st) % 5]);
 				else prop(PR_TREE0 + (int)(rndf(&st) * 2.99f), x, 0.0f, z, rndf(&st) * 6.28f, 1.0f + rndf(&st) * 0.7f, tn);
 			}
 			continue;
@@ -372,9 +399,10 @@ static void trees(void)
 
 static void backdrop(void)
 {
+	curChunk = NCH;
 	unsigned st = 0xBACD0u;
 	for (int i = 0; i < 34; i++) {
-		float a = i * 2 * PI_F / 34 + rndf(&st) * 0.1f, r = 800 + rndf(&st) * 320, cx = CITY * 0.5f + cosf(a) * r, cz = CITY * 0.5f + sinf(a) * r;
+		float a = i * 2 * PI_F / 34 + rndf(&st) * 0.1f, r = CITY * 0.5f + 330 + rndf(&st) * 330, cx = CITY * 0.5f + cosf(a) * r, cz = CITY * 0.5f + sinf(a) * r;
 		float w = 30 + rndf(&st) * 50, d = 30 + rndf(&st) * 50, h = 50 + rndf(&st) * 170;
 		Box b; memset(&b, 0, sizeof b);
 		b.x0 = cx - w / 2; b.x1 = cx + w / 2; b.z0 = cz - d / 2; b.z1 = cz + d / 2; b.y0 = b.yb = WATER_Y; b.y1 = h;
@@ -388,6 +416,7 @@ static void backdrop(void)
 // ---- sky -----------------------------------------------------------------------------------------------------------------------
 static void build_sky(void)
 {
+	curChunk = NCH;
 	static const float el[] = { -18, 0, 5, 12, 22, 36, 54, 75, 90 };
 	const int NE = 9, NS = 32;
 	const float R = 900.0f;
@@ -409,7 +438,7 @@ static void build_sky(void)
 		int j2 = (j + 1) % NS;
 		SV a = sv(pos[i][j][0], pos[i][j][1], pos[i][j][2], 0.5f, 0.5f, col[i][j], 1), b = sv(pos[i][j2][0], pos[i][j2][1], pos[i][j2][2], 0.5f, 0.5f, col[i][j2], 1);
 		SV c = sv(pos[i + 1][j2][0], pos[i + 1][j2][1], pos[i + 1][j2][2], 0.5f, 0.5f, col[i + 1][j2], 1), d = sv(pos[i + 1][j][0], pos[i + 1][j][1], pos[i + 1][j][2], 0.5f, 0.5f, col[i + 1][j], 1);
-		quad(&sm[GRP_SKY], &a, &b, &c, &d);
+		quad(&SM(GRP_SKY), &a, &b, &c, &d);
 	}
 	unsigned st = 0xC10D5u;
 	for (int i = 0; i < 16; i++) {                                    // cloud puffs
@@ -423,7 +452,7 @@ static void build_sky(void)
 		float P[4][3];
 		for (int k = 0; k < 4; k++) { float sx = (k == 0 || k == 3) ? -1.0f : 1.0f, sy = (k < 2) ? -1.0f : 1.0f; for (int q = 0; q < 3; q++) P[k][q] = d[q] * rr + r[q] * w * sx + u[q] * h * sy; }
 		SV a0 = sv(P[0][0], P[0][1], P[0][2], 0, 0, c, 0.95f), b0 = sv(P[1][0], P[1][1], P[1][2], 1, 0, c, 0.95f), c0 = sv(P[2][0], P[2][1], P[2][2], 1, 1, c, 0.95f), d0 = sv(P[3][0], P[3][1], P[3][2], 0, 1, c, 0.95f);
-		quad(&sm[GRP_CLOUD], &a0, &b0, &c0, &d0);
+		quad(&SM(GRP_CLOUD), &a0, &b0, &c0, &d0);
 	}
 	{                                                                    // sun glow
 		const float *S = SUN;
@@ -435,7 +464,7 @@ static void build_sky(void)
 			float P[4][3];
 			for (int k = 0; k < 4; k++) { float sx = (k == 0 || k == 3) ? -1.0f : 1.0f, sy = (k < 2) ? -1.0f : 1.0f; for (int q = 0; q < 3; q++) P[k][q] = S[q] * 850.0f + r[q] * layers[l].size * sx + u[q] * layers[l].size * sy; }
 			SV a0 = sv(P[0][0], P[0][1], P[0][2], 0, 0, layers[l].c, layers[l].a), b0 = sv(P[1][0], P[1][1], P[1][2], 1, 0, layers[l].c, layers[l].a), c0 = sv(P[2][0], P[2][1], P[2][2], 1, 1, layers[l].c, layers[l].a), d0 = sv(P[3][0], P[3][1], P[3][2], 0, 1, layers[l].c, layers[l].a);
-			quad(&sm[GRP_SUN], &a0, &b0, &c0, &d0);
+			quad(&SM(GRP_SUN), &a0, &b0, &c0, &d0);
 		}
 	}
 }
@@ -452,6 +481,7 @@ static void build_static_pass(void)
 	ground();
 	for (int i = 0; i < SG->w.nbox; i++) {
 		const Box *b = &SG->w.box[i];
+		chunk_at(0.5f * (b->x0 + b->x1), 0.5f * (b->z0 + b->z1));
 		if (b->kind == BK_TOWER) { water_tower(b); continue; }
 		if (b->kind == BK_DOME) { dome(b); continue; }
 		for (int s = 0; s < 4; s++) wall(b, s);
@@ -473,13 +503,13 @@ static void build_static_pass(void)
 int scene_build_static(const Game *g, Scene *s, Vtx *buf)
 {
 	SG = g;
-	for (int i = 0; i < GRP_COUNT; i++) { sm[i].v = NULL; sm[i].n = 0; sm[i].cap = 0; }
+	for (int i = 0; i < GRP_COUNT; i++) for (int c = 0; c <= NCH; c++) { sm[i][c].v = NULL; sm[i][c].n = 0; sm[i][c].cap = 0; }
 	build_static_pass();
 	int total = 0;
-	for (int i = 0; i < GRP_COUNT; i++) { s->sfirst[i] = total; s->scount[i] = sm[i].n; total += sm[i].n; }
+	for (int i = 0; i < GRP_COUNT; i++) for (int c = 0; c <= NCH; c++) { s->cfirst[i][c] = total; s->ccount[i][c] = sm[i][c].n; total += sm[i][c].n; if (c == NCH) { s->sfirst[i] = s->cfirst[i][c]; s->scount[i] = s->ccount[i][c]; } }
 	if (!buf) return total;
 	s->stat = buf;
-	for (int i = 0; i < GRP_COUNT; i++) { sm[i].v = buf + s->sfirst[i]; sm[i].cap = s->scount[i]; sm[i].n = 0; }
+	for (int i = 0; i < GRP_COUNT; i++) for (int c = 0; c <= NCH; c++) { sm[i][c].v = buf + s->cfirst[i][c]; sm[i][c].cap = s->ccount[i][c]; sm[i][c].n = 0; }
 	build_static_pass();
 	return total;
 }
@@ -865,6 +895,11 @@ void scene_build(const Game *g, Scene *s)
 	s->view[12] = s->view[13] = s->view[14] = 0; s->view[15] = 1;
 	s->skyview[3] = s->skyview[7] = s->skyview[11] = 0; s->skyview[12] = s->skyview[13] = s->skyview[14] = 0; s->skyview[15] = 1;
 	s->fov = cam->fov;
+	for (int c = 0; c <= NCH; c++) {
+		s->vis[c] = scene_chunk_visible(s, c);
+		float cx = ((c % CH_N) + 0.5f) * CH_BLOCKS * PITCH, cz = ((c / CH_N) + 0.5f) * CH_BLOCKS * PITCH;
+		s->near[c] = c < NCH && s->vis[c] && sqrtf((cx - s->eye[0]) * (cx - s->eye[0]) + (cz - s->eye[2]) * (cz - s->eye[2])) - 0.5f * CH_BLOCKS * PITCH * 1.42f < DETAIL_RANGE;
+	}
 	EYE = v3(s->eye[0], s->eye[1], s->eye[2]); CR = v3(R[0], R[1], R[2]); CU = v3(U[0], U[1], U[2]);
 
 	static const int caps[D_COUNT] = { CAP_D_OPAQUE, CAP_D_HERO, CAP_D_ALPHA, CAP_D_ADD };

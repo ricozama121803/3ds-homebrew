@@ -4,6 +4,8 @@
 
 #define GRAV        30.0f
 #define MAX_ROPE    95.0f
+#define ZIP_RANGE   130.0f
+#define ZIP_SPEED   70.0f
 #define RUN_SPEED   8.5f
 #define SPRINT_SPEED 15.0f
 #define JUMP_V      12.5f
@@ -60,11 +62,11 @@ static void spawn_beacon(Game *g)
 		int axis = rnd_next(&g->rng) & 1, line = 1 + (int)(rnd_next(&g->rng) % (NB - 1));
 		float along = 30.0f + rndf(&g->rng) * (CITY - 60.0f), jitter = (rndf(&g->rng) - 0.5f) * 6.0f;
 		float x = axis == 0 ? line * PITCH + jitter : along, z = axis == 0 ? along : line * PITCH + jitter;
-		float cx = x - CITY * 0.5f, cz = z - CITY * 0.5f, near = 1.0f - sqrtf(cx * cx + cz * cz) / 330.0f;
+		float cx = x - CITY * 0.5f, cz = z - CITY * 0.5f, near = 1.0f - sqrtf(cx * cx + cz * cz) / (0.57f * CITY);
 		float y = 20.0f + rndf(&g->rng) * 36.0f + (near > 0 ? near * 60.0f * rndf(&g->rng) : 0);
 		float dx = x - g->p.p[0], dz = z - g->p.p[2];
 		float d2 = dx * dx + dz * dz;
-		if (tries < 11 && (d2 < 90.0f * 90.0f || d2 > 240.0f * 240.0f)) continue;       // not too close, not across the whole city
+		if (tries < 11 && (d2 < 110.0f * 110.0f || d2 > 330.0f * 330.0f)) continue;       // not too close, not across the whole city
 		g->bc.on = true; g->bc.p[0] = x; g->bc.p[1] = y; g->bc.p[2] = z; g->bc.t = 0;
 		return;
 	}
@@ -77,7 +79,7 @@ void game_respawn(Game *g)
 	float sx = clampf(floorf(x / PITCH + 0.5f) * PITCH, 0, CITY), sz = clampf(floorf(z / PITCH + 0.5f) * PITCH, 0, CITY);
 	x = clampf(x, 6, CITY - 6); z = clampf(z, 6, CITY - 6);
 	if (fabsf(x - sx) < fabsf(z - sz)) x = sx; else z = sz;
-	if (g->state == GS_TITLE && p->p[1] == 0) { x = 4 * PITCH; z = 3 * PITCH; }
+	if (g->state == GS_TITLE && p->p[1] == 0) { x = MID * PITCH; z = (MID - 1) * PITCH; }
 	float keep = p->face;
 	memset(p, 0, sizeof *p);
 	p->p[0] = x; p->p[1] = 0; p->p[2] = z; p->state = ST_GROUND;
@@ -93,7 +95,7 @@ void game_start(Game *g, int mode)
 	memset(g->pop, 0, sizeof g->pop);
 	Player *p = &g->p;
 	memset(p, 0, sizeof *p);
-	p->p[0] = 4 * PITCH; p->p[2] = 3 * PITCH; p->state = ST_GROUND;
+	p->p[0] = MID * PITCH; p->p[2] = (MID - 1) * PITCH; p->state = ST_GROUND;
 	p->face = yaw_of(0.5f * PITCH, 1.5f * PITCH);
 	g->cam.yaw = p->face; g->cam.pitch = -0.2f; g->cam.dist = 9.5f; g->cam.fov = 62; g->cam.manualT = 0;
 	spawn_beacon(g);
@@ -127,6 +129,38 @@ static bool pick_anchor(const Game *g, bool zip, const float head[2], float out[
 	return found;
 }
 
+
+// web zip target: the roof edge of a building ahead. Rays fan out up and ahead; a hit on a wall near its top gives the anchor just above the edge.
+static bool pick_zip(const Game *g, const float head[2], float anchor[3], float vis[3], float nrm[2])
+{
+	const Player *p = &g->p;
+	static const float yoff[7] = { 0, 10, -10, 22, -22, 38, -38 }, pit[8] = { 12, 20, 28, 36, 45, 55, 65, 75 };
+	const float o[3] = { p->p[0], p->p[1] + 1.4f, p->p[2] };
+	float best = -1e9f; bool found = false;
+	for (int yi = 0; yi < 7; yi++) {
+		float ca = cosf(DEG(yoff[yi])), sa = sinf(DEG(yoff[yi]));
+		float hx = head[0] * ca - head[1] * sa, hz = head[0] * sa + head[1] * ca;
+		for (int pi = 0; pi < 8; pi++) {
+			float pr = DEG(pit[pi]), d[3] = { hx * cosf(pr), sinf(pr), hz * cosf(pr) }, n[3];
+			float t = city_ray(&g->w, o, d, ZIP_RANGE, n);
+			if (t < 12.0f || fabsf(n[1]) > 0.5f) continue;                                          // need a wall
+			float hit[3] = { o[0] + d[0] * t, o[1] + d[1] * t, o[2] + d[2] * t };
+			float q[3] = { hit[0] - n[0] * 0.6f, 1000.0f, hit[2] - n[2] * 0.6f };
+			float roof = city_ground_below(&g->w, q);
+			float gain = roof - p->p[1], below = roof - hit[1];
+			if (gain < 8.0f || below < -0.5f || below > 16.0f) continue;                              // the hit must be just under the roof edge
+			float sc = -fabsf(yoff[yi]) * 0.35f - fabsf(t - 60.0f) * 0.08f + fminf(gain, 60.0f) * 0.2f - below * 0.25f - fabsf(n[0] * head[1] - n[2] * head[0]) * 4.0f;
+			if (sc > best) {
+				best = sc; found = true;
+				anchor[0] = hit[0] + n[0] * 0.2f; anchor[1] = roof + 1.5f; anchor[2] = hit[2] + n[2] * 0.2f;      // body centre target: feet end up 0.5 m above the roof
+				vis[0] = hit[0] + n[0] * 0.05f; vis[1] = roof; vis[2] = hit[2] + n[2] * 0.05f;
+				nrm[0] = n[0]; nrm[1] = n[2];
+			}
+		}
+	}
+	return found;
+}
+
 static float s_padx;                                           // this frame's lateral pad input (set by player_update)
 static void heading_of(const Game *g, float mx, float mz, float mag, float head[2])
 {
@@ -144,14 +178,16 @@ static bool fire_web(Game *g, bool zip, float mx, float mz, float mag)
 {
 	Player *p = &g->p;
 	float head[2], a[3], av[3];
-	heading_of(g, mx, mz, mag, head);
-	if (!pick_anchor(g, zip, head, a, av)) {
+	if (zip) { head[0] = sinf(g->cam.yaw); head[1] = -cosf(g->cam.yaw); }                           // a zip aims where the camera looks
+	else heading_of(g, mx, mz, mag, head);
+	float zn[2] = { 0, 0 };
+	if (!(zip ? pick_zip(g, head, a, av, zn) : pick_anchor(g, false, head, a, av))) {
 		if (p->noAnchorT <= 0) { game_popup(g, "No web target", 0xFF70B0FF); p->noAnchorT = 1.2f; }
 		p->retryT = 0.2f;
 		return false;
 	}
 	const float c[3] = { p->p[0], p->p[1] + 1.0f, p->p[2] };
-	memcpy(p->anchor, a, sizeof a); memcpy(p->avis, av, sizeof av);
+	memcpy(p->anchor, a, sizeof a); memcpy(p->avis, av, sizeof av); p->zipN[0] = zn[0]; p->zipN[1] = zn[1];
 	p->ropeLen = sqrtf((a[0] - c[0]) * (a[0] - c[0]) + (a[1] - c[1]) * (a[1] - c[1]) + (a[2] - c[2]) * (a[2] - c[2]));
 	p->trickT = 0;
 	p->rope = true; p->zip = zip; p->zipT = 0; p->webT = 0; p->hand ^= 1; p->fireCd = 0.15f; p->swingT = 0;
@@ -186,6 +222,7 @@ static void player_update(Game *g, const Input *in, float dt, bool allowCam)
 	if (p->landT > 0) p->landT -= dt;
 	if (p->rollT > 0) p->rollT -= dt;
 	if (p->boostWin > 0) p->boostWin -= dt;
+	if (p->zipOut > 0) p->zipOut -= dt;
 	if (p->aTapT > 0) p->aTapT -= dt;
 	if (p->trickT > 0) p->trickT -= dt;
 	if (p->webT < 1) p->webT += dt * 12.0f;
@@ -230,9 +267,9 @@ static void player_update(Game *g, const Input *in, float dt, bool allowCam)
 		if (in->zip_p && !p->zip && p->fireCd <= 0) { release_rope(p); if (fire_web(g, true, mx, mz, mag)) p->zipT = 0; }
 		if (!in->swing && p->rope && !p->zip) release_rope(p);
 		if (in->jump_p) {
-			bool canBoost = (p->rope && !p->zip) || (p->boostWin > 0 && !p->rope && p->trickT <= 0);
+			bool canBoost = (p->rope && !p->zip) || (p->boostWin > 0 && !p->rope && (p->trickT <= 0 || p->zipOut > 0));
 			if (canBoost) {                                                                    // A at the end of a swing (or just after the web lets go): launch
-				release_rope(p); p->boostWin = 0;
+				release_rope(p); p->boostWin = 0; p->zipOut = 0; p->trickT = 0;
 				float vh = sqrtf(p->v[0] * p->v[0] + p->v[2] * p->v[2]);
 				if (vh > 1) { float k = fminf(1.0f + 14.0f / vh, 1.45f); p->v[0] *= k; p->v[2] *= k; }
 				p->v[1] = fmaxf(p->v[1], 0.0f) + 15.0f; p->fireCd = 0.25f; p->retryT = 0.35f; p->aTapT = 0.35f;
@@ -258,9 +295,17 @@ static void player_update(Game *g, const Input *in, float dt, bool allowCam)
 		}
 		if (p->rope && p->zip) {
 			p->zipT += dt;
-			p->ropeLen = fmaxf(0.0f, p->ropeLen - 60.0f * dt);
-			for (int k = 0; k < 3; k++) p->v[k] += (rn[k] * 50.0f - p->v[k]) * fminf(1.0f, 7.0f * dt);
-			if (dist < 4.5f || p->zipT > 1.5f) { release_rope(p); p->v[1] = fmaxf(p->v[1], 6.0f); p->fireCd = 0.2f; }
+			float want = fminf(ZIP_SPEED, 18.0f + p->zipT * 140.0f);
+			for (int k = 0; k < 3; k++) p->v[k] += (rn[k] * want - p->v[k]) * fminf(1.0f, 9.0f * dt);
+			if (dist < 3.0f || p->zipT > 2.6f) {                                                      // arrived: pop up over the roof edge, tumbling, with a boost window
+				if (dist < 6.0f) { p->p[0] = p->anchor[0]; p->p[1] = p->anchor[1] - 1.0f; p->p[2] = p->anchor[2]; }
+				float sp0 = len3(p->v);
+				release_rope(p); p->boostWin = 0.9f; p->zipOut = 0.9f; p->fireCd = 0.2f; p->retryT = 0.3f;
+				for (int k = 0; k < 3; k++) p->v[k] *= 0.5f;
+				p->v[0] += -p->zipN[0] * 6.0f; p->v[2] += -p->zipN[1] * 6.0f;
+				p->v[1] = fmaxf(p->v[1], 14.0f);
+				if (sp0 > 20.0f) { p->trickType = 1; p->trickT = TRICK_DUR; p->trickCount = 0; }
+			}
 		} else {
 			float gr = (GRAV + (in->dive && !p->rope ? 40.0f : 0.0f)) * (p->trickT > 0 ? 0.6f : 1.0f);
 			p->v[1] -= gr * dt;
@@ -311,7 +356,9 @@ static void player_update(Game *g, const Input *in, float dt, bool allowCam)
 		}
 #endif
 		float d[3] = { p->v[0] * dt, p->v[1] * dt, p->v[2] * dt };
-		Contact k; city_move(&g->w, p->p, d, &k);
+		Contact k; memset(&k, 0, sizeof k);
+		if (p->rope && p->zip) { for (int q = 0; q < 3; q++) p->p[q] += d[q]; }                      // the zip flies along the web through clear air
+		else city_move(&g->w, p->p, d, &k);
 		if (p->rope && !p->zip) {                                                                    // the rope is a hard limit: pull the body back inside it
 			float c2[3] = { p->p[0], p->p[1] + 1.0f, p->p[2] }, r2[3] = { p->anchor[0] - c2[0], p->anchor[1] - c2[1], p->anchor[2] - c2[2] };
 			float d2 = len3(r2);
@@ -433,7 +480,7 @@ static void cam_update(Game *g, const Input *in, float dt, bool manual)
 	c->dist += (wantD - c->dist) * fminf(1.0f, dt * 2.0f);
 
 	if (g->state == GS_TITLE) {                                                                       // slow orbit around the skyline, from over the water
-		float a = g->time * 0.12f + 0.6f, r = 470.0f, cx = CITY * 0.5f;
+		float a = g->time * 0.12f + 0.6f, r = 0.8f * CITY, cx = CITY * 0.5f;
 		c->eye[0] = cx + cosf(a) * r; c->eye[1] = 150.0f; c->eye[2] = cx + sinf(a) * r;
 		float dx = cx - c->eye[0], dy = 95.0f - c->eye[1], dz = cx - c->eye[2];
 		c->yaw = yaw_of(dx, dz); c->pitch = atan2f(dy, sqrtf(dx * dx + dz * dz));

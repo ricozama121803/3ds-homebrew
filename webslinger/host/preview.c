@@ -164,12 +164,14 @@ static void draw_scene(const Scene *s)
 	draw_range(&sky, s->stat, s->sfirst[GRP_SKY], s->scount[GRP_SKY], MAT_WHITE, BM_OPAQUE, false, false, true);
 	draw_range(&sky, s->stat, s->sfirst[GRP_CLOUD], s->scount[GRP_CLOUD], MAT_CLOUD, BM_ALPHA, false, false, true);
 	draw_range(&sky, s->stat, s->sfirst[GRP_SUN], s->scount[GRP_SUN], MAT_GLOW, BM_ADD, false, false, true);
+	{ long vt = 0; for (int m = 0; m < MAT_COUNT; m++) for (int c = 0; c <= NCH; c++) if (s->vis[c]) vt += s->ccount[m][c]; for (int c = 0; c < NCH; c++) if (s->near[c]) vt += s->ccount[GRP_DETAIL][c]; if (getenv("VISTRIS")) fprintf(stderr, "visible static triangles %ld\n", vt / 3); }
 	g_fog = true;
-	for (int m = 0; m < MAT_COUNT; m++) if (m != MAT_GLOW && m != MAT_CLOUD && m != MAT_HERO && s->scount[m]) draw_range(&wc, s->stat, s->sfirst[m], s->scount[m], m, BM_OPAQUE, true, true, m == MAT_WHITE);
+	for (int m = 0; m < MAT_COUNT; m++) if (m != MAT_GLOW && m != MAT_CLOUD && m != MAT_HERO) for (int c = 0; c <= NCH; c++) if (s->vis[c] && s->ccount[m][c]) draw_range(&wc, s->stat, s->cfirst[m][c], s->ccount[m][c], m, BM_OPAQUE, true, true, m == MAT_WHITE);
+	for (int c = 0; c < NCH; c++) if (s->near[c] && s->ccount[GRP_DETAIL][c]) draw_range(&wc, s->stat, s->cfirst[GRP_DETAIL][c], s->ccount[GRP_DETAIL][c], MAT_WHITE, BM_OPAQUE, true, true, true);
 	draw_range(&wc, s->dyn, s->first[D_OPAQUE], s->count[D_OPAQUE], MAT_WHITE, BM_OPAQUE, true, true, true);
 	draw_range(&wc, s->dyn, s->first[D_HERO], s->count[D_HERO], MAT_HERO, BM_OPAQUE, true, true, true);
 	g_fog = false;
-	draw_range(&wc, s->stat, s->sfirst[GRP_SHADOW], s->scount[GRP_SHADOW], MAT_WHITE, BM_ALPHA, true, false, true);
+	for (int c = 0; c <= NCH; c++) if (s->vis[c] && s->ccount[GRP_SHADOW][c]) draw_range(&wc, s->stat, s->cfirst[GRP_SHADOW][c], s->ccount[GRP_SHADOW][c], MAT_WHITE, BM_ALPHA, true, false, true);
 	draw_range(&wc, s->dyn, s->first[D_ALPHA], s->count[D_ALPHA], MAT_GLOW, BM_ALPHA, true, false, true);
 	draw_range(&wc, s->dyn, s->first[D_ADD], s->count[D_ADD], MAT_GLOW, BM_ADD, true, false, true);
 }
@@ -253,7 +255,7 @@ int main(int argc, char **argv)
 	scene_build_static(&G, &S, stat_buf);
 	S.dyn = dyn_buf;
 	printf("boxes %d, static vertices %d (%d triangles, %.1f MB)\n", G.w.nbox, total, total / 3, total * 36 / 1048576.0);
-	for (int i = 0; i < GRP_COUNT; i++) if (S.scount[i]) printf("  group %2d: %6d\n", i, S.scount[i]);
+	for (int i = 0; i < GRP_COUNT; i++) { int t = 0; for (int c = 0; c <= NCH; c++) t += S.ccount[i][c]; if (t) printf("  group %2d: %6d\n", i, t); }
 	memset(&idle, 0, sizeof idle);
 
 	// title screen (the bot swings in the background)
@@ -311,7 +313,7 @@ int main(int argc, char **argv)
 	}
 	// 4: aerial views of the whole city
 	aer_on = 1;
-	aer[0] = 300; aer[1] = 150; aer[2] = -140; aer[3] = PI_F; aer[4] = -0.3f; aer[5] = 70; place(4 * PITCH, 0, 3 * PITCH, 0); snapfree(out, "a1_overview");
+	aer[0] = 300; aer[1] = 150; aer[2] = -140; aer[3] = PI_F; aer[4] = -0.3f; aer[5] = 70; place(MID * PITCH, 0, (MID - 1) * PITCH, 0); snapfree(out, "a1_overview");
 	aer[0] = 250; aer[1] = 30; aer[2] = 190; aer[3] = DEG(35); aer[4] = 0.05f; aer[5] = 66; snapfree(out, "a2_street");
 	aer[0] = 90; aer[1] = 250; aer[2] = 90; aer[3] = DEG(45); aer[4] = -0.8f; aer[5] = 66; snapfree(out, "a3_down");
 	aer[0] = 4.5f * PITCH; aer[1] = 3.2f; aer[2] = 2 * PITCH + 4; aer[3] = DEG(25); aer[4] = 0.08f; aer[5] = 70; snapfree(out, "a4_ground");

@@ -107,6 +107,28 @@ static void draw_group(const Scene *s, bool dynamic, int idx, int mat)
 	C3D_DrawArrays(GPU_TRIANGLES, first, count);
 }
 
+static void draw_chunks(const Scene *s, int grp, int mat)                        // one draw per visible chunk
+{
+	bool bound = false;
+	for (int c = 0; c <= NCH; c++) {
+		int count = s->ccount[grp][c];
+		if (count <= 0 || !s->vis[c]) continue;
+		if (!bound) { C3D_TexBind(0, &s_tex[mat]); bound = true; }
+		C3D_DrawArrays(GPU_TRIANGLES, s->cfirst[grp][c], count);
+	}
+}
+
+static void draw_chunks_near(const Scene *s, int grp, int mat)
+{
+	bool bound = false;
+	for (int c = 0; c < NCH; c++) {
+		int count = s->ccount[grp][c];
+		if (count <= 0 || !s->near[c]) continue;
+		if (!bound) { C3D_TexBind(0, &s_tex[mat]); bound = true; }
+		C3D_DrawArrays(GPU_TRIANGLES, s->cfirst[grp][c], count);
+	}
+}
+
 void gfx_draw(const Scene *s, float eye, float slider)
 {
 	C3D_BindProgram(&s_prog);
@@ -143,7 +165,8 @@ void gfx_draw(const Scene *s, float eye, float slider)
 	C3D_DepthTest(true, GPU_GREATER, GPU_WRITE_ALL);
 	blend_opaque();
 	fog(true);
-	for (int m = 0; m < MAT_COUNT; m++) if (m != MAT_GLOW && m != MAT_CLOUD && m != MAT_HERO) draw_group(s, false, m, m);
+	for (int m = 0; m < MAT_COUNT; m++) if (m != MAT_GLOW && m != MAT_CLOUD && m != MAT_HERO) draw_chunks(s, m, m);
+	draw_chunks_near(s, GRP_DETAIL, MAT_WHITE);
 
 	// 3. dynamic opaque (hero, web, cars), then the street shadows and soft blobs (blended), then additive glows
 	use_buf(s->dyn);
@@ -154,7 +177,7 @@ void gfx_draw(const Scene *s, float eye, float slider)
 	blend_alpha(); draw_group(s, true, D_ALPHA, MAT_GLOW);
 	blend_add();   draw_group(s, true, D_ADD, MAT_GLOW);
 	use_buf(s->stat);
-	blend_alpha(); draw_group(s, false, GRP_SHADOW, MAT_WHITE);
+	blend_alpha(); draw_chunks(s, GRP_SHADOW, MAT_WHITE);
 }
 
 void gfx_end_3d(void)

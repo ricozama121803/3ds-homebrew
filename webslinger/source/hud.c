@@ -157,7 +157,7 @@ void hud_top(const Game *g, const Scene *s)
 // ---- bottom screen: the city map ---------------------------------------------------------------------------------------------------------
 #define MAP_X 6.0f
 #define MAP_Y 6.0f
-#define MAP_S 0.4f
+#define MAP_S (230.0f / CITY)
 
 static void map_pt(float wx, float wz, float *x, float *y) { *x = MAP_X + wx * MAP_S; *y = MAP_Y + wz * MAP_S; }
 
@@ -176,7 +176,7 @@ static void city_map(const Game *g)
 		float t = clampf(top / 200.0f, 0, 1);
 		panel(mx, my, sz * MAP_S, sz * MAP_S, RGBA((int)(60 + 60 * t), (int)(130 + 70 * t), (int)(180 + 60 * t), 255));
 	}
-	{ float mx, my; map_pt(4.5f * PITCH - 6, 4.5f * PITCH - 6, &mx, &my); panel(mx, my, 12 * MAP_S * 1.4f, 12 * MAP_S * 1.4f, RGBA(255, 230, 150, 255)); }
+	{ float mx, my; map_pt((MID + 0.5f) * PITCH - 6, (MID + 0.5f) * PITCH - 6, &mx, &my); panel(mx, my, 12 * MAP_S * 1.4f, 12 * MAP_S * 1.4f, RGBA(255, 230, 150, 255)); }
 	// beacon
 	if (g->bc.on) {
 		float bx, by; map_pt(g->bc.p[0], g->bc.p[2], &bx, &by);
@@ -213,7 +213,7 @@ static void help_page(void)
 	static const char *rows[][2] = {
 		{ "Circle Pad", "run / steer" }, { "R  (hold)", "web swing" }, { "A  (tap)", "jump" },
 		{ "A  (hold, release)", "charge a super jump" }, { "A  at end of swing", "launch boost" }, { "A A  in the air", "flip / roll (stick = direction)" },
-		{ "X", "web zip to a high point" }, { "L  (hold)", "sprint / climb faster" }, { "B", "dive  (in the air)" },
+		{ "L + R", "web zip to a roof" }, { "L  (hold)", "sprint / climb faster" }, { "B", "dive  (in the air)" },
 		{ "D-pad / C-stick / touch", "move the camera" }, { "Y   SELECT   START", "camera behind / street / pause" } };
 	for (int i = 0; i < 11; i++) { T(rows[i][0], 8, 30 + i * 16.5f, 0.38f, WHITE, AL_L); T(rows[i][1], 122, 30 + i * 16.5f, 0.38f, RGBA(255, 255, 255, 200), AL_L); }
 	T("Touch a wall in the air to cling to it.", 160, 222, 0.34f, GOLD, AL_C);

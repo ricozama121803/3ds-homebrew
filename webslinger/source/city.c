@@ -83,13 +83,14 @@ void city_generate(World *w, unsigned seed)
 {
 	unsigned st = seed, *s = &st;
 	memset(w, 0, sizeof *w);
-	for (int j = 0; j < NB; j++) for (int i = 0; i < NB; i++) w->park[j][i] = (i == 6 && j >= 2 && j <= 4);
+	for (int j = 0; j < NB; j++) for (int i = 0; i < NB; i++) w->park[j][i] = (i == MID + 3 && j >= MID - 2 && j <= MID) || (i == MID - 4 && j >= MID + 2 && j <= MID + 4);
 	for (int j = 0; j < NB; j++) for (int i = 0; i < NB; i++) {
 		w->bfirst[j][i] = w->nbox;
 		if (w->park[j][i]) continue;
 		float x0 = (i + BLOCK_LO) * PITCH, x1 = (i + BLOCK_HI) * PITCH, z0 = (j + BLOCK_LO) * PITCH, z1 = (j + BLOCK_HI) * PITCH;
-		if (i == 4 && j == 4) { add_landmark(w, 0.5f * (x0 + x1), 0.5f * (z0 + z1)); w->bcount[j][i] = w->nbox - w->bfirst[j][i]; continue; }
-		float dx = (float)(i - 4), dz = (float)(j - 4), center = 1.0f - sqrtf(dx * dx + dz * dz) / 4.6f;
+		if (i == MID && j == MID) { add_landmark(w, 0.5f * (x0 + x1), 0.5f * (z0 + z1)); w->bcount[j][i] = w->nbox - w->bfirst[j][i]; continue; }
+		float dx = (float)(i - MID), dz = (float)(j - MID), center = 1.0f - sqrtf(dx * dx + dz * dz) / (0.5f * NB);
+		{ float ex = (float)i - 0.25f * NB, ez = (float)j - 0.75f * NB, c2 = 0.75f * (1.0f - sqrtf(ex * ex + ez * ez) / (0.2f * NB)); if (c2 > center) center = c2; }      // a second, smaller downtown
 		if (center < 0) center = 0;
 		center *= 0.7f + RF() * 0.5f;
 		float cols[2][2]; int nc = 1;
