@@ -613,21 +613,25 @@ static void draw_hero(const Game *g)
 		u = norm(add(mul(up, cosf(lean)), mul(f, sinf(lean))));
 		u = norm(add(u, mul(R, bank * 0.8f)));
 		float idle = 1.0f - amp;
-		H = add(P, mul(up, (0.86f - 0.3f * crouch) + fabsf(sinf(ph)) * (0.045f + 0.03f * sprint) * amp + 0.012f * sinf(tm * 2.2f) * idle));
+		H = add(P, mul(up, (0.86f + 0.08f * amp - 0.3f * crouch) + fabsf(sinf(ph)) * (0.045f + 0.03f * sprint) * amp + 0.012f * sinf(tm * 2.2f) * idle));
 		H = add(H, mul(R, 0.015f * sinf(tm * 0.8f) * idle + sinf(ph) * 0.02f * amp));      // weight shift when standing, hip sway when running
 		float tw = 0.2f * amp * sinf(ph);                                                    // shoulders twist against the hips
 		V3 f0 = f, R0 = R;
 		V3 fT = add(mul(f0, cosf(tw)), mul(R0, sinf(tw))), RT = sub(mul(R0, cosf(tw)), mul(f0, sinf(tw)));
 		for (int s = 0; s < 2; s++) {
 			float a = ph + (s ? PI_F : 0), sa = sinf(a), ca = cosf(a);
-			foot[s] = add(add(P, mul(R0, sd[s] * (0.12f + 0.1f * idle))), add(mul(f0, sa * (0.42f + 0.18f * sprint) * amp + 0.05f), mul(up, fmaxf(0, ca) * (0.26f + 0.12f * sprint) * amp)));
+			float cyc = a / (2.0f * PI_F); cyc -= floorf(cyc);                                  // 0..1 leg cycle: stance (foot on the ground, moving back) then swing
+			float S = 0.34f + 0.16f * sprint, fx, fy;
+			if (cyc < 0.42f) { float t = cyc / 0.42f; fx = lerpf(S, -1.15f * S, t); fy = 0; }
+			else { float t = (cyc - 0.42f) / 0.58f, e = t * t * (3.0f - 2.0f * t); fx = lerpf(-1.15f * S, S, e); fy = (0.30f + 0.14f * sprint) * sinf(PI_F * powf(t, 0.75f)); }   // heel kicks up early, knee drives through
+			foot[s] = add(add(P, mul(R0, sd[s] * (0.12f + 0.1f * idle))), add(mul(f0, fx * amp + 0.05f), mul(up, fy * amp)));
 			legHint[s] = add(f0, mul(R0, sd[s] * 0.5f * idle));
 			V3 sh = add(add(H, mul(u, 0.52f)), mul(RT, sd[s] * 0.25f));
 			float swing = -sa * amp;                                                           // -1..1, arms drive opposite to the legs
-			float pump = 0.30f + 0.10f * sprint;                                                // elbows stay bent ~90 deg: hands pump between chest and hip
-			float fwd = amp * (0.06f + pump * swing), dn = -0.5f + amp * (0.12f + 0.16f * swing + 0.04f * sprint) + 0.1f * crouch;
-			hand[s] = add(add(sh, add(mul(up, dn + sinf(tm * 1.9f + s) * 0.012f * idle), mul(RT, sd[s] * (0.14f + 0.02f * idle + 0.05f * amp)))), mul(fT, fwd));
-			armHint[s] = add(add(mul(fT, -0.6f), mul(RT, sd[s] * (0.8f - 0.3f * amp))), mul(up, -0.25f * amp));
+			float fwd = amp * (0.0f + (0.17f + 0.04f * sprint) * swing), dn = -0.5f + amp * (0.2f + 0.17f * swing + 0.03f * sprint) + 0.1f * crouch;      // elbows ~90 deg: front hand near the chin, back hand by the hip
+			hand[s] = add(add(sh, add(mul(up, dn + sinf(tm * 1.9f + s) * 0.012f * idle), mul(RT, sd[s] * (0.14f + 0.02f * idle + 0.04f * amp)))), mul(fT, fwd));
+			float fr = 0.5f + 0.5f * swing;                                                      // 1 = hand forward: elbow points down; 0 = hand back: elbow points up and back
+			armHint[s] = add(add(mul(fT, -0.5f - 0.3f * (1 - fr) * amp), mul(RT, sd[s] * (0.8f - 0.4f * amp))), mul(up, amp * (fr * -0.9f + (1 - fr) * 0.5f)));
 		}
 		f = fT; R = RT;                                                                      // the torso frame carries the twist
 	} else if (p->state == ST_WALL) {
@@ -698,11 +702,12 @@ static void draw_hero(const Game *g)
 		an.init = true; an.dH = dH; an.dHv = v3(0, 0, 0); an.u = Ur; an.uv = v3(0, 0, 0); an.R = Rr; an.Rv = v3(0, 0, 0);
 		for (int s = 0; s < 2; s++) { an.hand[s] = l_hand[s]; an.foot[s] = l_foot[s]; an.ah[s] = l_ah[s]; an.lh[s] = l_lh[s]; an.handV[s] = an.footV[s] = an.ahV[s] = an.lhV[s] = v3(0, 0, 0); }
 	} else {
+		bool runPose = p->state == ST_GROUND && !rolling;                                 // the run cycle is fast: stiff springs so feet stay planted
 		float wb = trickNow ? 40.0f : 15.0f;
-		spring3(&an.dH, &an.dHv, dH, 20.0f, 0.9f, dt);
+		spring3(&an.dH, &an.dHv, dH, runPose ? 40.0f : 20.0f, 0.9f, dt);
 		spring3(&an.u, &an.uv, Ur, wb, 1.0f, dt); spring3(&an.R, &an.Rv, Rr, wb, 1.0f, dt);
 		for (int s = 0; s < 2; s++) {
-			spring3(&an.hand[s], &an.handV[s], l_hand[s], 22.0f, 0.8f, dt); spring3(&an.foot[s], &an.footV[s], l_foot[s], 26.0f, 0.85f, dt);
+			spring3(&an.hand[s], &an.handV[s], l_hand[s], runPose ? 55.0f : 22.0f, 0.85f, dt); spring3(&an.foot[s], &an.footV[s], l_foot[s], runPose ? 80.0f : 26.0f, 0.9f, dt);
 			spring3(&an.ah[s], &an.ahV[s], l_ah[s], 12.0f, 1.0f, dt); spring3(&an.lh[s], &an.lhV[s], l_lh[s], 12.0f, 1.0f, dt);
 		}
 	}
