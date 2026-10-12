@@ -1,0 +1,127 @@
+"""Models the street props in Blender (tree variants, street lamp, rooftop AC unit, hydrant) and exports them to ../../source/props_mesh.h.
+Colours come from the material of each face and are baked into the vertices (the game draws props with the plain white texture and its own
+sun shading). Props are modelled in game axes' Blender equivalent (Z up, metres) with the origin at the foot.
+Run: ../../../tools/blender-venv/bin/python build_props.py   (also saves props.blend next to it)"""
+import math, os, random, bpy, bmesh
+from mathutils import Vector, Matrix
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+bpy.ops.wm.read_factory_settings(use_empty=True)
+random.seed(11)
+MATS = {}
+
+
+def mat(name, rgb):
+    if name not in MATS:
+        m = bpy.data.materials.new(name); m.diffuse_color = (*rgb, 1); MATS[name] = m
+    return MATS[name]
+
+
+def new_obj(name, bm, mats, smooth=False):
+    me = bpy.data.meshes.new(name); bm.to_mesh(me); bm.free()
+    for m in mats: me.materials.append(mat(*m))
+    ob = bpy.data.objects.new(name, me); bpy.context.collection.objects.link(ob)
+    for p in me.polygons: p.use_smooth = smooth
+    return ob
+
+
+def add_part(bm, shape, mi, loc=(0, 0, 0), scale=(1, 1, 1), rot=0.0, **kw):
+    """Adds a primitive to bm with material index mi, scaled/rotated/moved."""
+    before = set(bm.faces)
+    mat_ = Matrix.Translation(loc) @ Matrix.Rotation(rot, 4, "Z") @ Matrix.Diagonal((*scale, 1))
+    if shape == "cube": bmesh.ops.create_cube(bm, size=1.0, matrix=mat_)
+    elif shape == "cone": bmesh.ops.create_cone(bm, cap_ends=kw.get("caps", True), cap_tris=False, segments=kw.get("seg", 6), radius1=kw.get("r1", 0.5), radius2=kw.get("r2", 0.5), depth=1.0, matrix=mat_)
+    elif shape == "ico": bmesh.ops.create_icosphere(bm, subdivisions=kw.get("sub", 1), radius=0.5, matrix=mat_)
+    elif shape == "uv": bmesh.ops.create_uvsphere(bm, u_segments=kw.get("u", 8), v_segments=kw.get("v", 5), radius=0.5, matrix=mat_)
+    bm.faces.ensure_lookup_table()
+    for f in bm.faces:
+        if f not in before: f.material_index = mi
+    bm.faces.index_update()
+
+
+def tree(variant):
+    bm = bmesh.new()
+    # trunk (6-sided, tapering), then 2-3 jittered lumps for the crown
+    add_part(bm, "cone", 0, (0, 0, 1.1), (0.3, 0.3, 2.2), seg=6, r1=0.55, r2=0.35)
+    n0 = len(bm.verts)
+    if variant == 0:      # round deciduous crown: a squashed uv sphere + a smaller lump
+        add_part(bm, "uv", 1, (0, 0, 3.7), (3.4, 3.4, 3.0), u=7, v=4)
+        add_part(bm, "uv", 2, (0.8, 0.3, 4.5), (2.0, 2.0, 1.8), u=5, v=3)
+    elif variant == 1:    # taller oval crown
+        add_part(bm, "uv", 1, (0, 0, 4.0), (2.8, 2.8, 4.2), u=7, v=4)
+        add_part(bm, "uv", 2, (-0.5, 0.4, 5.2), (1.7, 1.7, 1.6), u=5, v=3)
+    else:                 # conifer: two stacked cones
+        add_part(bm, "cone", 1, (0, 0, 3.1), (3.0, 3.0, 3.0), seg=8, r1=0.5, r2=0.0)
+        add_part(bm, "cone", 2, (0, 0, 4.9), (2.2, 2.2, 2.6), seg=8, r1=0.5, r2=0.0)
+    for v in bm.verts[n0:]:                         # organic jitter on the crown only
+        v.co += Vector((random.uniform(-.12, .12), random.uniform(-.12, .12), random.uniform(-.1, .1)))
+    base = [(0.30, 0.20, 0.12), (0.30, 0.52, 0.18), (0.40, 0.62, 0.22)]
+    if variant == 2: base = [(0.30, 0.20, 0.12), (0.14, 0.36, 0.20), (0.18, 0.44, 0.24)]
+    return new_obj(f"tree{variant}", bm, [("trunk", base[0]), (f"leaf{variant}a", base[1]), (f"leaf{variant}b", base[2])], smooth=True)
+
+
+def lamp():
+    bm = bmesh.new()
+    add_part(bm, "cone", 0, (0, 0, 2.9), (0.14, 0.14, 5.4), seg=4, r1=0.6, r2=0.35, caps=False)    # pole
+    add_part(bm, "cube", 0, (0.55, 0, 5.55), (1.1, 0.08, 0.08))                              # arm
+    add_part(bm, "cube", 1, (1.05, 0, 5.45), (0.55, 0.28, 0.14))                           # lamp head
+    return new_obj("lamp", bm, [("iron", (0.10, 0.12, 0.13)), ("head", (0.32, 0.34, 0.3))])
+
+
+def ac_unit():
+    bm = bmesh.new()
+    add_part(bm, "cube", 0, (0, 0, 0.6), (2.2, 1.5, 1.2))
+    add_part(bm, "cube", 1, (0, 0, 1.25), (2.3, 1.6, 0.12))
+    return new_obj("ac", bm, [("steel", (0.55, 0.57, 0.6)), ("steel2", (0.38, 0.4, 0.43))])
+
+
+def hydrant():
+    bm = bmesh.new()
+    add_part(bm, "cone", 0, (0, 0, 0.35), (0.3, 0.3, 0.7), seg=5)
+    add_part(bm, "uv", 0, (0, 0, 0.74), (0.34, 0.34, 0.24), u=5, v=3)
+    add_part(bm, "cube", 0, (0, 0, 0.45), (0.55, 0.14, 0.14))
+    return new_obj("hydrant", bm, [("red", (0.75, 0.1, 0.08))])
+
+
+def vent():
+    bm = bmesh.new()
+    add_part(bm, "cone", 0, (0, 0, 0.5), (0.6, 0.6, 1.0), seg=5, r1=0.5, r2=0.5)
+    add_part(bm, "cone", 1, (0, 0, 1.15), (0.9, 0.9, 0.3), seg=5, r1=0.0, r2=0.5)
+    return new_obj("vent", bm, [("steel", (0.5, 0.52, 0.55)), ("cap", (0.3, 0.32, 0.35))])
+
+
+OBJS = [("tree0", tree(0)), ("tree1", tree(1)), ("tree2", tree(2)), ("lamp", lamp()), ("ac", ac_unit()), ("hydrant", hydrant()), ("vent", vent())]
+
+
+def export():
+    dg = bpy.context.evaluated_depsgraph_get()
+    lines = ["// Generated by assets/city/build_props.py from Blender - do not edit by hand.",
+             "// Props with the origin at the foot, game axes (y up). Vertex: x y z nx ny nz r g b (colour baked from the Blender material).", "#pragma once",
+             "typedef struct { int nv, ni; const float *v; const unsigned short *i; } PropMesh;",
+             "enum { " + ", ".join("PR_" + n.upper() for n, _ in OBJS) + ", PR_COUNT };", ""]
+    tot = {}
+    for name, ob in OBJS:
+        me = ob.evaluated_get(dg).to_mesh(); me.calc_loop_triangles()
+        cn = me.corner_normals
+        verts, idx, out = {}, [], []
+        for tri in me.loop_triangles:
+            col = me.materials[tri.material_index].diffuse_color
+            for li in tri.loops:
+                vi = me.loops[li].vertex_index; co = me.vertices[vi].co; n = cn[li].vector
+                key = (round(co.x, 3), round(co.z, 3), round(-co.y, 3), round(n.x, 3), round(n.z, 3), round(-n.y, 3), round(col[0], 3), round(col[1], 3), round(col[2], 3))
+                if key not in verts: verts[key] = len(out); out.append(key)
+                idx.append(verts[key])
+        tot[name] = len(idx) // 3
+        lines.append(f"static const float prop_v_{name}[] = {{")
+        for k in out: lines.append("\t" + ", ".join(f"{x:.3f}f" for x in k) + ",")
+        lines.append("};")
+        lines.append(f"static const unsigned short prop_i_{name}[] = {{" + ", ".join(map(str, idx)) + "};")
+    lines.append("static const PropMesh PROPS[PR_COUNT] = {")
+    for name, _ in OBJS: lines.append(f"\t{{ sizeof prop_v_{name} / sizeof(float) / 9, sizeof prop_i_{name} / sizeof(unsigned short), prop_v_{name}, prop_i_{name} }},")
+    lines.append("};")
+    open(os.path.join(HERE, "..", "..", "source", "props_mesh.h"), "w").write("\n".join(lines) + "\n")
+    print("triangles:", tot)
+
+
+export()
+bpy.ops.wm.save_as_mainfile(filepath=os.path.join(HERE, "props.blend"))

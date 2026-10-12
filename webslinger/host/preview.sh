@@ -8,7 +8,7 @@ python3 - "$out" <<'PY'
 import struct, sys
 from PIL import Image
 out = sys.argv[1]
-for n in "white road glass cream red tan copper roof grass water hero glow cloud".split():
+for n in "white road glass cream red tan copper roof grass water hero glow cloud store".split():
     im = Image.open(f"assets/gfx/{n}.png").convert("RGBA")
     open(f"{out}/{n}.rgba", "wb").write(struct.pack("<ii", *im.size) + im.tobytes())
 PY

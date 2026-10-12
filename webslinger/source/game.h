@@ -10,7 +10,7 @@
 static inline float clampf(float v, float lo, float hi) { return v < lo ? lo : v > hi ? hi : v; }
 static inline float lerpf(float a, float b, float t) { return a + (b - a) * t; }
 
-enum { MAT_WHITE, MAT_ROAD, MAT_GLASS, MAT_CREAM, MAT_RED, MAT_TAN, MAT_COPPER, MAT_ROOF, MAT_GRASS, MAT_WATER, MAT_HERO, MAT_GLOW, MAT_CLOUD, MAT_COUNT };
+enum { MAT_WHITE, MAT_ROAD, MAT_GLASS, MAT_CREAM, MAT_RED, MAT_TAN, MAT_COPPER, MAT_ROOF, MAT_GRASS, MAT_WATER, MAT_HERO, MAT_GLOW, MAT_CLOUD, MAT_STORE, MAT_COUNT };
 
 // ---- the city: NB x NB blocks, one road texture tile (PITCH metres) per block --------------------------------------------
 #define NB        9

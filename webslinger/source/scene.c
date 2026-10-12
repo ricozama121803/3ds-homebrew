@@ -2,6 +2,7 @@
 // texture; the hero, web, cars and beacon are rebuilt every frame. Lighting is baked into vertex colours (sun + sky ambient).
 #include "scene.h"
 #include "hero_mesh.h"
+#include "props_mesh.h"
 #include <stdlib.h>
 
 // ---- meshes ---------------------------------------------------------------------------------------------------------------
@@ -77,18 +78,23 @@ static void wall(const Box *b, int side)
 	float ca = side < 2 ? ax : az, cb = side < 2 ? bx : bz;
 	float uoff = (b->tint[0] * 37.0f - floorf(b->tint[0] * 37.0f)) * 3.0f;
 	float sh = shade(nx, 0, nz);
-	float ys[3]; int ny = 0;
+	bool shop = b->kind == BK_BLDG && b->yb == 0.0f && b->y1 > 8.0f && b->mat != MAT_COPPER && b->bld >= 0 && SG && (b->bld % 3) != 0;   // two buildings in three have a shopfront
+	float ys[4]; int ny = 0;
+	float yo = shop ? 5.0f : 0.0f;
 	ys[ny++] = b->yb;
-	if (b->yb < 24.0f && b->y1 > 24.0f) ys[ny++] = 24.0f;
-	ys[ny++] = b->y1;
-	for (int i = 0; i + 1 < ny; i++) {
+	if (shop) ys[ny++] = 5.0f;
+	if (b->yb < 24.0f && b->y1 > 24.0f && 24.0f > ys[ny - 1]) ys[ny++] = 24.0f;
+	ys[ny] = b->y1;
+	for (int i = 0; i < ny; i++) {
 		float y0 = ys[i], y1 = ys[i + 1];
+		int mt = (shop && i == 0) ? MAT_STORE : b->mat;
+		float usx = mt == MAT_STORE ? 1 / 12.0f : us, vsx = mt == MAT_STORE ? 1 / 5.0f : vs, voff = mt == MAT_STORE ? 0.0f : yo;
 		float k0 = sh * (0.58f + 0.42f * sat(y0 / 24.0f)), k1 = sh * (0.58f + 0.42f * sat(y1 / 24.0f));
 		float c0[3] = { b->tint[0] * k0, b->tint[1] * k0, b->tint[2] * k0 }, c1[3] = { b->tint[0] * k1, b->tint[1] * k1, b->tint[2] * k1 };
 		if (b->mat == MAT_COPPER) { for (int k = 0; k < 3; k++) { c0[k] = k0; c1[k] = k1; } }
-		SV a = sv(ax, y0, az, (ca * us) + uoff, y0 * vs, c0, 1), bb = sv(bx, y0, bz, (cb * us) + uoff, y0 * vs, c0, 1);
-		SV c = sv(bx, y1, bz, (cb * us) + uoff, y1 * vs, c1, 1), d = sv(ax, y1, az, (ca * us) + uoff, y1 * vs, c1, 1);
-		quad(&sm[b->mat], &a, &bb, &c, &d);
+		SV a = sv(ax, y0, az, (ca * usx) + uoff, (y0 - voff) * vsx, c0, 1), bb = sv(bx, y0, bz, (cb * usx) + uoff, (y0 - voff) * vsx, c0, 1);
+		SV c = sv(bx, y1, bz, (cb * usx) + uoff, (y1 - voff) * vsx, c1, 1), d = sv(ax, y1, az, (ca * usx) + uoff, (y1 - voff) * vsx, c1, 1);
+		quad(&sm[mt], &a, &bb, &c, &d);
 	}
 }
 
@@ -153,6 +159,87 @@ static void dome(const Box *b)
 		SV p2 = sv(cx + r1 * cosf(a1), y1, cz + r1 * sinf(a1), (cx + r1 * cosf(a1)) / 8, y1 / 8, c, 1), p3 = sv(cx + r1 * cosf(a0), y1, cz + r1 * sinf(a0), (cx + r1 * cosf(a0)) / 8, y1 / 8, c, 1);
 		if (k == R - 1) tri(&sm[MAT_COPPER], &p0, &p1, &p2); else quad(&sm[MAT_COPPER], &p0, &p1, &p2, &p3);
 	}
+}
+
+
+// ---- props from the Blender kit (props_mesh.h): placed with a yaw and a uniform scale, drawn with the white texture and baked colours --------
+static void prop(int id, float x, float y, float z, float yaw, float sc, const float tint[3])
+{
+	const PropMesh *pm = &PROPS[id];
+	float cy = cosf(yaw), sy = sinf(yaw);
+	Mesh *m = &sm[MAT_WHITE];
+	for (int t = 0; t < pm->ni; t++) {
+		const float *v = pm->v + pm->i[t] * 9;
+		float nx = v[3] * cy + v[5] * sy, nz = -v[3] * sy + v[5] * cy;
+		float k = shade(nx, v[4], nz) * (0.82f + 0.18f * sat(v[1] / 4.0f));            // a little darker toward the ground (fake ambient occlusion)
+		float c[3] = { v[6] * k * tint[0] * 1.5f, v[7] * k * tint[1] * 1.5f, v[8] * k * tint[2] * 1.5f };
+		for (int q = 0; q < 3; q++) if (c[q] > 1.2f) c[q] = 1.2f;
+		SV a = sv(x + (v[0] * cy + v[2] * sy) * sc, y + v[1] * sc, z + (-v[0] * sy + v[2] * cy) * sc, 0.5f, 0.5f, c, 1);
+		put(m, &a);
+	}
+}
+
+// a stone ledge that overhangs the top of a building (outer faces + the ring on top, no underside)
+static void cornice(const Box *b)
+{
+	const float o = 0.35f, h = 0.7f;
+	float x0 = b->x0 - o, x1 = b->x1 + o, z0 = b->z0 - o, z1 = b->z1 + o, y1 = b->y1, y0 = y1 - h;
+	float t = 0.93f, sh0 = shade(0, 0, -1), sh1 = shade(0, 0, 1), sh2 = shade(-1, 0, 0), sh3 = shade(1, 0, 0), st = shade(0, 1, 0);
+	float tc[3] = { 0.9f * t, 0.88f * t, 0.82f * t };
+	#define LC(k) (const float[3]){ tc[0] * (k), tc[1] * (k), tc[2] * (k) }
+	SV a, b2, c, d;
+	a = sv(x0, y0, z0, 0.5f, 0.5f, LC(sh0 * 0.75f), 1); b2 = sv(x1, y0, z0, 0.5f, 0.5f, LC(sh0 * 0.75f), 1); c = sv(x1, y1, z0, 0.5f, 0.5f, LC(sh0), 1); d = sv(x0, y1, z0, 0.5f, 0.5f, LC(sh0), 1); quad(&sm[MAT_WHITE], &a, &b2, &c, &d);
+	a = sv(x1, y0, z1, 0.5f, 0.5f, LC(sh1 * 0.75f), 1); b2 = sv(x0, y0, z1, 0.5f, 0.5f, LC(sh1 * 0.75f), 1); c = sv(x0, y1, z1, 0.5f, 0.5f, LC(sh1), 1); d = sv(x1, y1, z1, 0.5f, 0.5f, LC(sh1), 1); quad(&sm[MAT_WHITE], &a, &b2, &c, &d);
+	a = sv(x0, y0, z1, 0.5f, 0.5f, LC(sh2 * 0.75f), 1); b2 = sv(x0, y0, z0, 0.5f, 0.5f, LC(sh2 * 0.75f), 1); c = sv(x0, y1, z0, 0.5f, 0.5f, LC(sh2), 1); d = sv(x0, y1, z1, 0.5f, 0.5f, LC(sh2), 1); quad(&sm[MAT_WHITE], &a, &b2, &c, &d);
+	a = sv(x1, y0, z0, 0.5f, 0.5f, LC(sh3 * 0.75f), 1); b2 = sv(x1, y0, z1, 0.5f, 0.5f, LC(sh3 * 0.75f), 1); c = sv(x1, y1, z1, 0.5f, 0.5f, LC(sh3), 1); d = sv(x1, y1, z0, 0.5f, 0.5f, LC(sh3), 1); quad(&sm[MAT_WHITE], &a, &b2, &c, &d);
+	const float *tp = LC(st);
+	float X[4] = { x0, b->x0, b->x1, x1 }, Z[4] = { z0, b->z0, b->z1, z1 };
+	for (int i = 0; i < 3; i++) for (int j = 0; j < 3; j++) {                       // the 8 ring cells of the 3x3 grid (the middle one is the roof itself)
+		if (i == 1 && j == 1) continue;
+		a = sv(X[i], y1, Z[j], 0.5f, 0.5f, tp, 1); b2 = sv(X[i + 1], y1, Z[j], 0.5f, 0.5f, tp, 1); c = sv(X[i + 1], y1, Z[j + 1], 0.5f, 0.5f, tp, 1); d = sv(X[i], y1, Z[j + 1], 0.5f, 0.5f, tp, 1);
+		quad(&sm[MAT_WHITE], &a, &b2, &c, &d);
+	}
+	#undef LC
+}
+
+static unsigned hash2(int a, int b) { unsigned h = (unsigned)a * 374761393u + (unsigned)b * 668265263u; h = (h ^ (h >> 13)) * 1274126177u; return h ^ (h >> 16); }
+static float hf(unsigned h) { return (h & 0xFFFF) / 65536.0f; }
+
+// street furniture: lamps near the corners and trees along the pavements (the pavement line is 11 m inside each tile edge)
+static void street_props(void)
+{
+	const World *w = &SG->w;
+	static const float lampT[3] = { 1, 1, 1 };
+	for (int j = 0; j < NB; j++) for (int i = 0; i < NB; i++) {
+		if (w->park[j][i]) continue;
+		float x0 = i * PITCH, z0 = j * PITCH, e = 0.174f * PITCH;
+		for (int s = 0; s < 4; s++) {
+			unsigned h = hash2(i * 4 + s, j * 7 + 1);
+			bool horiz = s < 2;                                                   // sides 0/1 run along x (north/south), 2/3 along z
+			float fixed = s == 0 || s == 2 ? e : PITCH - e;
+			float yaw = s == 0 ? 0 : s == 1 ? PI_F : s == 2 ? -PI_F / 2 : PI_F / 2;     // lamp arms reach toward the street
+			float u0 = 0.2f * PITCH, u1 = 0.5f * PITCH, u2 = 0.8f * PITCH;
+			#define PUT(id, u, y, sc, yw, tn) do { float px = horiz ? x0 + (u) : x0 + fixed, pz = horiz ? z0 + fixed : z0 + (u); prop(id, px, y, pz, yw, sc, tn); } while (0)
+			if (hf(h) < 0.33f) PUT(PR_LAMP, u0 + (hf(h >> 3) - 0.5f) * 4.0f, 0.0f, 1.0f, yaw, lampT);
+			if (hf(h >> 5) < 0.17f) {
+				float tn[3] = { 0.85f + 0.3f * hf(h >> 7), 0.9f + 0.2f * hf(h >> 9), 0.85f + 0.3f * hf(h >> 11) };
+				PUT(PR_TREE0 + (int)(hf(h >> 13) * 2.99f), u1 + (hf(h >> 4) - 0.5f) * 6.0f, 0.0f, 0.75f + 0.45f * hf(h >> 6), hf(h >> 8) * 6.28f, tn);
+			}
+			if (hf(h >> 10) < 0.04f) PUT(PR_HYDRANT, u2, 0.0f, 1.0f, 0.0f, lampT);
+			#undef PUT
+		}
+	}
+}
+
+// rooftop clutter: air-conditioning units and vents, placed deterministically per building top
+static void roof_props(const Box *b)
+{
+	float tw = b->x1 - b->x0, td = b->z1 - b->z0;
+	if (tw < 9 || td < 9 || b->roof != RF_FLAT) return;
+	unsigned h = hash2((int)(b->x0 * 7), (int)(b->z0 * 11));
+	static const float one[3] = { 1, 1, 1 };
+	if (hf(h) < 0.3f) prop(PR_AC, b->x0 + 2.5f + hf(h >> 3) * (tw - 5.0f), b->y1, b->z0 + 2.5f + hf(h >> 5) * (td - 5.0f), hf(h >> 7) < 0.5f ? 0.0f : PI_F / 2, 1.0f, one);
+	if (hf(h >> 9) < 0.3f) prop(PR_VENT, b->x0 + 1.5f + hf(h >> 11) * (tw - 3.0f), b->y1, b->z0 + 1.5f + hf(h >> 13) * (td - 3.0f), 0.0f, 1.0f, one);
 }
 
 // ---- shadows: each building's silhouette projected along the sun onto the street --------------------------------------------------
@@ -271,10 +358,12 @@ static void trees(void)
 	const World *w = &SG->w;
 	for (int j = 0; j < NB; j++) for (int i = 0; i < NB; i++) {
 		if (w->park[j][i]) {
-			for (int k = 0; k < 16; k++) {
+			for (int k = 0; k < (SG->lowq ? 16 : 9); k++) {
 				float x = (i + 0.2f + 0.6f * rndf(&st)) * PITCH, z = (j + 0.2f + 0.6f * rndf(&st)) * PITCH;
 				if (j == 3 && x > (i + 0.28f) * PITCH && x < (i + 0.72f) * PITCH && z > (j + 0.28f) * PITCH && z < (j + 0.72f) * PITCH) continue;   // pond
-				tree(&sm[MAT_WHITE], x, z, 1.1f + rndf(&st) * 0.9f, pal[rnd_next(&st) % 5]);
+				float tn[3] = { 0.85f + 0.3f * rndf(&st), 0.9f + 0.2f * rndf(&st), 0.85f + 0.3f * rndf(&st) };
+				if (SG->lowq) tree(&sm[MAT_WHITE], x, z, 1.1f + rndf(&st) * 0.9f, pal[rnd_next(&st) % 5]);
+				else prop(PR_TREE0 + (int)(rndf(&st) * 2.99f), x, 0.0f, z, rndf(&st) * 6.28f, 1.0f + rndf(&st) * 0.7f, tn);
 			}
 			continue;
 		}
@@ -351,6 +440,12 @@ static void build_sky(void)
 	}
 }
 
+static bool is_top_tier(int i)                                                    // the highest tier box of its building (domes and water towers sit on top of it)
+{
+	const World *w = &SG->w;
+	return i + 1 >= w->nbox || w->box[i + 1].bld != w->box[i].bld || w->box[i + 1].kind != BK_BLDG;
+}
+
 static void build_static_pass(void)
 {
 	build_sky();
@@ -361,6 +456,8 @@ static void build_static_pass(void)
 		if (b->kind == BK_DOME) { dome(b); continue; }
 		for (int s = 0; s < 4; s++) wall(b, s);
 		roof_top(b);
+		if (!SG->lowq && b->kind == BK_BLDG && b->y1 > 8.0f && is_top_tier(i)) cornice(b);     // top tier of a building
+		if (!SG->lowq && b->kind == BK_BLDG && is_top_tier(i)) roof_props(b);
 		if (b->roof == RF_PYRAMID) pyramid(MAT_COPPER, b->x0, b->z0, b->x1, b->z1, b->y1, 5.0f + 0.3f * fminf(b->x1 - b->x0, b->z1 - b->z0), (const float[3]){ 0.95f, 1.0f, 0.95f }, true);
 		else if (b->roof == RF_SPIRE) {
 			float cx = 0.5f * (b->x0 + b->x1), cz = 0.5f * (b->z0 + b->z1), hw = fminf(1.4f, 0.12f * (b->x1 - b->x0)), h = fminf(48.0f, 0.2f * b->y1 + 10.0f);
@@ -368,6 +465,7 @@ static void build_static_pass(void)
 		}
 	}
 	shadows();
+	if (!SG->lowq) street_props();
 	trees();
 	backdrop();
 }

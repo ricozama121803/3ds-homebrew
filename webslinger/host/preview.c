@@ -15,7 +15,7 @@ static Game G;
 static Scene S;
 static Vtx *stat_buf, *dyn_buf;
 
-static const char *texname[MAT_COUNT] = { "white", "road", "glass", "cream", "red", "tan", "copper", "roof", "grass", "water", "hero", "glow", "cloud" };
+static const char *texname[MAT_COUNT] = { "white", "road", "glass", "cream", "red", "tan", "copper", "roof", "grass", "water", "hero", "glow", "cloud", "store" };
 typedef struct { int w, h; unsigned char *px; } Level;
 typedef struct { Level lv[9]; int n; } Tex;
 static Tex tex[MAT_COUNT];
@@ -314,6 +314,9 @@ int main(int argc, char **argv)
 	aer[0] = 300; aer[1] = 150; aer[2] = -140; aer[3] = PI_F; aer[4] = -0.3f; aer[5] = 70; place(4 * PITCH, 0, 3 * PITCH, 0); snapfree(out, "a1_overview");
 	aer[0] = 250; aer[1] = 30; aer[2] = 190; aer[3] = DEG(35); aer[4] = 0.05f; aer[5] = 66; snapfree(out, "a2_street");
 	aer[0] = 90; aer[1] = 250; aer[2] = 90; aer[3] = DEG(45); aer[4] = -0.8f; aer[5] = 66; snapfree(out, "a3_down");
+	aer[0] = 4.5f * PITCH; aer[1] = 3.2f; aer[2] = 2 * PITCH + 4; aer[3] = DEG(25); aer[4] = 0.08f; aer[5] = 70; snapfree(out, "a4_ground");
+	aer[0] = 2.2f * PITCH; aer[1] = 2.5f; aer[2] = 3 * PITCH + 11; aer[3] = DEG(80); aer[4] = 0.25f; aer[5] = 70; snapfree(out, "a5_ground");
+	aer[0] = 3.2f * PITCH; aer[1] = 70; aer[2] = 2.2f * PITCH; aer[3] = DEG(30); aer[4] = -0.45f; aer[5] = 70; snapfree(out, "a6_roofs");
 	aer_on = 0;
 	// paused / over screens
 	game_start(&G, MODE_RUN); run(0.2f, idle); G.score = 2300; G.chain = 3; G.chainT = 5; game_popup(&G, "+300  x3  +12s", 0xFF40E0FF); G.paused = true; snap(out, "u1_pause"); G.paused = false;
