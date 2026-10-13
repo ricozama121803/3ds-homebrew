@@ -17,8 +17,12 @@ Nintendo 3DS homebrew games written in C with [devkitPro](https://devkitpro.org/
 | --- | --- |
 | ![Title](docs/webslinger-title.png) | ![City](docs/webslinger-city.png) |
 | ![Swinging](docs/webslinger-swing.png) | ![Swinging between towers](docs/webslinger-swing2.png) |
+| ![Wall running: the camera tilts up the facade](docs/webslinger-wallrun.png) | ![Wingsuit](docs/webslinger-wingsuit.png) |
+| ![Running](docs/webslinger-run.png) | ![Run cycle](docs/webslinger-runcycle.png) |
 
-*Frames from the PC preview renderer (`webslinger/host/preview.sh`). The top-screen HUD is not shown.*
+![The hero: front, three-quarter, side, back and mask close-up](docs/webslinger-hero.png)
+
+*Frames from the PC preview renderer (`webslinger/host/preview.sh`); the hero turnaround is a Blender (Cycles) render. The top-screen HUD is not shown.*
 
 ## Grand Theft Otto
 
@@ -38,7 +42,7 @@ Nintendo 3DS homebrew games written in C with [devkitPro](https://devkitpro.org/
 | `tuffyrun/` | Endless runner with landmarks, audio and an SD-card high score |
 | `grand-theft-otto/` | Open-world crime sandbox with a real 3D city (extruded buildings, baked sun shadows, day/night cycle, stereoscopic 3D), a 256x256-tile LA, eight weapons, cars and helicopters. Pause + X switches to the classic top-down 2D view. Design notes in [`PLAN.md`](grand-theft-otto/PLAN.md) |
 | `sunset-ops/` | First-person team deathmatch (4 vs 4 against bots) on a Nuketown-style suburban cul-de-sac in the desert (two enterable houses, bus and truck): red-dot sights, four weapons, grenades, medkits, radar and kill feed, stereoscopic 3D. X/Y/A/B move, Circle Pad looks, R shoots, L aims, D-pad changes weapon / throws a grenade / heals. Design notes in [`PLAN.md`](sunset-ops/PLAN.md) |
-| `webslinger/` | Third-person web-swinging through a procedural Manhattan (576 m island, ~370 buildings up to a stepped landmark tower, park, water, traffic). R holds a web swing (pendulum physics, auto-chains), A jumps / lets go with a boost, X web-zips to a high point, run into a building to climb it, L sprints, B dives; Circle Pad steers, D-pad / C-stick / touch drag move the camera. Free Roam and a timed Beacon Run, city map on the bottom screen, stereoscopic 3D. Host tests: `host/simtest.c`, `host/movetest.c` |
+| `webslinger/` | Third-person web-swinging through a procedural Manhattan (15x15 blocks on a 960 m island, buildings up to a stepped landmark tower, park, water, traffic). R holds a web swing (pendulum physics, auto-chains), A jumps / lets go with a boost, run into a building to climb it (hold L to run up and along it, with the camera tilting up the facade), L + R web-zips to a roof, tap L in the air for a wingsuit, L sprints, B dives, A A flips / rolls, and letting go of a web at speed throws a flip or corkscrew; Circle Pad steers, D-pad / C-stick / touch drag move the camera. Free Roam and a timed Beacon Run, city map on the bottom screen, stereoscopic 3D. The hero is one continuous skinned mesh (Blender pipeline in `assets/hero`, `make hero`) driven by CMU-mocap walk / jog / sprint cycles (`source/hero_anim.h`). Host tests: `host/simtest.c`, `host/movetest.c` |
 
 ## Setup
 

@@ -15,4 +15,5 @@ PY
 gcc -O2 -DHOST_PREVIEW -Wall -Wno-unused-function -Wno-misleading-indentation -Wno-unused-variable -o "$out/preview" host/preview.c -lm
 "$out/preview" "$out" "$out"
 python3 host/preview.py "$out"
+python3 host/hero_sheets.py "$out"
 echo "frames written to $out"

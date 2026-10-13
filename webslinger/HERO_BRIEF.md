@@ -1,5 +1,7 @@
 # Web Slinger: hero model and animation brief
 
+> **HISTORICAL.** This was the brief for the first refinement pass, written for the old rigid-parts model. The hero is now one continuous skinned mesh with mocap-driven locomotion; see `HERO_WORK.md` (current status) for how it works now. The 3DS limits and verification steps below still apply.
+
 Goal: make the hero look less toy-like (better model, better suit texture) and make his walk / run animation look realistic.
 Nothing here has been run on a real 3DS by the previous author, so keep the performance limits below.
 

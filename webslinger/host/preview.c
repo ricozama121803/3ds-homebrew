@@ -215,7 +215,11 @@ static void snap(const char *dir, const char *name)
 static Input idle;
 static void run(float seconds, Input in)
 {
-	for (float t = 0; t < seconds; t += 1.0f / 30.0f) { game_update(&G, &in, 1.0f / 30.0f); if (S.dyn) scene_build(&G, &S); in.wing_p = in.jump_p = in.zip_p = in.start_p = in.a_p = in.b_p = in.up_p = in.down_p = in.select_p = in.recenter_p = false; }
+	for (float t = 0; t < seconds - 0.000001f;) {   // avoid a roundoff-sized final physics step (wall contact has a finite epsilon)
+		float dt = fminf(1.0f / 60.0f, seconds - t); t += dt;
+		game_update(&G, &in, dt); if (S.dyn) scene_build(&G, &S);
+		in.wing_p = in.jump_p = in.zip_p = in.start_p = in.a_p = in.b_p = in.up_p = in.down_p = in.select_p = in.recenter_p = false;
+	}
 }
 static void place(float x, float y, float z, float yaw)
 {
@@ -233,16 +237,28 @@ static void snapfree(const char *dir, const char *name)
 
 static void hero_close(const char *dir, const char *name, float off)       // off: 0 = from the front, PI/2 = from the side ...
 {
-	float T[3] = { G.p.p[0], G.p.p[1] + 1.0f, G.p.p[2] }, best[3] = { T[0], T[1] + 4, T[2] };
+	// Frame the actual pose, including flips, and never feed the inspection camera back into controls.
+	Cam saved = G.cam;
+	scene_build(&G, &S);
+	float lo[3] = { 1e9f, 1e9f, 1e9f }, hi[3] = { -1e9f, -1e9f, -1e9f };
+	for (int i = 0; i < S.count[D_HERO]; i++) {
+		const Vtx *v = S.dyn + S.first[D_HERO] + i;
+		float q[3] = { v->x, v->y, v->z };
+		for (int j = 0; j < 3; j++) { lo[j] = fminf(lo[j], q[j]); hi[j] = fmaxf(hi[j], q[j]); }
+	}
+	float T[3] = { (lo[0]+hi[0])*0.5f, (lo[1]+hi[1])*0.5f, (lo[2]+hi[2])*0.5f };
+	float best[3] = { T[0], T[1] + 5.2f, T[2] };
 	for (int k = 0; k < 8; k++) {
 		float a = G.p.face + off + k * PI_F / 4, d[3] = { sinf(a), 0.15f, -cosf(a) }, n[3];
 		float l = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]); for (int q = 0; q < 3; q++) d[q] /= l;
-		if (city_ray(&G.w, T, d, 5.0f, n) < 0) { for (int q = 0; q < 3; q++) best[q] = T[q] + d[q] * 4.2f; break; }
+		if (city_ray(&G.w, T, d, 5.4f, n) < 0) { for (int q = 0; q < 3; q++) best[q] = T[q] + d[q] * 5.2f; break; }
 	}
 	float dx = T[0] - best[0], dy = T[1] - best[1], dz = T[2] - best[2];
 	G.cam.eye[0] = best[0]; G.cam.eye[1] = best[1]; G.cam.eye[2] = best[2]; G.cam.yaw = atan2f(dx, -dz); G.cam.pitch = atan2f(dy, sqrtf(dx * dx + dz * dz)); G.cam.fov = 40;
 	scene_build(&G, &S); draw_scene(&S);
+	printf("%-16s hero %d vertices (%d triangles)\n", name, S.count[D_HERO], S.count[D_HERO] / 3);
 	save(dir, name); hud_capture(dir, name);
+	G.cam = saved;
 }
 
 int main(int argc, char **argv)
@@ -286,7 +302,7 @@ int main(int argc, char **argv)
 		for (int k = 0; k < 4; k++) {
 			game_start(&G, MODE_FREE); memset(&G.p, 0, sizeof G.p); G.p.p[0] = 4 * PITCH; G.p.p[1] = 200; G.p.p[2] = 3 * PITCH; G.p.state = ST_AIR; G.p.face = DEG(90); G.cam.yaw = DEG(90);
 			G.p.v[0] = 12; G.p.trickType = types[k % 3]; if (k == 3) G.p.trickType = 4; G.p.trickT = TRICK_DUR * (1 - when[k % 3]); G.p.trickCount = 1;
-			Input in = idle; run(0.02f, in); char nm[32]; snprintf(nm, sizeof nm, "k%d_trick", k); hero_close(out, nm, PI_F / 2);
+			an.init = false; char nm[32]; snprintf(nm, sizeof nm, "k%d_trick", k); hero_close(out, nm, PI_F / 2);
 		}
 		for (int k = 0; k < 3; k++) {                                       // corkscrew, swan dive, fast coast
 			game_start(&G, MODE_FREE); memset(&G.p, 0, sizeof G.p); G.p.p[0] = 4 * PITCH; G.p.p[1] = 200; G.p.p[2] = 3 * PITCH; G.p.state = ST_AIR; G.p.face = DEG(90); G.cam.yaw = DEG(90);
@@ -294,7 +310,7 @@ int main(int argc, char **argv)
 			if (k == 0) { G.p.trickType = 5; G.p.trickT = TRICK_DUR * 0.7f; }
 			Input in = idle; run(0.3f, in); char nm[32]; snprintf(nm, sizeof nm, "k6%c_air", 'a' + k); hero_close(out, nm, PI_F / 2);
 		}
-		game_start(&G, MODE_FREE); G.p.charge = 0.9f; run(0.0f, idle); hero_close(out, "k5_crouch", PI_F / 2);
+		game_start(&G, MODE_FREE); an.init = false; G.p.charge = 0.9f; run(0.0f, idle); hero_close(out, "k5_crouch", PI_F / 2);
 	}
 	// filmstrips: the run cycle and a swing, side view, every 0.07 s (the animation springs are stepped every frame)
 	{
@@ -325,17 +341,40 @@ int main(int argc, char **argv)
 		}
 		game_start(&G, MODE_FREE); memset(&G.p, 0, sizeof G.p); G.p.p[0] = 0.5f * (b->x0 + b->x1); G.p.p[1] = 12; G.p.p[2] = b->z0 - BODY_HW - 0.01f; G.p.state = ST_WALL; G.p.wn[0] = 0; G.p.wn[1] = -1; G.p.face = 0; G.cam.yaw = PI_F;
 		run(0.5f, in);
-		for (int k = 0; k < 6; k++) { G.p.p[1] = 12; run(0.07f, in); G.p.p[1] = 12; char nm[32]; snprintf(nm, sizeof nm, "wr%d_wallrun", k); hero_close(out, nm, PI_F / 2); }
+		for (int k = 0; k < 6; k++) { run(0.07f, in); char nm[32]; snprintf(nm, sizeof nm, "wr%d_wallrun", k); hero_close(out, nm, PI_F / 2); }
 		printf("wallrun: state %d y %.1f\n", G.p.state, G.p.p[1]);
 		G.cam.yaw = PI_F; G.cam.pitch = -0.2f; G.cam.wall = 0; G.cam.dist = 8; G.cam.fov = 62;                    // the wall-run camera swinging round: before, mid, settled
-		for (int k = 0; k < 3; k++) { G.p.p[1] = 14; run(k == 0 ? 0.01f : k == 1 ? 0.4f : 1.5f, in); printf("  eye %.1f %.1f %.1f yaw %.2f pitch %.2f hero %.1f %.1f %.1f\n", G.cam.eye[0], G.cam.eye[1], G.cam.eye[2], G.cam.yaw, G.cam.pitch, G.p.p[0], G.p.p[1], G.p.p[2]); printf("  wc%d: state %d y %.1f box y %.1f..%.1f z0 %.1f pz %.2f\n", k, G.p.state, G.p.p[1], b->y0, b->y1, b->z0, G.p.p[2]); char nm[32]; snprintf(nm, sizeof nm, "wc%d_wallcam", k); G.hintT = 0; snap(out, nm); }
+		for (int k = 0; k < 3; k++) { run(k == 0 ? 0.01f : k == 1 ? 0.4f : 1.5f, in); printf("  eye %.1f %.1f %.1f yaw %.2f pitch %.2f hero %.1f %.1f %.1f\n", G.cam.eye[0], G.cam.eye[1], G.cam.eye[2], G.cam.yaw, G.cam.pitch, G.p.p[0], G.p.p[1], G.p.p[2]); printf("  wc%d: state %d y %.1f box y %.1f..%.1f z0 %.1f pz %.2f\n", k, G.p.state, G.p.p[1], b->y0, b->y1, b->z0, G.p.p[2]); char nm[32]; snprintf(nm, sizeof nm, "wc%d_wallcam", k); G.hintT = 0; snap(out, nm); }
 		printf("wallcam: state %d wallRun %d  pitch %.2f fov %.1f dist %.1f wall %.2f\n", G.p.state, G.p.wallRun, G.cam.pitch, G.cam.fov, G.cam.dist, G.cam.wall);
+		// Reuse the verified wall for climbing; the old w1 camera fixture can miss its facade.
+		game_start(&G, MODE_FREE); memset(&G.p, 0, sizeof G.p);
+		G.p.p[0] = 0.5f * (b->x0 + b->x1); G.p.p[1] = 12; G.p.p[2] = b->z0 - BODY_HW - 0.001f;
+		G.p.state = ST_WALL; G.p.wn[1] = -1; G.cam.yaw = PI_F; an.init = false;
+		in.sprint = false; run(0.35f, in);
+		if (G.p.state != ST_WALL || G.p.wallRun) { fprintf(stderr, "climb fixture lost its wall\n"); exit(1); }
+		hero_close(out, "h5_climb", PI_F*0.7f);
 	}
 	// landing roll filmstrip
 	{
 		game_start(&G, MODE_FREE); memset(&G.p, 0, sizeof G.p); G.p.p[0] = 4 * PITCH + 4; G.p.p[1] = 1.5f; G.p.p[2] = 3 * PITCH + 4; G.p.state = ST_AIR; G.p.face = DEG(90); G.cam.yaw = DEG(90);
 		G.p.v[0] = 14; G.p.v[1] = -10; G.p.airT = 1.5f; Input in = idle; in.lx = 1;
-		for (int k = 0; k < 10; k++) { run(k ? 0.07f : 0.1f, in); char nm[32]; snprintf(nm, sizeof nm, "r%d_roll", k); hero_close(out, nm, PI_F / 2); }
+		for (int k = 0; k < 14; k++) { run(k ? 0.07f : 0.1f, in); char nm[32]; snprintf(nm, sizeof nm, "r%d_roll", k); hero_close(out, nm, PI_F / 2); }
+	}
+	// Slow walk and a real deceleration to rest, with the game simulation driving speed.
+	{
+		game_start(&G, MODE_FREE); Input walk = idle; walk.ly = 0.2f;
+		run(1.5f, walk);
+		for (int k = 0; k < 8; k++) { run(0.14f, walk); char nm[32]; snprintf(nm,sizeof nm,"g%d_walk",k); hero_close(out,nm,PI_F/2); }
+		walk.ly = 1; walk.sprint = true;
+		for (int k = 0; k < 6; k++) { run(0.08f,walk); char nm[32]; snprintf(nm,sizeof nm,"gs%d_start",k); hero_close(out,nm,PI_F/2); }
+		for (int k = 0; k < 8; k++) { run(0.08f,idle); char nm[32]; snprintf(nm,sizeof nm,"gs%d_stop",k); hero_close(out,nm,PI_F/2); }
+	}
+	// Each trick through a full revolution, rather than unrelated single-frame spring states.
+	for (int type = 1; type <= 5; type++) {
+		game_start(&G, MODE_FREE); place(4*PITCH,180,3*PITCH,PI_F/2);
+		G.p.v[0] = 12; G.p.airT = 1; G.p.trickType = type; G.p.trickT = TRICK_DUR;
+		an.init = false;
+		for (int k = 0; k < 8; k++) { run(TRICK_DUR/8,idle); char nm[32]; snprintf(nm,sizeof nm,"t%d_%d_trick",type,k); hero_close(out,nm,PI_F/2); }
 	}
 	// 3: a wall climb
 	{

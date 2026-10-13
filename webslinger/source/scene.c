@@ -535,26 +535,39 @@ static float SC = 1.38f;
 static V3 PIV;                                                     // the hero's pivot (feet) for scaling
 static V3 Q(V3 x) { return add(PIV, mul(sub(x, PIV), SC)); }
 
-// ---- the hero: Blender-made parts (hero_mesh.h), posed with the skeleton below ----------------------------------------------------
-static void hero_part(int part, V3 origin, V3 X, V3 Y, V3 Z, bool mirror)
+// CPU linear blend skinning. scene_build runs once in gfx_begin; both stereo eyes
+// reuse the resulting dynamic buffer. UV seams never duplicate skinning work.
+typedef struct { V3 p,x,y,z; } BonePose;
+static BonePose bones[HERO_NB];
+static V3 arr3(const float *a) { return v3(a[0],a[1],a[2]); }
+static V3 bone_rot(const BonePose *b,V3 p) { return add(mul(b->x,p.x),add(mul(b->y,p.y),mul(b->z,p.z))); }
+static void bone_frame(int i,V3 p,V3 x,V3 y,V3 z) { bones[i]=(BonePose){p,x,y,z}; }
+static void frame_of(V3 y,V3 xref,V3 fallback,V3 *X,V3 *Y,V3 *Z);
+static void bone_between(int i,V3 h,V3 t,V3 left,V3 forward)
 {
-	const HeroPart *hp = &HERO_PARTS[part];
-	static V3 wp[700], wn[700]; static float wk[700];
-	if (hp->nv > 700) return;
-	for (int i = 0; i < hp->nv; i++) {
-		const float *v = hp->v + i * 8;
-		float x = mirror ? -v[0] : v[0], nx = mirror ? -v[3] : v[3];
-		wp[i] = Q(add(origin, add(mul(X, x), add(mul(Y, v[1]), mul(Z, v[2])))));
-		wn[i] = add(mul(X, nx), add(mul(Y, v[4]), mul(Z, v[5])));
-		float k = shadev(wn[i]); wk[i] = k > 1.0f ? 1.0f : k;
+	V3 x,y,z,rx,ry,rz;
+	frame_of(sub(t,h),left,forward,&x,&y,&z);
+	frame_of(sub(arr3(hero_bones[i].tail),arr3(hero_bones[i].head)),v3(1,0,0),v3(0,0,1),&rx,&ry,&rz);
+	bone_frame(i,h,add(mul(x,rx.x),add(mul(y,ry.x),mul(z,rz.x))),
+		add(mul(x,rx.y),add(mul(y,ry.y),mul(z,rz.y))),add(mul(x,rx.z),add(mul(y,ry.z),mul(z,rz.z))));
+}
+static V3 skin_position[HERO_NV],skin_normal[HERO_NV];
+static void hero_skin(void)
+{
+	static float light[HERO_NV];
+	for(int i=0;i<HERO_NV;i++) {
+		const HeroVertex *v=&hero_vertices[i]; V3 p=v3(0,0,0),n=p;
+		for(int j=0;j<4;j++) if(v->w[j]>0) {
+			int b=v->b[j]; V3 q=add(bones[b].p,bone_rot(&bones[b],sub(arr3(v->p),arr3(hero_bones[b].head))));
+			p=add(p,mul(q,v->w[j]));n=add(n,mul(bone_rot(&bones[b],arr3(v->n)),v->w[j]));
+		}
+		skin_position[i]=Q(p);skin_normal[i]=norm(n);
+		light[i]=fminf(1,shadev(skin_normal[i]))*v->ao;
 	}
-	Mesh *m = &dm[D_HERO];
-	if (m->v && m->n + hp->ni > m->cap) return;
-	for (int t = 0; t < hp->ni; t++) {
-		int i = hp->i[t]; const float *v = hp->v + i * 8;
-		float c[3] = { wk[i], wk[i], wk[i] };
-		SV sv0 = sv(wp[i].x, wp[i].y, wp[i].z, v[6], v[7], c, 1);
-		put(m, &sv0);
+	Mesh *m=&dm[D_HERO];
+	for(int i=0;i<HERO_NI;i++) {
+		const HeroCorner *c=&hero_corners[i];V3 p=skin_position[c->v];float k=light[c->v],rgb[3]={k,k,k};
+		SV v=sv(p.x,p.y,p.z,c->uv[0],c->uv[1],rgb,1);put(m,&v);
 	}
 }
 // an orthonormal frame whose Y axis is `y`, with X as close as possible to `xref` (and Z = X x Y: forward for an upright hero)
@@ -579,6 +592,11 @@ static V3 ik(V3 root, V3 target, float l1, float l2, V3 hint)
 	perp = vlen(perp) > 1e-4f ? norm(perp) : cross(dn, v3(0, 1, 0));
 	return add(add(root, mul(dn, a)), mul(perp, hh));
 }
+static V3 within_reach(V3 root, V3 target, float reach)
+{
+	V3 d = sub(target, root); float len = vlen(d);
+	return len > reach ? add(root, mul(d, reach / len)) : target;
+}
 
 static V3 g_hand;                                                  // where the web leaves the hero's hand (for the rope)
 
@@ -598,10 +616,15 @@ static void spring1(float *x, float *v, float target, float w, float z, float dt
 }
 typedef struct {
 	bool init; float lastT, bank, bankV, lean, leanV;
-	V3 prevVel, dH, dHv, u, uv, R, Rv;
+	int gaitMode; float gait;
+	bool planted[2]; V3 contact[2], footForward[2];
+	V3 prevVel, prevPos, dH, dHv, u, uv, R, Rv;
 	V3 hand[2], handV[2], foot[2], footV[2], ah[2], ahV[2], lh[2], lhV[2];            // limb targets and knee/elbow hints in the body's local frame
 } Anim;
 static Anim an;
+#ifdef HOST_PREVIEW
+static struct { V3 hip[2], knee[2], ankle[2], shoulder[2], elbow[2], wrist[2]; } heroPose;
+#endif
 static V3 to_local(V3 w, V3 R, V3 u, V3 F) { return v3(dot(w, R), dot(w, u), dot(w, F)); }
 static V3 from_local(V3 l, V3 R, V3 u, V3 F) { return add(mul(R, l.x), add(mul(u, l.y), mul(F, l.z))); }
 static void basis_of(V3 u, V3 Rin, V3 *R, V3 *U, V3 *F)                              // orthonormal (right, up, front) from an up axis and a rough right
@@ -609,6 +632,85 @@ static void basis_of(V3 u, V3 Rin, V3 *R, V3 *U, V3 *F)                         
 	V3 uu = norm(u), r = sub(Rin, mul(uu, dot(Rin, uu)));
 	r = vlen(r) < 1e-3f ? cross(uu, v3(0, 0, 1)) : r; r = norm(r);
 	*R = r; *U = uu; *F = cross(uu, r);
+}
+
+static float ease(float t) { t=sat(t); return t*t*(3-2*t); }
+#include "hero_anim.h"
+typedef struct { float w,x,y,z; } HQuat;
+static HQuat hq(const float *q) { return (HQuat){q[0],q[1],q[2],q[3]}; }
+static HQuat qblend(HQuat a,HQuat b,float t)
+{
+	float d=a.w*b.w+a.x*b.x+a.y*b.y+a.z*b.z,s=d<0?-1:1;
+	HQuat q={a.w*(1-t)+b.w*t*s,a.x*(1-t)+b.x*t*s,a.y*(1-t)+b.y*t*s,a.z*(1-t)+b.z*t*s};
+	float k=1/sqrtf(q.w*q.w+q.x*q.x+q.y*q.y+q.z*q.z);q.w*=k;q.x*=k;q.y*=k;q.z*=k;return q;
+}
+static HQuat qmul(HQuat a,HQuat b) { return (HQuat){a.w*b.w-a.x*b.x-a.y*b.y-a.z*b.z,a.w*b.x+a.x*b.w+a.y*b.z-a.z*b.y,a.w*b.y-a.x*b.z+a.y*b.w+a.z*b.x,a.w*b.z+a.x*b.y-a.y*b.x+a.z*b.w}; }
+static HQuat qaxis(float angle,int axis) { HQuat q={cosf(angle*.5f),0,0,0};if(axis==0)q.x=sinf(angle*.5f);else if(axis==1)q.y=sinf(angle*.5f);else q.z=sinf(angle*.5f);return q; }
+static BonePose qframe(HQuat q)
+{
+	return (BonePose){v3(0,0,0),v3(1-2*(q.y*q.y+q.z*q.z),2*(q.x*q.y+q.w*q.z),2*(q.x*q.z-q.w*q.y)),
+		v3(2*(q.x*q.y-q.w*q.z),1-2*(q.x*q.x+q.z*q.z),2*(q.y*q.z+q.w*q.x)),
+		v3(2*(q.x*q.z+q.w*q.y),2*(q.y*q.z-q.w*q.x),1-2*(q.x*q.x+q.y*q.y))};
+}
+static float gait_blend(float speed,int *a,int *b)
+{
+	if(speed<4.7f){*a=0;*b=1;return ease((speed-2.0f)/2.7f);}
+	*a=1;*b=2;return ease((speed-4.7f)/2.4f);
+}
+static void ground_pose(const Game *g,V3 P,V3 up,V3 f,V3 R,float speed,float dt,bool snap,bool wall)
+{
+	const Player *p=&g->p;int ca,cb;float blend=gait_blend(speed,&ca,&cb),amp=ease(speed/.85f);
+	float stride=lerpf(gait_clips[ca].stride,gait_clips[cb].stride,blend);
+	int mode=wall?2:1;
+	if(snap || an.gaitMode!=mode){an.gait=0;an.planted[0]=an.planted[1]=false;}
+	an.gaitMode=mode;an.gait+=speed*dt/(SC*stride);an.gait-=floorf(an.gait);
+	float key=an.gait*GAIT_KEYS;int k=(int)key,n=(k+1)%GAIT_KEYS;float t=key-k;
+	const GaitKey *a=&gait_clips[ca].key[k],*a1=&gait_clips[ca].key[n],*b=&gait_clips[cb].key[k],*b1=&gait_clips[cb].key[n];
+	float height=lerpf(lerpf(a->height,a1->height,t),lerpf(b->height,b1->height,t),blend);
+	float crouch=fmaxf(sat(p->landT/.18f)*.6f,p->charge*.95f);
+	float lean=amp*(.015f+.075f*ease((speed-2)/6))+an.lean+(wall?.12f:0);
+	V3 L=mul(R,-1),u=norm(add(mul(up,cosf(lean)),mul(f,sinf(lean)))),fw=norm(cross(L,u));
+	BonePose world={add(P,mul(up,lerpf(1.135f,height,amp)-.24f*crouch)),L,u,fw};
+	for(int i=0;i<HERO_NB;i++) {
+		HQuat q=qblend(qblend(hq(a->q[i]),hq(a1->q[i]),t),qblend(hq(b->q[i]),hq(b1->q[i]),t),blend),idle={1,0,0,0};
+		if(i==HB_L_UPPERARM || i==HB_R_UPPERARM)idle=qmul(qaxis(i==HB_L_UPPERARM?-.59f:.59f,2),qaxis(-.10f,0));
+		if(i==HB_L_FOREARM || i==HB_R_FOREARM)idle=qaxis(-.18f,0);
+		q=qblend(idle,q,amp);
+		if(i==HB_L_THIGH || i==HB_R_THIGH)q=qmul(qaxis(-.65f*crouch,0),q);
+		if(i==HB_L_SHIN || i==HB_R_SHIN)q=qmul(qaxis(1.3f*crouch,0),q);
+		if(i==HB_L_FOOT || i==HB_R_FOOT)q=qmul(qaxis(-.65f*crouch,0),q);
+		BonePose local=qframe(q);int par=hero_bones[i].parent;BonePose *parent=par<0?&world:&bones[par];
+		V3 offset=par<0?v3(0,0,0):sub(arr3(hero_bones[i].head),arr3(hero_bones[par].head));
+		bone_frame(i,add(parent->p,bone_rot(parent,offset)),bone_rot(parent,local.x),bone_rot(parent,local.y),bone_rot(parent,local.z));
+	}
+	// The neck absorbs chest pitch; retain a little captured head motion.
+	bones[HB_HEAD].x=norm(lerp3(bones[HB_HEAD].x,L,.7f));bones[HB_HEAD].y=norm(lerp3(bones[HB_HEAD].y,up,.7f));bones[HB_HEAD].z=norm(cross(bones[HB_HEAD].x,bones[HB_HEAD].y));bones[HB_HEAD].x=cross(bones[HB_HEAD].y,bones[HB_HEAD].z);
+	// A small root lift prevents retargeting/clip blends from pushing soles into the floor.
+	float low=1e9f;
+	for(int s=0;s<2;s++) {int i=s?HB_R_FOOT:HB_L_FOOT;for(int z=0;z<2;z++){V3 sole=add(bones[i].p,bone_rot(&bones[i],v3(0,-.115f,z?.195f:-.045f)));low=fminf(low,dot(sub(sole,P),up));}}
+	if(low<0)for(int i=0;i<HERO_NB;i++)bones[i].p=sub(bones[i].p,mul(up,low));
+	// Contact correction is bounded to 6cm in model space. All primary leg motion
+	// comes from the recorded joint angles, including recovery and knee drive.
+	for(int s=0;s<2;s++) {
+		int leg=s?HB_R_THIGH:HB_L_THIGH,foot=leg+2;
+		bool contact=(blend<.5f?a->contact[s]:b->contact[s]) && speed>.08f && crouch<.1f;
+		V3 sole=add(bones[foot].p,bone_rot(&bones[foot],v3(0,-.115f,.045f)));
+		if(contact && !an.planted[s])an.contact[s]=Q(sole);
+		if(contact) {
+			V3 target=add(PIV,mul(sub(an.contact[s],PIV),1/SC)),cor=sub(target,sole);cor=sub(cor,mul(up,dot(cor,up)));float len=vlen(cor);
+			if(len>.06f)cor=mul(cor,.06f/len);
+			V3 hip=bones[leg].p,ankle=add(bones[foot].p,cor),oldKnee=bones[leg+1].p;
+			V3 knee=ik(hip,ankle,vlen(sub(arr3(hero_bones[leg].tail),arr3(hero_bones[leg].head))),vlen(sub(arr3(hero_bones[leg+1].tail),arr3(hero_bones[leg+1].head))),sub(oldKnee,hip));
+			bone_between(leg,hip,knee,L,f);bone_between(leg+1,knee,ankle,L,f);bones[foot].p=ankle;bones[foot+1].p=add(bones[foot+1].p,cor);
+		}
+		an.planted[s]=contact;
+#ifdef HOST_PREVIEW
+		heroPose.hip[s]=bones[leg].p;heroPose.knee[s]=bones[leg+1].p;heroPose.ankle[s]=bones[foot].p;
+		int arm=s?HB_R_UPPERARM:HB_L_UPPERARM;heroPose.shoulder[s]=bones[arm].p;heroPose.elbow[s]=bones[arm+1].p;heroPose.wrist[s]=bones[arm+2].p;
+#endif
+	}
+	an.init=true;an.dH=sub(bones[0].p,P);an.u=u;an.R=R;
+	hero_skin();g_hand=Q(bones[p->hand?HB_R_HAND:HB_L_HAND].p);
 }
 
 static void draw_hero(const Game *g)
@@ -620,7 +722,9 @@ static void draw_hero(const Game *g)
 	V3 vel = v3(p->v[0], p->v[1], p->v[2]);
 	float sp = vlen(vel), hs = sqrtf(p->v[0] * p->v[0] + p->v[2] * p->v[2]);
 	float dt = g->time - an.lastT; an.lastT = g->time;
-	bool snap = !an.init || dt > 0.25f || dt < 0 || vlen(sub(vel, an.prevVel)) > 80.0f;
+	bool snap = !an.init || dt > 0.25f || dt < 0 || vlen(sub(vel, an.prevVel)) > 80.0f
+	         || vlen(sub(sub(P, an.prevPos), mul(vel, fmaxf(dt, 0)))) > 3.0f;
+	an.prevPos = P;
 	if (dt > 0.05f) dt = 0.05f;
 	if (dt < 0) dt = 0;
 	// banking and lean from the acceleration (into turns, into speed-ups)
@@ -646,43 +750,20 @@ static void draw_hero(const Game *g)
 	float ph = p->phase, tm = g->time;
 	bool roped = p->state == ST_AIR && p->rope;
 	bool rolling = p->state == ST_GROUND && p->rollT > 0;
-	if ((p->state == ST_GROUND && !rolling) || wallRun) {
-		float amp = sat(hs / 9.0f), sprint = sat((hs - 9.0f) / 6.0f), crouch = fmaxf(p->landT > 0 ? 0.6f : 0.0f, p->charge * 0.95f);
-		float lean = sat(hs / 15.0f) * 0.34f + an.lean + (wallRun ? 0.5f : 0.0f);
-		u = norm(add(mul(up, cosf(lean)), mul(f, sinf(lean))));
-		u = norm(add(u, mul(R, bank * 0.8f)));
-		float idle = 1.0f - amp;
-		H = add(P, mul(up, (0.86f + 0.08f * amp - 0.3f * crouch) + fabsf(sinf(ph)) * (0.045f + 0.03f * sprint) * amp + 0.012f * sinf(tm * 2.2f) * idle));
-		H = add(H, mul(R, 0.015f * sinf(tm * 0.8f) * idle + sinf(ph) * 0.02f * amp));      // weight shift when standing, hip sway when running
-		float tw = 0.2f * amp * sinf(ph);                                                    // shoulders twist against the hips
-		V3 f0 = f, R0 = R;
-		V3 fT = add(mul(f0, cosf(tw)), mul(R0, sinf(tw))), RT = sub(mul(R0, cosf(tw)), mul(f0, sinf(tw)));
-		for (int s = 0; s < 2; s++) {
-			float a = ph + (s ? PI_F : 0), sa = sinf(a), ca = cosf(a);
-			float cyc = a / (2.0f * PI_F); cyc -= floorf(cyc);                                  // 0..1 leg cycle: stance (foot on the ground, moving back) then swing
-			float S = 0.34f + 0.16f * sprint, fx, fy;
-			if (cyc < 0.42f) { float t = cyc / 0.42f; fx = lerpf(S, -1.15f * S, t); fy = 0; }
-			else { float t = (cyc - 0.42f) / 0.58f, e = t * t * (3.0f - 2.0f * t); fx = lerpf(-1.15f * S, S, e); fy = (0.30f + 0.14f * sprint) * sinf(PI_F * powf(t, 0.75f)); }   // heel kicks up early, knee drives through
-			foot[s] = add(add(P, mul(R0, sd[s] * (0.12f + 0.1f * idle))), add(mul(f0, fx * amp + 0.05f), mul(up, fy * amp)));
-			legHint[s] = add(f0, mul(R0, sd[s] * 0.5f * idle));
-			V3 sh = add(add(H, mul(u, 0.52f)), mul(RT, sd[s] * 0.25f));
-			float swing = -sa * amp;                                                           // -1..1, arms drive opposite to the legs
-			float fwd = amp * (0.0f + (0.17f + 0.04f * sprint) * swing), dn = -0.5f + amp * (0.2f + 0.17f * swing + 0.03f * sprint) + 0.1f * crouch;      // elbows ~90 deg: front hand near the chin, back hand by the hip
-			hand[s] = add(add(sh, add(mul(up, dn + sinf(tm * 1.9f + s) * 0.012f * idle), mul(RT, sd[s] * (0.14f + 0.02f * idle + 0.04f * amp)))), mul(fT, fwd));
-			float fr = 0.5f + 0.5f * swing;                                                      // 1 = hand forward: elbow points down; 0 = hand back: elbow points up and back
-			armHint[s] = add(add(mul(fT, -0.5f - 0.3f * (1 - fr) * amp), mul(RT, sd[s] * (0.8f - 0.4f * amp))), mul(up, amp * (fr * -0.9f + (1 - fr) * 0.5f)));
-		}
-		f = fT; R = RT;                                                                      // the torso frame carries the twist
-	} else if (p->state == ST_WALL) {
+	bool locomotion = (p->state == ST_GROUND && !rolling) || wallRun;
+	if (locomotion) { ground_pose(g,P,up,f,R,hs,dt,snap,wallRun); return; }
+	// Traversal retains its existing target poses; the same continuous skin follows them.
+	if (p->state == ST_WALL) {
 		V3 n = v3(p->wn[0], 0, p->wn[1]);
 		f = mul(n, -1); R = norm(cross(f, up));
 		u = norm(add(mul(up, 0.95f), mul(f, 0.25f)));
 		H = add(P, mul(up, 0.72f));
+		float surface = BODY_HW / SC;                              // contact depth is in model units, not scaled world units
 		float amp = sat((fabsf(p->v[1]) + sqrtf(p->v[0] * p->v[0] + p->v[2] * p->v[2])) / 5.0f);
 		for (int s = 0; s < 2; s++) {
 			float a = ph + (s ? PI_F : 0), wv = sinf(a) * 0.24f * amp;
-			hand[s] = add(add(P, mul(f, 0.46f)), add(mul(up, 1.5f + wv + 0.06f * sinf(tm * 1.5f + s)), mul(R, sd[s] * 0.38f)));
-			foot[s] = add(add(P, mul(f, 0.46f)), add(mul(up, 0.25f - wv * 0.8f), mul(R, sd[s] * 0.3f)));
+			hand[s] = add(add(P, mul(f, surface - 0.035f)), add(mul(up, 1.5f + wv + 0.06f * sinf(tm * 1.5f + s)), mul(R, sd[s] * 0.38f)));
+			foot[s] = add(add(P, mul(f, surface - 0.10f)), add(mul(up, 0.25f - wv * 0.8f), mul(R, sd[s] * 0.3f)));
 			armHint[s] = add(mul(R, sd[s]), mul(f, -0.3f));
 			legHint[s] = add(mul(R, sd[s] * 0.9f), mul(f, 0.4f));
 		}
@@ -748,6 +829,8 @@ static void draw_hero(const Game *g)
 		}
 	}
 
+	if (!locomotion) { an.gaitMode = 0; an.planted[0] = an.planted[1] = false; }
+
 	// ---- smooth the pose: body axes and root offset in world space, limbs in the body's own frame --------------------------------
 	V3 Rr, Ur, Fr;
 	basis_of(u, R, &Rr, &Ur, &Fr);                                                           // the raw body frame
@@ -762,7 +845,7 @@ static void draw_hero(const Game *g)
 		an.init = true; an.dH = dH; an.dHv = v3(0, 0, 0); an.u = Ur; an.uv = v3(0, 0, 0); an.R = Rr; an.Rv = v3(0, 0, 0);
 		for (int s = 0; s < 2; s++) { an.hand[s] = l_hand[s]; an.foot[s] = l_foot[s]; an.ah[s] = l_ah[s]; an.lh[s] = l_lh[s]; an.handV[s] = an.footV[s] = an.ahV[s] = an.lhV[s] = v3(0, 0, 0); }
 	} else {
-		bool runPose = p->state == ST_GROUND && !rolling;                                 // the run cycle is fast: stiff springs so feet stay planted
+		bool runPose = locomotion;                                 // the run cycle is fast: stiff springs so feet stay planted
 		float wb = trickNow ? 40.0f : 15.0f;
 		spring3(&an.dH, &an.dHv, dH, runPose ? 40.0f : 20.0f, 0.9f, dt);
 		spring3(&an.u, &an.uv, Ur, wb, 1.0f, dt); spring3(&an.R, &an.Rv, Rr, wb, 1.0f, dt);
@@ -787,25 +870,33 @@ static void draw_hero(const Game *g)
 	V3 L = mul(side, -1.0f);
 	V3 X, Y, Z;
 	frame_of(u, L, fw, &X, &Y, &Z);
-	hero_part(HP_TORSO, H, X, Y, Z, false);
-	hero_part(HP_HEAD, add(H, mul(u, 0.70f)), X, Y, Z, false);
+	for (int b=HB_PELVIS;b<=HB_HEAD;b++) bone_frame(b,add(H,add(mul(X,hero_bones[b].head[0]),add(mul(Y,hero_bones[b].head[1]),mul(Z,hero_bones[b].head[2])))),X,Y,Z);
+	bone_frame(HB_HEAD,add(H,mul(u,.73f)),X,Y,Z);
 	bool ground = p->state == ST_GROUND || wallRun;
 	for (int s = 0; s < 2; s++) {
-		bool mir = s == 1;                                                                    // s = 0 is the hero's left
+		int ab=s?HB_R_CLAVICLE:HB_L_CLAVICLE,lb=s?HB_R_THIGH:HB_L_THIGH;                                                                    // s = 0 is the hero's left
 		V3 hip = add(H, mul(R, sd[s] * 0.12f)), ankle = add(foot[s], mul(up, 0.10f));
-		V3 knee = ik(hip, ankle, 0.46f, 0.46f, legHint[s]);
-		frame_of(sub(hip, knee), L, fw, &X, &Y, &Z); hero_part(HP_THIGH, hip, X, Y, Z, mir);
-		frame_of(sub(knee, ankle), L, fw, &X, &Y, &Z); hero_part(HP_SHIN, knee, X, Y, Z, mir);
+		if (!locomotion) ankle = within_reach(hip, ankle, 0.99f);
+		foot[s] = sub(ankle, mul(up, 0.10f));                       // wing membrane uses the resolved ankle
+		V3 knee = ik(hip, ankle, 0.50f, 0.50f, legHint[s]);
+		bone_between(lb,hip,knee,L,fw);
+		bone_between(lb+1,knee,ankle,L,fw);
 		if (p->state == ST_WALL && !wallRun) frame_of(mul(f, -1.0f), L, up, &X, &Y, &Z);                  // toes up the wall, soles on it
 		else frame_of(ground ? up : norm(add(sub(knee, ankle), mul(up, 0.15f))), L, fw, &X, &Y, &Z);
 		if (p->state == ST_WALL && !wallRun) { Z = up; X = L; Y = cross(Z, X); }
-		hero_part(HP_FOOT, ankle, X, Y, Z, mir);
+		bone_frame(lb+2,ankle,X,Y,Z); bone_frame(lb+3,add(ankle,add(mul(Y,-.07f),mul(Z,.145f))),X,Y,Z);
 		V3 sh = add(add(H, mul(u, 0.53f)), mul(R, sd[s] * 0.255f));
+		hand[s] = within_reach(sh, hand[s], 0.58f);                 // keep hands attached, including rope and wing endpoints
 		V3 elbow = ik(sh, hand[s], 0.3f, 0.29f, armHint[s]);
-		frame_of(sub(sh, elbow), L, fw, &X, &Y, &Z); hero_part(HP_UPPERARM, sh, X, Y, Z, mir);
-		frame_of(sub(elbow, hand[s]), L, fw, &X, &Y, &Z); hero_part(HP_FOREARM, elbow, X, Y, Z, mir);
-		hero_part(HP_HAND, hand[s], X, Y, Z, mir);
+#ifdef HOST_PREVIEW
+		heroPose.hip[s] = hip; heroPose.knee[s] = knee; heroPose.ankle[s] = ankle;
+		heroPose.shoulder[s] = sh; heroPose.elbow[s] = elbow; heroPose.wrist[s] = hand[s];
+#endif
+		bone_between(ab,add(H,add(mul(u,.54f),mul(R,sd[s]*.04f))),sh,L,fw); bone_between(ab+1,sh,elbow,L,fw);
+		bone_between(ab+2,elbow,hand[s],L,fw);
+		bones[ab+3]=bones[ab+2];bones[ab+3].p=hand[s];
 	}
+	hero_skin();
 	g_hand = Q(hand[p->hand]);
 	if (p->wing && p->state == ST_AIR && !p->rope && !rolling) {                         // the wing membrane: shoulder - hand - ankle - hip on each side, and a tail between the legs
 		static const V3 cA = { 0.78f, 0.1f, 0.12f }, cB = { 0.1f, 0.14f, 0.5f };

@@ -11,7 +11,7 @@ typedef struct { float x, y, z, u, v, r, g, b, a; } Vtx;       // 36 bytes (floa
 enum { GRP_SKY = MAT_COUNT, GRP_CLOUD, GRP_SUN, GRP_SHADOW, GRP_DETAIL, GRP_COUNT };                       // GRP_DETAIL: props and cornices (white texture, vertex colours), drawn only for nearby chunks
 enum { D_OPAQUE, D_HERO, D_ALPHA, D_ADD, D_COUNT };
 #define CAP_D_OPAQUE 4500
-#define CAP_D_HERO   7500
+#define CAP_D_HERO   8400
 #define CAP_D_ALPHA   200
 #define CAP_D_ADD     600
 #define CAP_DYN (CAP_D_OPAQUE + CAP_D_HERO + CAP_D_ALPHA + CAP_D_ADD)

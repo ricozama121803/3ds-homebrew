@@ -12,3 +12,7 @@ build/
 samples/
 # host preview output
 *.ppm
+
+# python / blender byproducts
+__pycache__/
+*.blend1
