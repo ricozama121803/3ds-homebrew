@@ -288,6 +288,12 @@ int main(int argc, char **argv)
 			G.p.v[0] = 12; G.p.trickType = types[k % 3]; if (k == 3) G.p.trickType = 4; G.p.trickT = TRICK_DUR * (1 - when[k % 3]); G.p.trickCount = 1;
 			Input in = idle; run(0.02f, in); char nm[32]; snprintf(nm, sizeof nm, "k%d_trick", k); hero_close(out, nm, PI_F / 2);
 		}
+		for (int k = 0; k < 3; k++) {                                       // corkscrew, swan dive, fast coast
+			game_start(&G, MODE_FREE); memset(&G.p, 0, sizeof G.p); G.p.p[0] = 4 * PITCH; G.p.p[1] = 200; G.p.p[2] = 3 * PITCH; G.p.state = ST_AIR; G.p.face = DEG(90); G.cam.yaw = DEG(90);
+			G.p.v[0] = k == 0 ? 25 : 30; G.p.v[1] = k == 1 ? -20 : 0; G.p.airT = 1;
+			if (k == 0) { G.p.trickType = 5; G.p.trickT = TRICK_DUR * 0.7f; }
+			Input in = idle; run(0.3f, in); char nm[32]; snprintf(nm, sizeof nm, "k6%c_air", 'a' + k); hero_close(out, nm, PI_F / 2);
+		}
 		game_start(&G, MODE_FREE); G.p.charge = 0.9f; run(0.0f, idle); hero_close(out, "k5_crouch", PI_F / 2);
 	}
 	// filmstrips: the run cycle and a swing, side view, every 0.07 s (the animation springs are stepped every frame)
@@ -309,11 +315,21 @@ int main(int argc, char **argv)
 	}
 	// running on a wall
 	{
-		const Box *b = &G.w.box[G.w.bfirst[2][2]];
-		game_start(&G, MODE_FREE); memset(&G.p, 0, sizeof G.p); G.p.p[0] = 0.5f * (b->x0 + b->x1); G.p.p[1] = 12; G.p.p[2] = b->z0 - BODY_HW - 0.01f; G.p.state = ST_WALL; G.p.wn[0] = 0; G.p.wn[1] = -1; G.p.face = 0; G.cam.yaw = DEG(90);
-		Input in = idle; in.sprint = true; in.ly = 1; run(0.5f, in);
+		const Box *b = &G.w.box[G.w.bfirst[2][2]]; Input in = idle; in.sprint = true; in.ly = 1;
+		for (int i = 0; i < G.w.nbox; i++) {                                    // a tall building with a clear south face: the first one the hero can really run up
+			const Box *c = &G.w.box[i];
+			if (c->kind != BK_BLDG || c->y1 < c->y0 + 70 || c->z0 < 40 || c->x1 - c->x0 < 20) continue;
+			{ float o[3] = { 0.5f * (c->x0 + c->x1), 20, c->z0 - 0.6f }, d[3] = { 0, -0.25f, -1 }, n[3]; if (city_ray(&G.w, o, d, 15.0f, n) >= 0) continue; }      // room for the camera behind
+			game_start(&G, MODE_FREE); memset(&G.p, 0, sizeof G.p); G.p.p[0] = 0.5f * (c->x0 + c->x1); G.p.p[1] = 12; G.p.p[2] = c->z0 - BODY_HW - 0.01f; G.p.state = ST_WALL; G.p.wn[0] = 0; G.p.wn[1] = -1; G.p.face = 0; G.cam.yaw = PI_F;
+			b = c; run(1.0f, in); printf("  cand %d: state %d y %.1f dz %.2f\n", i, G.p.state, G.p.p[1], G.p.p[2] - (c->z0 - BODY_HW)); if (G.p.state == ST_WALL && G.p.p[1] > 20 && fabsf(G.p.p[2] - (c->z0 - BODY_HW)) < 0.2f) break;
+		}
+		game_start(&G, MODE_FREE); memset(&G.p, 0, sizeof G.p); G.p.p[0] = 0.5f * (b->x0 + b->x1); G.p.p[1] = 12; G.p.p[2] = b->z0 - BODY_HW - 0.01f; G.p.state = ST_WALL; G.p.wn[0] = 0; G.p.wn[1] = -1; G.p.face = 0; G.cam.yaw = PI_F;
+		run(0.5f, in);
 		for (int k = 0; k < 6; k++) { G.p.p[1] = 12; run(0.07f, in); G.p.p[1] = 12; char nm[32]; snprintf(nm, sizeof nm, "wr%d_wallrun", k); hero_close(out, nm, PI_F / 2); }
 		printf("wallrun: state %d y %.1f\n", G.p.state, G.p.p[1]);
+		G.cam.yaw = PI_F; G.cam.pitch = -0.2f; G.cam.wall = 0; G.cam.dist = 8; G.cam.fov = 62;                    // the wall-run camera swinging round: before, mid, settled
+		for (int k = 0; k < 3; k++) { G.p.p[1] = 14; run(k == 0 ? 0.01f : k == 1 ? 0.4f : 1.5f, in); printf("  eye %.1f %.1f %.1f yaw %.2f pitch %.2f hero %.1f %.1f %.1f\n", G.cam.eye[0], G.cam.eye[1], G.cam.eye[2], G.cam.yaw, G.cam.pitch, G.p.p[0], G.p.p[1], G.p.p[2]); printf("  wc%d: state %d y %.1f box y %.1f..%.1f z0 %.1f pz %.2f\n", k, G.p.state, G.p.p[1], b->y0, b->y1, b->z0, G.p.p[2]); char nm[32]; snprintf(nm, sizeof nm, "wc%d_wallcam", k); G.hintT = 0; snap(out, nm); }
+		printf("wallcam: state %d wallRun %d  pitch %.2f fov %.1f dist %.1f wall %.2f\n", G.p.state, G.p.wallRun, G.cam.pitch, G.cam.fov, G.cam.dist, G.cam.wall);
 	}
 	// landing roll filmstrip
 	{

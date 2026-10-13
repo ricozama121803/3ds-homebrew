@@ -705,11 +705,15 @@ static void draw_hero(const Game *g)
 			float th = 2.0f * PI_F * kk, c = cosf(th), sn = sinf(th);
 			V3 u0 = u, f0 = f;
 			if (ttype == 1 || ttype == 2) { float sg = ttype == 1 ? 1.0f : -1.0f; u = add(mul(u0, c), mul(f0, sn * sg)); f = sub(mul(f0, c), mul(u0, sn * sg)); }
+			else if (ttype == 5) { f = add(mul(f0, c), mul(R, sn)); R = sub(mul(R, c), mul(f0, sn)); }                 // corkscrew: spin about the body axis
 			else { float sg = ttype == 4 ? 1.0f : -1.0f; u = add(mul(u0, c), mul(R, sn * sg)); R = sub(mul(R, c), mul(u0, sn * sg)); }
 		}
 		H = sub(M0, mul(u, 0.15f));
 		float flap = sinf(tm * 3.1f) * 0.05f;                                                // small life in the limbs while airborne
-		float tuck = trick ? 1.0f : 0.0f;
+		bool screw = trick && !rolling && ttype == 5;                          // corkscrew: arms thrown overhead, legs together, spinning like a drill
+		float tuck = trick && !screw ? 1.0f : 0.0f;
+		bool dive = !roped && !wing && !trick && sp > 22.0f && vel.y < -6.0f;   // swan dive: arms swept back, head first
+		float spread = sat((sp - 14.0f) / 14.0f) * (!roped && !wing && !trick && !dive ? 1.0f : 0.0f);   // coasting fast: arms and legs flung wide
 		int rs = p->hand;                                                   // the hand that holds the web
 		for (int s = 0; s < 2; s++) {
 			V3 sh = add(add(H, mul(u, 0.52f)), mul(R, sd[s] * 0.25f));
@@ -725,10 +729,20 @@ static void draw_hero(const Game *g)
 				armHint[s] = add(mul(f, -0.6f), mul(R, sd[s] * 0.2f));
 				foot[s] = add(add(H, mul(u, -0.86f)), mul(R, sd[s] * 0.5f));
 				legHint[s] = add(mul(f, -0.5f), mul(R, sd[s] * 0.2f));
+			} else if (screw) {
+				hand[s] = add(add(sh, mul(u, 0.62f)), mul(R, sd[s] * 0.07f));
+				armHint[s] = add(mul(f, -0.4f), mul(R, sd[s] * 0.6f));
+				foot[s] = add(add(H, mul(u, -0.88f)), mul(R, sd[s] * 0.07f));
+				legHint[s] = add(mul(f, -0.5f), mul(R, sd[s] * 0.3f));
+			} else if (dive) {
+				hand[s] = add(add(sh, mul(u, -0.5f)), add(mul(R, sd[s] * 0.2f), mul(f, -0.1f)));
+				armHint[s] = add(mul(R, sd[s]), mul(f, -0.3f));
+				foot[s] = add(add(H, mul(u, -0.9f)), add(mul(R, sd[s] * 0.07f), mul(f, -0.04f)));
+				legHint[s] = add(mul(f, -0.5f), mul(R, sd[s] * 0.2f));
 			} else {
-				hand[s] = add(add(sh, mul(R, sd[s] * (0.6f - 0.25f * tuck))), add(mul(u, 0.2f - 0.5f * tuck), mul(f, 0.15f + 0.3f * tuck + flap * sd[s])));
+				hand[s] = add(add(sh, mul(R, sd[s] * (0.6f - 0.25f * tuck + 0.35f * spread))), add(mul(u, 0.2f - 0.7f * tuck - 0.1f * spread), mul(f, 0.15f + 0.35f * tuck - 0.1f * spread + flap * sd[s])));
 				armHint[s] = add(mul(up, -0.5f), mul(R, sd[s] * 0.3f));
-				foot[s] = add(add(H, mul(u, -0.62f + 0.2f * tuck)), add(mul(R, sd[s] * 0.15f), mul(f, (0.2f - 0.3f * s) * (1 - tuck) + 0.25f * tuck)));
+				foot[s] = add(add(H, mul(u, -0.62f + 0.34f * tuck - 0.2f * spread)), add(mul(R, sd[s] * (0.15f + 0.2f * spread)), mul(f, (0.2f - 0.3f * s) * (1 - tuck) * (1 - spread) + 0.42f * tuck - 0.15f * spread)));
 				legHint[s] = add(f, mul(R, sd[s] * 0.2f));
 			}
 		}

@@ -87,7 +87,7 @@ typedef struct {
 	float aimDir[3];                         // last heading used to pick an anchor
 } Player;
 
-typedef struct { float eye[3], yaw, pitch, dist, fov, manualT; } Cam;
+typedef struct { float eye[3], yaw, pitch, dist, fov, manualT, wall; } Cam;
 typedef struct { bool on; float p[3], t; } Beacon;
 typedef struct { float along, speed, off; int axis, line; float col[3]; } Car;
 typedef struct { char text[40]; float t; unsigned col; } Popup;

@@ -199,6 +199,14 @@ static bool fire_web(Game *g, bool zip, float mx, float mz, float mag)
 
 static void release_rope(Player *p) { if (p->rope && !p->zip) p->boostWin = 0.45f; p->rope = false; p->zip = false; }
 
+// letting go of the web on purpose at speed: a flourish on the way out (the pose is drawn from trickType; zipOut keeps the A boost available meanwhile)
+static void release_flourish(Player *p)
+{
+	if (len3(p->v) < 18.0f || p->swingT < 0.6f) return;
+	p->trickType = p->v[1] > 2.0f ? 1 : 5;                 // still rising: tuck and flip; level or falling: corkscrew
+	p->trickT = TRICK_DUR; p->trickCount = 0; p->zipOut = p->boostWin;
+}
+
 // ---- player ----------------------------------------------------------------------------------------------------------------
 static void enter_wall(Player *p, const Contact *k)
 {
@@ -272,7 +280,7 @@ static void player_update(Game *g, const Input *in, float dt, bool allowCam)
 		if (p->rope) p->wing = false;
 		if (in->swing && !p->rope && p->fireCd <= 0 && p->retryT <= 0) fire_web(g, false, mx, mz, mag);
 		if (in->zip_p && !p->zip && p->fireCd <= 0) { release_rope(p); if (fire_web(g, true, mx, mz, mag)) p->zipT = 0; }
-		if (!in->swing && p->rope && !p->zip) release_rope(p);
+		if (!in->swing && p->rope && !p->zip) { release_rope(p); release_flourish(p); }
 		if (in->jump_p) {
 			bool canBoost = (p->rope && !p->zip) || (p->boostWin > 0 && !p->rope && (p->trickT <= 0 || p->zipOut > 0));
 			if (canBoost) {                                                                    // A at the end of a swing (or just after the web lets go): launch
@@ -485,16 +493,23 @@ static void cam_update(Game *g, const Input *in, float dt, bool manual)
 		float want = yaw_of(p->v[0], p->v[2]);
 		c->yaw += wrap_pi(want - c->yaw) * fminf(1.0f, dt * (p->state == ST_GROUND ? 1.2f : 1.6f + vh * 0.03f));
 	}
-	if (p->state == ST_WALL && c->manualT <= 0) c->yaw += wrap_pi(yaw_of(-p->wn[0], -p->wn[1]) - c->yaw) * fminf(1.0f, dt * 2.0f);
+	bool wallRun = p->state == ST_WALL && p->wallRun;
+	c->wall += ((wallRun ? 1.0f : 0.0f) - c->wall) * fminf(1.0f, dt * 2.5f);                           // 0..1: how far the wall-run camera has swung round
+	if (p->state == ST_WALL && c->manualT <= 0) {                                                       // face the wall, leaning the view toward the way we run along it
+		float side = clampf((p->v[0] * -p->wn[1] + p->v[2] * p->wn[0]) / WALLRUN_SPEED, -1, 1);
+		c->yaw += wrap_pi(yaw_of(-p->wn[0], -p->wn[1]) - side * 0.28f * c->wall - c->yaw) * fminf(1.0f, dt * (wallRun ? 3.5f : 2.0f));
+	}
 	if (c->manualT <= 0) {
-		float want = g->state == GS_TITLE ? -0.3f : p->state == ST_AIR ? -0.22f + 0.4f * clampf(p->v[1] / 45.0f, -1, 1) : p->state == ST_WALL ? -0.12f : -0.2f;
-		c->pitch += (want - c->pitch) * fminf(1.0f, dt * 1.5f);
+		float up = clampf(p->v[1] / WALLRUN_SPEED, 0, 1);
+		float want = g->state == GS_TITLE ? -0.3f : p->state == ST_AIR ? -0.22f + 0.4f * clampf(p->v[1] / 45.0f, -1, 1)
+		           : p->state == ST_WALL ? (wallRun ? 0.2f + 0.65f * up : -0.12f + 0.3f * clampf(p->v[1] / 6.5f, 0, 1)) : -0.2f;
+		c->pitch += (want - c->pitch) * fminf(1.0f, dt * (p->state == ST_WALL ? 2.6f : 1.5f));        // running up a wall: tilt the view up the building, like looking up the facade behind the hero
 	}
 	c->pitch = clampf(c->pitch, -1.25f, 0.9f);
 	c->yaw = wrap_pi(c->yaw);
-	float wantFov = 62.0f + clampf(p->speed - 12.0f, 0, 36.0f) * 0.55f;
+	float wantFov = 62.0f + clampf(p->speed - 12.0f, 0, 36.0f) * 0.55f + 9.0f * c->wall;
 	c->fov += (wantFov - c->fov) * fminf(1.0f, dt * 3.0f);
-	float wantD = (g->state == GS_TITLE ? 17.0f : 8.0f) + clampf(p->speed - 10.0f, 0, 36.0f) * 0.07f;
+	float wantD = (g->state == GS_TITLE ? 17.0f : 8.0f) + clampf(p->speed - 10.0f, 0, 36.0f) * 0.07f + 3.0f * c->wall;
 	c->dist += (wantD - c->dist) * fminf(1.0f, dt * 2.0f);
 
 	if (g->state == GS_TITLE) {                                                                       // slow orbit around the skyline, from over the water
@@ -512,6 +527,7 @@ static void cam_update(Game *g, const Input *in, float dt, bool manual)
 	float t = city_ray(&g->w, T, back, c->dist + 0.8f, n);
 	float dd = t > 0 ? fmaxf(1.4f, t - 0.8f) : c->dist;
 	for (int k = 0; k < 3; k++) c->eye[k] = T[k] + back[k] * dd;
+	c->eye[1] += 1.5f * c->wall;                                                                      // hero sits low in frame, the wall stretching away above
 	float floor_y = (c->eye[0] >= 0 && c->eye[0] <= CITY && c->eye[2] >= 0 && c->eye[2] <= CITY) ? 0.6f : WATER_Y + 1.0f;
 	if (c->eye[1] < floor_y) c->eye[1] = floor_y;
 }
