@@ -67,7 +67,6 @@ void damage_player(Game *g, float amount)
 	if (p->ps != PS_ALIVE || amount <= 0) return;
 	p->hurtT = 0.45f;
 	amount *= 0.75f;                                                       // Otto is tougher than a pedestrian
-	if (p->cover && p->aimT < 0.45f) amount *= 0.4f;                       // ducked behind cover
 	if (p->armor > 0) { float take = fminf(p->armor, amount); p->armor -= take; amount -= take; }
 	if (amount > 0) {
 		p->hp -= amount;
@@ -84,8 +83,9 @@ void damage_ped(Game *g, int idx, float amount, int byPlayer)
 	if (!p->on || p->dead) return;
 	p->hp -= amount; p->hurtT = 0.3f;
 	blood_burst(g, p, 4);
-	if (byPlayer) add_heat(g, p->cop ? 14.0f : 6.0f);
+	if (byPlayer) { add_heat(g, p->cop ? 14.0f : 6.0f); g->hitT = 0.22f; }
 	if (p->hp <= 0) {
+		if (byPlayer) g->killT = 0.9f;                                         // the crosshair confirms the kill
 		p->dead = true; p->state = PED_DOWN; p->timer = 14.0f; p->speed = 0;
 		blood_burst(g, p, 10);
 		add_decal(g, p->x, p->z, 1.0f + 0.8f * crand(g));
@@ -103,11 +103,11 @@ static void explode_car(Game *g, int idx, int byPlayer)
 	Car *c = &g->car[idx];
 	if (c->wreck) return;
 	c->wreck = true; c->wreckT = 0; c->hp = 0; c->bot = false; c->ai.on = false; c->driven = false; c->burn = 0;
-	spawn_blast(g, c->x, 0.8f, c->z, byPlayer);
+	spawn_blast(g, c->x, c->y + 0.8f, c->z, byPlayer);
 	if (g->p.car == idx) {                                                   // Otto was driving it
 		g->p.car = -1;
-		g->p.p[0] = c->x + cosf(c->yaw) * 2.6f; g->p.p[2] = c->z + sinf(c->yaw) * 2.6f; g->p.v[0] = g->p.v[2] = 0;
-		damage_player(g, 85.0f);
+		g->p.p[0] = c->x + cosf(c->yaw) * 2.6f; g->p.p[1] = 0; g->p.p[2] = c->z + sinf(c->yaw) * 2.6f; g->p.v[0] = g->p.v[2] = 0;
+		damage_player(g, 85.0f + c->y);                                      // the higher the helicopter was, the harder the fall
 		byPlayer = 1;
 	}
 }
@@ -207,9 +207,10 @@ static void bullets_update(Game *g, float dt)
 			const Car *c = &g->car[k];
 			if (!c->on || (b->owner == 0 && g->p.car == k) || (b->owner == 1 && g->p.car != k)) continue;
 			float cx[3], cz[3]; car_circles(c, cx, cz);
+			float cr = car_radius(c->kind) * 0.95f, top = c->kind == CAR_HELI ? 3.0f : c->kind == CAR_BIKE ? 1.5f : 1.7f;
 			for (int q = 0; q < 3; q++) {
-				float t, d2 = seg_dist2(a[0], a[2], nx, nz, cx[q], cz[q], &t), y = a[1] + (ny - a[1]) * t;
-				if (d2 < (CAR_R * 0.95f) * (CAR_R * 0.95f) && y > 0.15f && y < 1.7f && t < best) { best = t; what = 3; who = k; }
+				float t, d2 = seg_dist2(a[0], a[2], nx, nz, cx[q], cz[q], &t), y = a[1] + (ny - a[1]) * t - c->y;
+				if (d2 < cr * cr && y > 0.15f && y < top && t < best) { best = t; what = 3; who = k; }
 			}
 		}
 		if (b->owner == 1 && g->p.car < 0 && g->p.ps == PS_ALIVE) {
@@ -222,6 +223,7 @@ static void bullets_update(Game *g, float dt)
 			else if (what == 2) { damage_ped(g, who, (float)b->dmg, b->owner == 0); Ped *p = &g->ped[who]; p->vx += b->v[0] * 0.02f; p->vz += b->v[2] * 0.02f; }
 			else if (what == 3) {
 				spawn_particles(g, PT_SPARK, hx, hy, hz, 3, 3.0f, 0.07f, 0.25f);
+				if (b->owner == 0) g->hitT = 0.15f;
 				damage_car(g, who, (float)b->dmg * (b->owner == 0 ? 0.2f : 0.09f), b->owner == 0);       // a car takes a lot of bullets: about 12 pistol shots, 25 SMG rounds, 5 shotgun blasts
 				if (b->owner == 1) damage_player(g, (float)b->dmg * 0.25f);
 			} else if (what == 4) damage_player(g, (float)b->dmg);
@@ -284,6 +286,11 @@ static void cars_damage_update(Game *g, float dt)
 		if (!c->on) continue;
 		if (c->wreck) {
 			c->wreckT += dt; c->vx *= expf(-2.0f * dt); c->vz *= expf(-2.0f * dt);
+			c->rpm = 0;
+			if (c->y > 0) {                                                        // a wrecked helicopter drops out of the sky
+				c->vy -= 22.0f * dt; c->y += c->vy * dt;
+				if (c->y <= 0) { if (c->vy < -6.0f) spawn_blast(g, c->x, 0.8f, c->z, 0); c->y = 0; c->vy = 0; }
+			}
 			if (crand(g) < dt * 6.0f) spawn_particles(g, PT_SMOKE, c->x + srand_(g) * 0.8f, 1.0f, c->z + srand_(g) * 0.8f, 1, 1.0f, 0.9f, 1.8f);
 			if (c->wreckT < 12.0f && crand(g) < dt * 8.0f) spawn_particles(g, PT_FIRE, c->x + srand_(g) * 0.7f, 0.8f, c->z + srand_(g) * 0.7f, 1, 0.8f, 0.6f, 0.7f);
 			float d = hypotf(c->x - g->p.p[0], c->z - g->p.p[2]);
@@ -308,8 +315,8 @@ static void next_weapon(Player *p, int dir)
 	}
 }
 
-// pick the thing to shoot at: the closest living person in front of Otto (or very close behind)
-static int find_target(const Game *g, float range, float *yawOut)
+// pick the thing to shoot at: the best living person within range, preferring the ones closest to the heading `ref` (Otto's, or the camera's)
+static int find_target(const Game *g, float range, float ref, float *yawOut)
 {
 	const Player *p = &g->p;
 	int best = -1; float bs = 1e9f;
@@ -318,13 +325,60 @@ static int find_target(const Game *g, float range, float *yawOut)
 		if (!q->on || q->dead) continue;
 		float dx = q->x - p->p[0], dz = q->z - p->p[2], d = sqrtf(dx * dx + dz * dz);
 		if (d > range || d < 0.3f) continue;
-		float want = atan2f(dx, -dz), diff = fabsf(wrapang(want - p->face));
+		float want = atan2f(dx, -dz), diff = fabsf(wrapang(want - ref));
 		if (diff > DEG(62) && d > 5.0f) continue;
 		if (!los_clear(g, p->p[0], 1.3f, p->p[2], q->x, 1.2f, q->z)) continue;
 		float score = d + diff * 6.0f + (q->state == PED_DOWN ? 8.0f : 0) - (q->cop && g->stars > 0 ? 4.0f : 0);
 		if (score < bs) { bs = score; best = i; *yawOut = want; }
 	}
 	return best;
+}
+
+// Lock-on (hold L): the nearest person in front of the camera; flick the circle pad toward another person to switch to them.
+static int switch_target(const Game *g, int cur, float stx, float sty, float range)
+{
+	const Player *p = &g->p;
+	float cy = cosf(g->cam.yaw), sy = sinf(g->cam.yaw);
+	const Ped *c = &g->ped[cur];
+	float r0 = (c->x - p->p[0]) * cy + (c->z - p->p[2]) * sy, f0 = (c->x - p->p[0]) * sy - (c->z - p->p[2]) * cy;       // the current target on the screen's right / forward axes
+	int best = -1; float bs = -1e9f;
+	for (int i = 0; i < MAX_PED; i++) {
+		const Ped *q = &g->ped[i];
+		if (i == cur || !q->on || q->dead) continue;
+		float dx = q->x - p->p[0], dz = q->z - p->p[2];
+		if (dx * dx + dz * dz > range * range) continue;
+		float vr = dx * cy + dz * sy - r0, vf = dx * sy - dz * cy - f0, l = sqrtf(vr * vr + vf * vf);
+		if (l < 0.5f) continue;
+		float align = (vr * stx + vf * sty) / l;
+		if (align < 0.45f) continue;
+		if (!los_clear(g, p->p[0], 1.3f, p->p[2], q->x, 1.2f, q->z)) continue;
+		float score = align * 10.0f - l * 0.2f;
+		if (score > bs) { bs = score; best = i; }
+	}
+	return best;
+}
+
+static void lock_update(Game *g, const Input *in, float dt, float range)
+{
+	Player *p = &g->p;
+	p->lockCd -= dt;
+	if (p->lock >= 0) {
+		const Ped *q = &g->ped[p->lock];
+		if (!q->on || q->dead || hypotf(q->x - p->p[0], q->z - p->p[2]) > range + 8.0f) p->lock = -1;
+		else if (!los_clear(g, p->p[0], 1.3f, p->p[2], q->x, 1.2f, q->z)) { p->lockLosT += dt; if (p->lockLosT > 1.2f) p->lock = -1; }
+		else p->lockLosT = 0;
+	}
+	if (p->lock < 0 && p->lockCd <= 0) {
+		float y;
+		p->lock = find_target(g, range, g->cam.yaw, &y); p->lockLosT = 0;
+		if (p->lock < 0) p->lockCd = 0.12f;
+	}
+	float mag = hypotf(in->lx, in->ly);
+	if (p->lock >= 0 && mag > 0.75f && p->lockMag <= 0.75f && p->lockCd <= 0) {
+		int n = switch_target(g, p->lock, in->lx / mag, in->ly / mag, range);
+		if (n >= 0) { p->lock = n; p->lockCd = 0.25f; p->lockLosT = 0; }
+	}
+	p->lockMag = mag;
 }
 
 static void startle(Game *g, float x, float z, float radius)
@@ -344,36 +398,43 @@ static void player_weapons(Game *g, const Input *in, float dt)
 	if (in->weap > 0 && in->weap <= W_COUNT && p->has[in->weap - 1] && (in->weap - 1 == W_FISTS || p->ammo[in->weap - 1] > 0)) p->weapon = in->weap - 1;
 	if (p->weapon != W_FISTS && p->ammo[p->weapon] <= 0) next_weapon(p, 1);
 	p->fireCd -= dt; p->flashT -= dt; p->punchT -= dt; p->hurtT -= dt;
-	bool onFoot = p->car < 0, want = in->gas && onFoot, gun = p->weapon != W_FISTS;
+	bool onFoot = p->car < 0, shoot = in->gas && onFoot, aimHeld = in->aim && onFoot, gun = p->weapon != W_FISTS;
 	const WeaponDef *w = &WPN[p->weapon];
+	if (aimHeld) lock_update(g, in, dt, gun ? fminf(w->range * 0.8f, 40.0f) : 6.0f);
+	else { p->lock = -1; p->lockMag = 0; p->lockCd = 0; }
 	p->target = -1;
 	float aimTarget = 0;
-	if (want) {
+	if (shoot || aimHeld) {
 		float ty = p->face;
-		int t = find_target(g, gun ? fminf(w->range * 0.6f, 32.0f) : 2.4f, &ty);
+		int t = -1;
+		if (aimHeld) {                                                            // L: face the locked person, or where the camera looks
+			t = p->lock;
+			ty = t >= 0 ? atan2f(g->ped[t].x - p->p[0], -(g->ped[t].z - p->p[2])) : g->cam.yaw;
+		} else t = find_target(g, gun ? fminf(w->range * 0.6f, 32.0f) : 2.4f, p->face, &ty);       // R alone: auto-aim
 		p->target = t;
-		p->aimYaw = t >= 0 ? ty : p->face;
+		p->aimYaw = t >= 0 || aimHeld ? ty : p->face;
 		p->face = wrapang(p->face + wrapang(p->aimYaw - p->face) * fminf(1.0f, dt * 14.0f));
 		aimTarget = 1;
-		if (gun) {
+		if (shoot && gun) {
 			if (p->aimT > 0.55f && p->fireCd <= 0 && p->ammo[p->weapon] > 0) {
 				float m[3]; player_muzzle(g, m);
 				float pitch = 0;
 				if (t >= 0) { const Ped *q = &g->ped[t]; float d = hypotf(q->x - m[0], q->z - m[2]); pitch = atan2f(1.15f - m[1], fmaxf(d, 1.0f)); }
 				fire_bullet(g, 0, m, p->face, pitch, w, 1.0f);
-				p->ammo[p->weapon]--; p->fireCd = 1.0f / w->rate; p->flashT = 0.07f; p->lastShotT = g->time;
+				if (!TEST_LOADOUT) p->ammo[p->weapon]--;
+				p->fireCd = 1.0f / w->rate; p->flashT = 0.07f; p->lastShotT = g->time;
 				spawn_particles(g, PT_SPARK, m[0], m[1], m[2], 2, 2.0f, 0.06f, 0.15f);
 				startle(g, p->p[0], p->p[2], 42.0f);
 				if (p->ammo[p->weapon] == 0) toast(g, "Out of ammo");
 			}
-		} else if (p->fireCd <= 0) {                                              // a punch: it lands when the fist is fully out
+		} else if (shoot && p->fireCd <= 0) {                                       // a punch: it lands when the fist is fully out
 			p->punchT = 0.34f; p->punchSide ^= 1; p->fireCd = 1.0f / w->rate; p->punchHit = true;
 		}
 	}
 	if (p->punchHit && p->punchT <= 0.34f * 0.58f) {
 		p->punchHit = false;
 		float ty = p->face;
-		int t = find_target(g, 2.4f, &ty);
+		int t = find_target(g, 2.4f, p->face, &ty);
 		if (t >= 0) {
 			p->target = t; p->aimYaw = ty;
 			Ped *q = &g->ped[t];
@@ -391,19 +452,24 @@ static void player_weapons(Game *g, const Input *in, float dt)
 }
 
 // ---- respawn -------------------------------------------------------------------------------------------------------------------------------------
+static void give_weapons(Player *p)                                                 // testing loadout: every weapon, ammo never runs out
+{
+	for (int w = 0; w < W_COUNT; w++) { p->has[w] = true; p->ammo[w] = TEST_AMMO; }
+}
+
 static void respawn(Game *g, bool arrested)
 {
 	Player *p = &g->p;
 	p->cash -= (int)(p->cash * (arrested ? 0.2f : 0.1f));
-	if (arrested) { for (int w = W_PISTOL; w < W_COUNT; w++) { p->has[w] = false; p->ammo[w] = 0; } p->weapon = W_FISTS; }
-	p->hp = PLAYER_MAX_HP; p->armor = 0; p->ps = PS_ALIVE; p->psT = 0; p->arrestT = 0; p->hurtT = 0; p->aimT = 0; p->cover = false; p->coverT = 0; p->sprint = false;
+	if (arrested && !TEST_LOADOUT) { for (int w = W_PISTOL; w < W_COUNT; w++) { p->has[w] = false; p->ammo[w] = 0; } p->weapon = W_FISTS; }
+	p->hp = PLAYER_MAX_HP; p->armor = 0; p->ps = PS_ALIVE; p->psT = 0; p->arrestT = 0; p->hurtT = 0; p->aimT = 0; p->sprint = false; p->lock = -1;
 	p->car = -1; p->v[0] = p->v[2] = 0; p->speed = 0;
 	float rx = arrested ? POLICE_X : HOSPITAL_X, rz = arrested ? POLICE_Z : HOSPITAL_Z;
 	p->p[0] = rx + 8.0f; p->p[2] = rz; p->face = DEG(arrested ? 270 : 90);
 	g->cam.yaw = p->face; g->cam.manualT = 0;
 	g->timeScale = 1.0f; g->hudT = 0; g->heat = 0; g->stars = 0; g->unseenT = 0;
 	police_reset(g);
-	toast(g, arrested ? "Busted: weapons confiscated" : "Out of hospital");
+	toast(g, arrested ? (TEST_LOADOUT ? "Busted" : "Busted: weapons confiscated") : "Out of hospital");
 	g->saveNeeded = true;
 }
 
@@ -413,7 +479,8 @@ void combat_init(Game *g)
 	int cash = p->cash;
 	p->hp = PLAYER_MAX_HP; p->armor = 0; p->ps = PS_ALIVE; p->cash = cash;
 	memset(p->has, 0, sizeof p->has); memset(p->ammo, 0, sizeof p->ammo);
-	p->has[W_FISTS] = true; p->has[W_PISTOL] = true; p->ammo[W_PISTOL] = 36; p->weapon = W_PISTOL; p->target = -1;
+	p->has[W_FISTS] = true; p->has[W_PISTOL] = true; p->ammo[W_PISTOL] = 36; p->weapon = W_PISTOL; p->target = -1; p->lock = -1;
+	if (TEST_LOADOUT) give_weapons(p);
 	memset(g->bullet, 0, sizeof g->bullet); memset(g->part, 0, sizeof g->part); memset(g->decal, 0, sizeof g->decal); memset(g->pick, 0, sizeof g->pick); memset(g->blast, 0, sizeof g->blast);
 	g->heat = 0; g->stars = 0; g->timeScale = 1.0f; g->hudT = 0; g->toastT = 0;
 	// fixed pickups on the pavements: (block i, block j, corner, type)
@@ -462,6 +529,8 @@ void combat_update(Game *g, const Input *in, float dt)
 	Player *p = &g->p;
 	temp_pickups(g, dt);
 	if (g->toastT > 0) g->toastT -= dt;
+	if (g->hitT > 0) g->hitT -= dt;
+	if (g->killT > 0) g->killT -= dt;
 	if (g->hudT > 0) g->hudT -= dt;
 	g->noiseT += dt;
 	if (p->ps == PS_ALIVE) player_weapons(g, in, dt);

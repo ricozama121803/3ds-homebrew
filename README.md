@@ -34,6 +34,17 @@ Nintendo 3DS homebrew games written in C with [devkitPro](https://devkitpro.org/
 
 *Frames from the PC preview renderer (`grand-theft-otto/host/preview3d.sh`), which rasterises the same triangles the 3DS draws. The top-screen HUD is not shown.*
 
+## Grand Theft Otto II
+
+| | |
+| --- | --- |
+| ![Lock-on](docs/gto2-lockon.png) | ![Weapon wheel](docs/gto2-wheel.png) |
+| ![Motorcycle](docs/gto2-bike.png) | ![Helicopter](docs/gto2-heli.png) |
+| ![Capitol Records](docs/gto2-capitol.png) | ![Dodger Stadium](docs/gto2-dodger.png) |
+| ![Venice sign](docs/gto2-venice.png) | ![City Hall](docs/gto2-cityhall.png) |
+
+*Frames from the PC preview renderer (`grand-theft-otto-2/host/preview.sh`) with the top-screen HUD: lock-on and crosshair, the SELECT weapon wheel, a leaning motorcycle, a helicopter over the city, and the Capitol Records, Dodger Stadium, Venice sign and City Hall landmarks.*
+
 ## Projects
 
 | Folder | What it is |
@@ -43,7 +54,7 @@ Nintendo 3DS homebrew games written in C with [devkitPro](https://devkitpro.org/
 | `grand-theft-otto/` | Open-world crime sandbox with a real 3D city (extruded buildings, baked sun shadows, day/night cycle, stereoscopic 3D), a 256x256-tile LA, eight weapons, cars and helicopters. Pause + X switches to the classic top-down 2D view. Design notes in [`PLAN.md`](grand-theft-otto/PLAN.md) |
 | `sunset-ops/` | First-person team deathmatch (4 vs 4 against bots) on a Nuketown-style suburban cul-de-sac in the desert (two enterable houses, bus and truck): red-dot sights, four weapons, grenades, medkits, radar and kill feed, stereoscopic 3D. X/Y/A/B move, Circle Pad looks, R shoots, L aims, D-pad changes weapon / throws a grenade / heals. Design notes in [`PLAN.md`](sunset-ops/PLAN.md) |
 | `webslinger/` | Third-person web-swinging through a procedural Manhattan (15x15 blocks on a 960 m island, buildings up to a stepped landmark tower, park, water, traffic). R holds a web swing (pendulum physics, auto-chains), A jumps / lets go with a boost, run into a building to climb it (hold L to run up and along it, with the camera tilting up the facade), L + R web-zips to a roof, tap L in the air for a wingsuit, L sprints, B dives, A A flips / rolls, and letting go of a web at speed throws a flip or corkscrew; Circle Pad steers, D-pad / C-stick / touch drag move the camera. Free Roam and a timed Beacon Run, city map on the bottom screen, stereoscopic 3D. The hero is one continuous skinned mesh (Blender pipeline in `assets/hero`, `make hero`) driven by CMU-mocap walk / jog / sprint cycles (`source/hero_anim.h`). Host tests: `host/simtest.c`, `host/movetest.c` |
-| `grand-theft-otto-2/` | Fully 3D third-person Grand Theft Otto in a small LA (8x8 blocks): Blender-made, rigged and mocap-animated Otto, pedestrians and five cars plus a SWAT van; traffic with lights, crowds, cops and a 1-5 star wanted level, guns / cover / punches, explosions, WASTED / BUSTED, Pay 'n' Spray; beach with a pier and Ferris wheel, hills with a HOLLYWOOD sign, freeway. `make models` rebuilds the Blender assets; host tests in `host/` (traffic soak, combat, controls). Plan and status in `PLAN.md` |
+| `grand-theft-otto-2/` | Fully 3D third-person Grand Theft Otto in a small LA (8x8 blocks): Blender-made, rigged and mocap-animated Otto, pedestrians and five cars plus a SWAT van; traffic with lights, crowds, cops and a 1-5 star wanted level, guns with a SELECT weapon wheel and L lock-on / punches, explosions, WASTED / BUSTED, Pay 'n' Spray, motorcycles and helicopters; beach with a pier and Ferris wheel, hills with a HOLLYWOOD sign, freeway, Capitol Records, Dodger Stadium, LAX Theme Building, Venice sign, Randy's donut, City Hall. `make models` rebuilds the Blender assets; host tests in `host/` (traffic soak, combat, controls). Plan and status in `PLAN.md` |
 
 ## Setup
 

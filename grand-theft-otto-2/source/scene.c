@@ -370,6 +370,8 @@ static void tree(Mesh *m, float x, float z, float size, const float col[3])
 	}
 }
 
+static bool near_pad(float x, float z, float r) { for (int i = 0; i < N_PADS; i++) if (hypotf(x - PADS[i][0], z - PADS[i][1]) < r) return true; return false; }
+
 static void trees(void)
 {
 	static const float pal[5][3] = { { 0.30f, 0.55f, 0.20f }, { 0.26f, 0.50f, 0.18f }, { 0.88f, 0.72f, 0.12f }, { 0.86f, 0.46f, 0.10f }, { 0.42f, 0.58f, 0.16f } };
@@ -380,6 +382,7 @@ static void trees(void)
 			chunk_at(i * PITCH + 1, j * PITCH + 1);
 			for (int k = 0; k < (SG->lowq ? 16 : 9); k++) {
 				float x = (i + 0.2f + 0.6f * rndf(&st)) * PITCH, z = (j + 0.2f + 0.6f * rndf(&st)) * PITCH;
+				if (near_pad(x, z, 11.0f)) continue;                                                                   // the helipad
 				if (i == 2 && j == 3 && x > (i + 0.28f) * PITCH && x < (i + 0.72f) * PITCH && z > (j + 0.28f) * PITCH && z < (j + 0.72f) * PITCH) continue;   // pond
 				float tn[3] = { 0.85f + 0.3f * rndf(&st), 0.9f + 0.2f * rndf(&st), 0.85f + 0.3f * rndf(&st) };
 				if (SG->lowq) tree(&SM(MAT_WHITE), x, z, 1.1f + rndf(&st) * 0.9f, pal[rnd_next(&st) % 5]);
@@ -596,6 +599,9 @@ static void bone_between(int i, V3 h, V3 t, V3 left, V3 forward)
 	bones[i] = (BonePose){ h, add(mul(x, rx.x), add(mul(y, ry.x), mul(z, rz.x))), add(mul(x, rx.y), add(mul(y, ry.y), mul(z, rz.y))), add(mul(x, rx.z), add(mul(y, ry.z), mul(z, rz.z))) };
 }
 static V3 GUN_POS, GUN_DIR, GUN_LEFT;                                       // where the right hand holds a gun, and which way it points (set by pose_skeleton)
+static V3 RIDE_Y, RIDE_Z, RIDE_FOOT[2], RIDE_HAND[2];                       // a rider: the bike's up and forward axes, where the feet (0 = left) and hands go (set by draw_rider)
+#define RIDE_PELVIS 0.60f
+#define RIDE_LEAN   0.62f
 
 // two-bone IK: the middle joint between root and target, bending toward hint (the target is pulled in if it is out of reach)
 static V3 ik_joint(V3 root, V3 target, float l1, float l2, V3 hint, V3 *reached)
@@ -615,7 +621,7 @@ static float seg_len(int bone) { return vlen(sub(arr3(otto_bones[bone].tail), ar
 
 // How Otto (or an officer) stands and holds himself when fighting. aim 0..1 = how much of the stance; gun = holding a gun (else fists);
 // punchU 0..1 runs through a punch (wind-up, strike, recovery) with punchSide 0 = right jab, 1 = left cross.
-typedef struct { float aim; bool gun; int weapon; float punchU; int punchSide; float crouch; } Stance;
+typedef struct { float aim; bool gun; int weapon; float punchU; int punchSide; float crouch; bool ride; } Stance;
 
 static float punch_reach(float u)                                          // how far the fist is from the shoulder, 0..1 of the arm
 {
@@ -635,23 +641,25 @@ static float punch_twist(float u)                                          // to
 static void pose_skeleton(V3 P, float face, float speed, float phase, float fall, float time, const Stance *st)
 {
 	V3 up = v3(0, 1, 0), f = v3(sinf(face), 0, -cosf(face));
+	bool ride = st->ride;
+	if (ride) { up = RIDE_Y; f = RIDE_Z; }                                  // seated on a motorcycle: the body follows the bike's axes
 	V3 R = norm(cross(f, up));
-	float amp = gait_ease(speed / 0.9f) * (1 - fall);
-	float wUp = st->aim * (1 - fall);                                       // the upper body takes the stance whether or not Otto is walking
-	float wLeg = wUp * (1 - amp);                                           // the legs only when he stands still
-	float wCr = st->crouch * (1 - fall) * (1 - amp);                        // crouched behind cover
+	float amp = ride ? 0.0f : gait_ease(speed / 0.9f) * (1 - fall);
+	float wUp = ride ? 1.0f : st->aim * (1 - fall);                         // the upper body takes the stance whether or not Otto is walking
+	float wLeg = ride ? 1.0f : wUp * (1 - amp);                             // the legs only when he stands still
+	float wCr = st->crouch * (1 - fall) * (1 - amp);                        // crouched
 	bool punching = !st->gun && st->punchU > 0;
 	float twistSide = st->punchSide ? -1.0f : 1.0f;
 	float twist = 0;                                                        // torso rotation about the vertical: + brings the right shoulder forward
-	if (wUp > 0.02f) twist = wUp * (st->gun ? 0.38f : (punching ? punch_twist(st->punchU) * twistSide : 0.3f));
+	if (wUp > 0.02f && !ride) twist = wUp * (st->gun ? 0.38f : (punching ? punch_twist(st->punchU) * twistSide : 0.3f));
 	int ca, cb; float blend = gait_blend(speed, &ca, &cb);
 	float key = (phase - floorf(phase)) * GAIT_KEYS; int k = (int)key, n = (k + 1) % GAIT_KEYS; float t = key - k;
 	const GaitKey *a = &gait_clips[ca].key[k], *a1 = &gait_clips[ca].key[n], *b = &gait_clips[cb].key[k], *b1 = &gait_clips[cb].key[n];
 	float height = lerpf(lerpf(a->height, a1->height, t), lerpf(b->height, b1->height, t), blend);
-	float lean = amp * (0.02f + 0.07f * gait_ease((speed - 2.0f) / 3.0f)) + fall * 1.5f;
+	float lean = ride ? RIDE_LEAN : amp * (0.02f + 0.07f * gait_ease((speed - 2.0f) / 3.0f)) + fall * 1.5f;
 	V3 L = mul(R, -1), u = norm(add(mul(up, cosf(lean)), mul(f, sinf(lean)))), fw = norm(cross(L, u));
 	float breathe = 0.004f * sinf(time * 2.2f) * (1 - amp);
-	float pelvis = lerpf(lerpf(0.93f, height, amp) + breathe - 0.075f * wLeg - 0.40f * wCr, 0.22f, fall);     // knees bend a little in the stance, a lot in cover
+	float pelvis = ride ? RIDE_PELVIS : lerpf(lerpf(0.93f, height, amp) + breathe - 0.075f * wLeg - 0.40f * wCr, 0.22f, fall);     // knees bend a little in the stance
 	BonePose world = { add(P, mul(up, pelvis)), L, u, fw };
 	for (int i = 0; i < OTTO_NB; i++) {
 		HQuat q = qblend(qblend(hq(a->q[i]), hq(a1->q[i]), t), qblend(hq(b->q[i]), hq(b1->q[i]), t), blend), idle = { 1, 0, 0, 0 };
@@ -676,12 +684,12 @@ static void pose_skeleton(V3 P, float face, float speed, float phase, float fall
 	// legs: a staggered stance (the left foot forward and the feet apart; wider and more forward for a boxer) when Otto stands still
 	if ((wLeg > 0.02f || wCr > 0.02f) && fall < 0.3f) {
 		bool cr = wCr > wLeg;
-		float w = gait_ease(cr ? wCr : wLeg);
+		float w = ride ? 1.0f : gait_ease(cr ? wCr : wLeg);
 		float fwd = cr ? 0.12f : st->gun ? 0.24f : 0.32f, back = cr ? 0.1f : st->gun ? 0.15f : 0.24f, wide = cr ? 0.15f : st->gun ? 0.16f : 0.2f;
 		for (int sd = 0; sd < 2; sd++) {                                    // 0 = left leg, 1 = right leg
 			int th = sd ? OB_R_THIGH : OB_L_THIGH, sh = th + 1, ft = th + 2, tt = th + 3;
 			float side = sd ? -1.0f : 1.0f;
-			V3 A = add(P, add(mul(L, side * wide), add(mul(f, sd ? -back : fwd), v3(0, 0.13f, 0))));
+			V3 A = ride ? RIDE_FOOT[sd] : add(P, add(mul(L, side * wide), add(mul(f, sd ? -back : fwd), v3(0, 0.13f, 0))));
 			V3 H = bones[th].p, Kfk = bones[sh].p, Afk = bones[ft].p, Tfk = bones[tt].p, Tip = add(bones[tt].p, bone_rot(&bones[tt], sub(arr3(otto_bones[tt].tail), arr3(otto_bones[tt].head))));
 			V3 reach;
 			V3 K = ik_joint(H, A, seg_len(th), seg_len(sh), add(mul(f, 1.0f), mul(L, side * 0.15f)), &reach);
@@ -691,7 +699,7 @@ static void pose_skeleton(V3 P, float face, float speed, float phase, float fall
 			bone_between(th, H, K2, L, f); bone_between(sh, K2, A2, L, f); bone_between(ft, A2, T2, L, f); bone_between(tt, T2, P2, L, f);
 		}
 	}
-	if (fall < 0.5f) {                                                      // keep the soles out of the floor (clip blends can sink a foot a little)
+	if (fall < 0.5f && !ride) {                                             // keep the soles out of the floor (clip blends can sink a foot a little)
 		float low = 1e9f;
 		for (int s = 0; s < 2; s++) {
 			int i = s ? OB_R_FOOT : OB_L_FOOT;
@@ -708,7 +716,9 @@ static void pose_skeleton(V3 P, float face, float speed, float phase, float fall
 		float l1 = seg_len(OB_R_UPPERARM), l2 = seg_len(OB_R_FOREARM), l3 = seg_len(OB_R_HAND);
 		V3 Wt[2], hint[2];                                                  // wrist targets and the direction each elbow bends toward
 		bool arm[2] = { true, true };
-		if (st->gun) {
+		if (ride) {                                                         // both hands on the handlebar grips
+			for (int sd = 0; sd < 2; sd++) { Wt[sd] = RIDE_HAND[sd]; hint[sd] = add(mul(up, -1.0f), mul(L, sd ? -0.9f : 0.9f)); }
+		} else if (st->gun) {
 			// right hand holds the grip with the arm almost straight out, the left hand supports the front of the gun
 			Wt[1] = add(S[1], mul(dir, (l1 + l2) * 0.9f)); hint[1] = add(mul(up, -1.0f), mul(L, 0.35f));
 			V3 gunAt = add(Wt[1], mul(dir, l3 * 0.65f));
@@ -808,15 +818,16 @@ static void blob_shadow(float x, float y, float z, float r, float a)
 }
 
 static void muzzle_flash(V3 at);
+static void draw_rider(const Game *g, const Car *c);
 static void draw_otto(const Game *g)
 {
 	const Player *p = &g->p;
-	if (p->car >= 0) return;
+	if (p->car >= 0) { if (g->car[p->car].kind == CAR_BIKE) draw_rider(g, &g->car[p->car]); return; }
 	V3 P = v3(p->p[0], p->p[1], p->p[2]);
 	bool dead = p->ps == PS_WASTED;
 	float fall = dead ? sat(p->psT / 0.35f) : 0;
 	bool armed = p->weapon != W_FISTS;
-	Stance st = { dead ? 0 : p->aimT, armed && p->punchT <= 0, p->weapon, p->punchT > 0 ? 1.0f - p->punchT / 0.34f : 0.0f, p->punchSide, dead ? 0 : p->coverT * (1.0f - 0.8f * p->aimT) };
+	Stance st = { dead ? 0 : p->aimT, armed && p->punchT <= 0, p->weapon, p->punchT > 0 ? 1.0f - p->punchT / 0.34f : 0.0f, p->punchSide, 0.0f, false };
 	if (!armed || p->punchT > 0) st.gun = false;
 	pose_skeleton(P, p->face, p->speed, p->phase, fall, g->time, &st);
 	skin_mesh(otto_verts, OTTO_NV, otto_tris, OTTO_NT, otto_colors, P, 1.0f, false);
@@ -910,7 +921,7 @@ static void draw_peds(const Game *g, const Scene *s)
 		outfit(p, col);
 		V3 P = v3(p->x, 0, p->z);
 		float fall = p->state == PED_DOWN ? (p->dead ? 1.0f : fminf(sat((3.2f - p->timer) / 0.3f), sat(p->timer / 0.35f))) : 0;
-		Stance cs = { p->cop ? p->aimT : 0, true, p->cop == 2 ? W_SHOTGUN : W_PISTOL, 0, 0, 0 };
+		Stance cs = { p->cop ? p->aimT : 0, true, p->cop == 2 ? W_SHOTGUN : W_PISTOL, 0, 0, 0, false };
 		pose_skeleton(P, p->yaw, p->speed, p->phase, fall, g->time + order[q], &cs);
 		skin_mesh(ped_verts, PED_NV, ped_tris, PED_NT, (const float (*)[3])col, P, p->scale, true);
 		if (p->cop && p->aimT > 0.25f && fall < 0.3f) { V3 mz; draw_gun(p->cop == 2 ? W_SHOTGUN : W_PISTOL, &mz); if (p->flashT > 0) muzzle_flash(mz); }
@@ -992,6 +1003,147 @@ static void draw_car(const Game *g, int idx, bool wheels)
 		SV A = sv(p0.x, p0.y, p0.z, 0, 0, k, 0.55f), B = sv(p1.x, p1.y, p1.z, 1, 0, k, 0.55f), C = sv(p2.x, p2.y, p2.z, 1, 1, k, 0.55f), D = sv(p3.x, p3.y, p3.z, 0, 1, k, 0.55f);
 		quad(&dm[D_ALPHA], &A, &B, &C, &D);
 	}
+}
+
+// ---- motorcycle and helicopter: built from prisms in the vehicle's own frame (x = left, y = up, z = forward) ------------------------------------------
+static CFrame car_frame(const Car *c)
+{
+	float sy = sinf(c->yaw), cy = cosf(c->yaw);
+	V3 F = v3(sy, 0, -cy), R = v3(cy, 0, sy), U = v3(0, 1, 0);
+	float cl = cosf(c->lean), sl = sinf(c->lean), cp = cosf(c->pitch), sp = sinf(c->pitch);
+	CFrame fr;
+	fr.x = mul(add(mul(R, cl), mul(U, sl)), -1);
+	fr.z = add(mul(F, cp), mul(U, sp));
+	fr.y = norm(cross(fr.z, fr.x));
+	fr.o = v3(c->x, c->y, c->z);
+	return fr;
+}
+static V3 lp(const CFrame *f, float x, float y, float z) { return add(f->o, add(mul(f->x, x), add(mul(f->y, y), mul(f->z, z)))); }
+// a prism between two local points; w / d are the half sizes of its section at each end (sideways / deep)
+static void lpart(const CFrame *f, V3 a, V3 b, float w0, float d0, float w1, float d1, V3 col)
+{
+	V3 A = lp(f, a.x, a.y, a.z), B = lp(f, b.x, b.y, b.z), ax = sub(B, A);
+	V3 s = fabsf(dot(norm(ax), f->x)) > 0.8f ? f->z : f->x;
+	prism(&dm[D_OPAQUE], A, B, s, norm(cross(s, ax)), w0, d0, w1, d1, col, true);
+}
+static void emit_wheel(const CFrame *fr, float cx, float cz, float R0, float side, float wscale, float steer, float roll)
+{
+	Mesh *m = &dm[D_OPAQUE];
+	float cr = cosf(roll), sr = sinf(roll), cs = cosf(steer), ss = sinf(steer);
+	static V3 wp[WHEEL_NV];
+	for (int i = 0; i < WHEEL_NV; i++) {
+		float ax = wheel_v[i][0] * side * wscale, ry = wheel_v[i][1], rz = wheel_v[i][2];
+		float y2 = (ry * cr - rz * sr) * R0, z2 = (ry * sr + rz * cr) * R0;
+		float lx = ax * cs - z2 * ss, lz = ax * ss + z2 * cs;
+		float v[3] = { cx + lx, R0 + y2, cz + lz };
+		wp[i] = cf_pt(fr, v);
+	}
+	for (int i = 0; i < WHEEL_NT; i++) {
+		const CarTri *t = &wheel_t[i];
+		V3 nn = norm(cross(sub(wp[t->v[1]], wp[t->v[0]]), sub(wp[t->v[2]], wp[t->v[0]])));
+		const float *pc = car_palette[t->col];
+		float sh = shade(fabsf(nn.x), nn.y, nn.z) * OTTO_BOOST * 0.9f, cc[3] = { pc[0] * sh, pc[1] * sh, pc[2] * sh };
+		for (int q = 0; q < 3; q++) { SV s = sv(wp[t->v[q]].x, wp[t->v[q]].y, wp[t->v[q]].z, 0.5f, 0.5f, cc, 1); put(m, &s); }
+	}
+}
+static void soft_shadow(float x, float z, float hl, float hw, float yaw, float alpha)
+{
+	float sy = sinf(yaw), cy = cosf(yaw);
+	V3 F = v3(sy, 0, -cy), R = v3(cy, 0, sy), o = v3(x, 0.07f, z);
+	const float k[3] = { 0, 0, 0 };
+	V3 p0 = add(o, add(mul(R, -hw), mul(F, -hl))), p1 = add(o, add(mul(R, hw), mul(F, -hl))), p2 = add(o, add(mul(R, hw), mul(F, hl))), p3 = add(o, add(mul(R, -hw), mul(F, hl)));
+	SV A = sv(p0.x, p0.y, p0.z, 0, 0, k, alpha), B = sv(p1.x, p1.y, p1.z, 1, 0, k, alpha), C = sv(p2.x, p2.y, p2.z, 1, 1, k, alpha), D = sv(p3.x, p3.y, p3.z, 0, 1, k, alpha);
+	quad(&dm[D_ALPHA], &A, &B, &C, &D);
+}
+
+static void draw_bike(const Game *g, const Car *c, bool wheels)
+{
+	CFrame fr = car_frame(c);
+	float k = c->wreck ? 0.22f : 1.0f;
+	V3 paint = mul(v3(c->col[0], c->col[1], c->col[2]), 1.4f * k), black = mul(v3(0.12f, 0.12f, 0.13f), k), chrome = mul(v3(1.0f, 1.03f, 1.1f), k), grey = mul(v3(0.55f, 0.55f, 0.6f), k);
+	V3 lamp = c->wreck ? v3(0.05f, 0.05f, 0.05f) : v3(2.3f, 2.2f, 1.7f), tail = c->wreck ? v3(0.05f, 0.05f, 0.05f) : c->braking ? v3(2.6f, 0.25f, 0.2f) : v3(0.9f, 0.1f, 0.1f);
+	lpart(&fr, v3(0, 0.34f, -0.82f), v3(0, 0.52f, -0.15f), 0.045f, 0.05f, 0.05f, 0.05f, black);          // swing arm
+	lpart(&fr, v3(0, 0.40f, -0.34f), v3(0, 0.42f, 0.26f), 0.17f, 0.20f, 0.17f, 0.19f, grey);             // engine
+	lpart(&fr, v3(0, 0.88f, 0.40f), v3(0, 0.82f, -0.12f), 0.17f, 0.12f, 0.15f, 0.10f, paint);            // tank
+	lpart(&fr, v3(0, 0.80f, -0.12f), v3(0, 0.78f, -0.74f), 0.15f, 0.05f, 0.12f, 0.05f, black);           // seat
+	lpart(&fr, v3(0, 0.80f, -0.74f), v3(0, 0.72f, -1.02f), 0.10f, 0.05f, 0.07f, 0.04f, paint);           // tail
+	lpart(&fr, v3(0, 0.66f, -0.74f), v3(0, 0.66f, -0.3f), 0.04f, 0.14f, 0.04f, 0.14f, black);            // frame under the seat
+	for (int sd = -1; sd <= 1; sd += 2) lpart(&fr, v3(sd * 0.08f, 1.0f, 0.46f), v3(sd * 0.08f, 0.34f, 0.85f), 0.03f, 0.03f, 0.03f, 0.03f, chrome);   // fork
+	lpart(&fr, v3(-0.36f, 1.03f, 0.44f), v3(0.36f, 1.03f, 0.44f), 0.03f, 0.03f, 0.03f, 0.03f, black);    // handlebar
+	lpart(&fr, v3(0, 0.99f, 0.50f), v3(0, 0.99f, 0.62f), 0.12f, 0.11f, 0.12f, 0.10f, paint);             // headlight fairing
+	lpart(&fr, v3(0, 0.99f, 0.62f), v3(0, 0.99f, 0.67f), 0.09f, 0.08f, 0.09f, 0.08f, lamp);              // lamp
+	lpart(&fr, v3(0.2f, 0.28f, -0.92f), v3(0.2f, 0.34f, -0.22f), 0.05f, 0.05f, 0.04f, 0.04f, chrome);    // exhaust
+	lpart(&fr, v3(0, 0.74f, -1.02f), v3(0, 0.74f, -1.05f), 0.07f, 0.04f, 0.07f, 0.04f, tail);            // tail light
+	if (wheels) {
+		emit_wheel(&fr, 0, -0.82f, 0.33f, 1.0f, 0.55f, 0, c->wheel);
+		emit_wheel(&fr, 0, 0.85f, 0.33f, 1.0f, 0.55f, c->steer * 0.7f, c->wheel);
+	}
+	soft_shadow(c->x, c->z, 1.2f, 0.5f, c->yaw, 0.5f);
+}
+
+// Otto seated on the bike: the pose_skeleton riding branch, with the feet on the pegs and the hands on the grips
+static void draw_rider(const Game *g, const Car *c)
+{
+	CFrame fr = car_frame(c);
+	RIDE_Y = fr.y; RIDE_Z = fr.z;
+	RIDE_FOOT[0] = lp(&fr, 0.25f, 0.42f, -0.22f); RIDE_FOOT[1] = lp(&fr, -0.25f, 0.42f, -0.22f);
+	RIDE_HAND[0] = lp(&fr, 0.34f, 1.0f, 0.44f); RIDE_HAND[1] = lp(&fr, -0.34f, 1.0f, 0.44f);
+	V3 P = sub(lp(&fr, 0, 0.86f, -0.36f), mul(fr.y, RIDE_PELVIS));
+	Stance st = { 0, false, W_FISTS, 0, 0, 0, true };
+	pose_skeleton(P, c->yaw, 0, 0, 0, g->time, &st);
+	skin_mesh(otto_verts, OTTO_NV, otto_tris, OTTO_NT, otto_colors, P, 1.0f, false);
+}
+
+static void draw_heli(const Game *g, const Car *c)
+{
+	CFrame fr = car_frame(c);
+	Mesh *ma = &dm[D_ALPHA];
+	float k = c->wreck ? 0.22f : 1.0f;
+	V3 paint = mul(v3(c->col[0], c->col[1], c->col[2]), 1.4f * k), white = mul(v3(1.9f, 0.85f, 0.12f), k), dark = mul(v3(0.14f, 0.14f, 0.16f), k), grey = mul(v3(0.5f, 0.52f, 0.58f), k), glass = c->wreck ? v3(0.04f, 0.04f, 0.05f) : v3(0.35f, 0.62f, 0.95f);
+	for (int sd = -1; sd <= 1; sd += 2) {
+		lpart(&fr, v3(sd * 0.85f, 0.12f, -1.7f), v3(sd * 0.85f, 0.12f, 1.8f), 0.045f, 0.045f, 0.045f, 0.045f, grey);               // skids
+		lpart(&fr, v3(sd * 0.85f, 0.12f, -0.9f), v3(sd * 0.55f, 0.8f, -0.9f), 0.04f, 0.04f, 0.04f, 0.04f, grey);                  // struts
+		lpart(&fr, v3(sd * 0.85f, 0.12f, 0.9f), v3(sd * 0.55f, 0.8f, 0.9f), 0.04f, 0.04f, 0.04f, 0.04f, grey);
+	}
+	lpart(&fr, v3(0, 1.28f, -1.6f), v3(0, 1.28f, 1.35f), 0.82f, 0.5f, 0.8f, 0.5f, paint);                   // cabin
+	lpart(&fr, v3(0, 1.1f, -1.0f), v3(0, 1.1f, 1.3f), 0.7f, 0.18f, 0.7f, 0.2f, white);                       // belly stripe
+	lpart(&fr, v3(0, 1.3f, 1.35f), v3(0, 1.15f, 2.3f), 0.78f, 0.48f, 0.26f, 0.3f, glass);                    // nose / windscreen
+	lpart(&fr, v3(0, 1.62f, 0.15f), v3(0, 1.5f, 1.7f), 0.7f, 0.1f, 0.5f, 0.1f, glass);                       // canopy
+	lpart(&fr, v3(0, 1.95f, -1.3f), v3(0, 1.9f, 0.3f), 0.42f, 0.2f, 0.4f, 0.2f, dark);                       // engine hump
+	lpart(&fr, v3(0, 1.4f, -1.6f), v3(0, 1.62f, -5.5f), 0.2f, 0.22f, 0.09f, 0.1f, paint);                    // tail boom
+	lpart(&fr, v3(0, 1.62f, -5.3f), v3(0, 2.55f, -5.75f), 0.035f, 0.3f, 0.03f, 0.18f, paint);                // fin
+	lpart(&fr, v3(-0.75f, 1.66f, -5.2f), v3(0.75f, 1.66f, -5.2f), 0.04f, 0.22f, 0.04f, 0.22f, paint);       // tailplane
+	lpart(&fr, v3(0, 2.1f, -0.3f), v3(0, 2.6f, -0.3f), 0.09f, 0.09f, 0.07f, 0.07f, dark);                    // rotor mast
+	// main rotor: four blades, and a faint disc when it is turning fast
+	V3 hub = lp(&fr, 0, 2.6f, -0.3f);
+	for (int b = 0; b < 4; b++) {
+		float a = c->rotor + b * PI_F / 2;
+		V3 dir = add(mul(fr.x, cosf(a)), mul(fr.z, sinf(a))), side = norm(cross(dir, fr.y));
+		prism(&dm[D_OPAQUE], hub, add(hub, mul(dir, 4.9f)), side, fr.y, 0.13f, 0.015f, 0.09f, 0.012f, dark, true);
+	}
+	if (c->rpm > 0.35f && !c->wreck) {
+		const float dc[3] = { 0.55f, 0.58f, 0.62f };
+		float al = 0.16f * c->rpm;
+		for (int i = 0; i < 12; i++) {
+			float a0 = i * 2 * PI_F / 12, a1 = (i + 1) * 2 * PI_F / 12;
+			V3 p0 = add(hub, add(mul(fr.x, cosf(a0) * 4.9f), mul(fr.z, sinf(a0) * 4.9f))), p1 = add(hub, add(mul(fr.x, cosf(a1) * 4.9f), mul(fr.z, sinf(a1) * 4.9f)));
+			SV A = sv(hub.x, hub.y, hub.z, 0.5f, 0.5f, dc, al), B = sv(p0.x, p0.y, p0.z, 0.5f, 0.5f, dc, al), C = sv(p1.x, p1.y, p1.z, 0.5f, 0.5f, dc, al);
+			tri(ma, &A, &B, &C);
+		}
+	}
+	// tail rotor
+	V3 th = lp(&fr, 0.16f, 2.05f, -5.7f);
+	for (int b = 0; b < 2; b++) {
+		float a = c->rotor * 1.7f + b * PI_F;
+		V3 dir = add(mul(fr.y, cosf(a)), mul(fr.z, sinf(a)));
+		prism(&dm[D_OPAQUE], th, add(th, mul(dir, 0.75f)), fr.x, norm(cross(fr.x, dir)), 0.012f, 0.07f, 0.01f, 0.05f, dark, true);
+	}
+	if (!c->wreck) {                                                                                     // nav lights on the fin and the nose
+		bool on = ((int)(g->time * 1.6f)) & 1;
+		lpart(&fr, v3(0, 2.55f, -5.78f), v3(0, 2.6f, -5.82f), 0.05f, 0.05f, 0.05f, 0.05f, on ? v3(2.8f, 0.3f, 0.3f) : v3(0.5f, 0.1f, 0.1f));
+	}
+	float high = fminf(c->y, 60.0f);
+	soft_shadow(c->x, c->z, 3.2f + high * 0.03f, 1.4f + high * 0.03f, c->yaw, 0.5f * (1.0f - high / 90.0f));
 }
 
 // traffic lights: a pole on the far right corner of each approach, a dark head and a lamp in the signal's colour
@@ -1220,7 +1372,8 @@ static void draw_marker(const Game *g)
 	if (i < 0) return;
 	const Car *c = &g->car[i];
 	float bob = 0.25f * sinf(g->time * 5.0f);
-	V3 U = v3(0, 1, 0), tip = v3(c->x, 2.7f + bob, c->z), top = v3(c->x, 3.6f + bob, c->z);
+	float lift = c->kind == CAR_HELI ? 3.2f : c->kind == CAR_BIKE ? -0.9f : 0.0f;
+	V3 U = v3(0, 1, 0), tip = v3(c->x, 2.7f + lift + c->y + bob, c->z), top = v3(c->x, 3.6f + lift + c->y + bob, c->z);
 	float spin = g->time * 2.0f;
 	V3 s = v3(cosf(spin), 0, sinf(spin)), f = v3(-sinf(spin), 0, cosf(spin));
 	(void)U;
@@ -1265,7 +1418,10 @@ void scene_build(const Game *g, Scene *s)
 		float dx = c->x - cam->eye[0], dz = c->z - cam->eye[2];
 		if (dx * dx + dz * dz > (g->lowq ? 130.0f : 170.0f) * (g->lowq ? 130.0f : 170.0f)) continue;
 		if (dx * s->fwd[0] + dz * s->fwd[2] < -6.0f) continue;                       // behind the camera
-		draw_car(g, i, dx * dx + dz * dz < (g->lowq ? 45.0f * 45.0f : 75.0f * 75.0f));
+		bool near = dx * dx + dz * dz < (g->lowq ? 45.0f * 45.0f : 75.0f * 75.0f);
+		if (c->kind == CAR_BIKE) draw_bike(g, c, near);
+		else if (c->kind == CAR_HELI) draw_heli(g, c);
+		else draw_car(g, i, near);
 	}
 	draw_peds(g, s);
 	draw_signals(g, s);

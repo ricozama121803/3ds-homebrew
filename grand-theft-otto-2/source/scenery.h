@@ -58,6 +58,8 @@ static void chunk_info(int c, float *cx, float *cz, float *cy, float *rv, float 
 	case EX_BEACH: *cx = -38.0f; *cz = CITY * 0.5f; *rh = 285.0f; break;
 	case EX_PIER:  *cx = -205.0f; *cz = 256.0f; *rh = 175.0f; break;
 	case EX_HILLS: *cx = CITY * 0.5f; *cz = -480.0f; *cy = 60.0f; *rh = 700.0f; break;
+	case EX_NORTH: *cx = 270.0f; *cz = -85.0f; *rh = 290.0f; *cy = 30.0f; break;                      // Capitol Records and Dodger Stadium
+	case EX_SOUTH: *cx = CITY * 0.38f; *cz = CITY + 95.0f; *rh = 45.0f; *cy = 20.0f; break;          // the Theme Building
 	default: {
 		int k = c - EX_FWY0;
 		*cx = CITY + 77.0f; *cz = FWY_Z0 + (k + 0.5f) * (FWY_Z1 - FWY_Z0) / 4; *rh = 0.5f * (FWY_Z1 - FWY_Z0) / 4 + 20.0f; break; }
@@ -115,6 +117,7 @@ static void beach(void)
 	unsigned st = 0xBEAC4u;
 	for (int i = 0; i < (SG->lowq ? 5 : 14); i++) {
 		float x = -62.0f + rndf(&st) * 38.0f, z = 20.0f + rndf(&st) * (CITY - 40.0f);
+		if (near_pad(x, z, 10.0f)) continue;
 		const float *c = i % 3 == 0 ? red : i % 3 == 1 ? white : (const float[3]){ 0.2f, 0.45f, 0.85f };
 		sbox(MAT_WHITE, x - 0.04f, 0, z - 0.04f, x + 0.04f, 2.0f, z + 0.04f, wood, 1);
 		pyramid(MAT_WHITE, x - 1.5f, z - 1.5f, x + 1.5f, z + 1.5f, 2.0f, 0.7f, c, false);
@@ -282,6 +285,221 @@ static void freeway(void)
 	}
 }
 
+// ---- LA landmarks: Capitol Records, Dodger Stadium, the LAX Theme Building, the Venice sign, Randy's donut, helipads (City Hall is a block of the city itself) ----------------
+static void prism(Mesh *m, V3 a, V3 b, V3 s, V3 f, float w0, float d0, float w1, float d1, V3 col, bool capA);       // defined with the dynamic geometry below
+
+// a vertical (or conical) drum: n flat-shaded sides from radius r0 at y0 to r1 at y1, with an optional lid
+static void drum(float cx, float cz, float y0, float y1, float r0, float r1, int n, const float col[3], bool lid)
+{
+	Mesh *m = &SM(MAT_WHITE);
+	float slope = (r0 - r1) / (y1 - y0);
+	for (int i = 0; i < n; i++) {
+		float a0 = i * 2 * PI_F / n, a1 = (i + 1) * 2 * PI_F / n, am = 0.5f * (a0 + a1);
+		V3 nn = norm(v3(cosf(am), slope, sinf(am)));
+		float k = shadev(nn), c[3] = { col[0] * k, col[1] * k, col[2] * k };
+		SV p0 = sv(cx + r0 * cosf(a0), y0, cz + r0 * sinf(a0), 0.5f, 0.5f, c, 1), p1 = sv(cx + r0 * cosf(a1), y0, cz + r0 * sinf(a1), 0.5f, 0.5f, c, 1);
+		SV p2 = sv(cx + r1 * cosf(a1), y1, cz + r1 * sinf(a1), 0.5f, 0.5f, c, 1), p3 = sv(cx + r1 * cosf(a0), y1, cz + r1 * sinf(a0), 0.5f, 0.5f, c, 1);
+		quad(m, &p0, &p1, &p2, &p3);
+		if (lid && r1 > 0.01f) {
+			float kt = shade(0, 1, 0), ct[3] = { col[0] * kt, col[1] * kt, col[2] * kt };
+			SV t0 = sv(cx, y1, cz, 0.5f, 0.5f, ct, 1), t1 = sv(cx + r1 * cosf(a1), y1, cz + r1 * sinf(a1), 0.5f, 0.5f, ct, 1), t2 = sv(cx + r1 * cosf(a0), y1, cz + r1 * sinf(a0), 0.5f, 0.5f, ct, 1);
+			tri(m, &t0, &t1, &t2);
+		}
+	}
+}
+// a flat ring (annulus) between two radii at height y, facing up
+static void ring_flat(float cx, float cz, float y, float r0, float r1, int n, const float col[3], int mat)
+{
+	float k = shade(0, 1, 0), c[3] = { col[0] * k, col[1] * k, col[2] * k };
+	for (int i = 0; i < n; i++) {
+		float a0 = i * 2 * PI_F / n, a1 = (i + 1) * 2 * PI_F / n;
+		SV p0 = sv(cx + r0 * cosf(a0), y, cz + r0 * sinf(a0), 0.5f, 0.5f, c, 1), p1 = sv(cx + r1 * cosf(a0), y, cz + r1 * sinf(a0), 0.5f, 0.5f, c, 1);
+		SV p2 = sv(cx + r1 * cosf(a1), y, cz + r1 * sinf(a1), 0.5f, 0.5f, c, 1), p3 = sv(cx + r0 * cosf(a1), y, cz + r0 * sinf(a1), 0.5f, 0.5f, c, 1);
+		quad(&SM(mat), &p0, &p3, &p2, &p1);
+	}
+}
+// a slanted band between two rings (the stadium's seating bowl)
+static void bowl_band(float cx, float cz, float ya, float yb, float ra, float rb, int n, const float col[3])
+{
+	for (int i = 0; i < n; i++) {
+		float a0 = i * 2 * PI_F / n, a1 = (i + 1) * 2 * PI_F / n, am = 0.5f * (a0 + a1);
+		V3 nn = norm(v3(-cosf(am) * (yb - ya), fabsf(ra - rb), -sinf(am) * (yb - ya)));
+		float k = shadev(nn), c[3] = { col[0] * k, col[1] * k, col[2] * k };
+		SV p0 = sv(cx + ra * cosf(a0), ya, cz + ra * sinf(a0), 0.5f, 0.5f, c, 1), p1 = sv(cx + ra * cosf(a1), ya, cz + ra * sinf(a1), 0.5f, 0.5f, c, 1);
+		SV p2 = sv(cx + rb * cosf(a1), yb, cz + rb * sinf(a1), 0.5f, 0.5f, c, 1), p3 = sv(cx + rb * cosf(a0), yb, cz + rb * sinf(a0), 0.5f, 0.5f, c, 1);
+		quad(&SM(MAT_WHITE), &p0, &p1, &p2, &p3);
+	}
+}
+static void sbeam(V3 a, V3 b, float w0, float d0, float w1, float d1, const float col[3])
+{
+	V3 d = norm(sub(b, a)), side = norm(cross(d, v3(0, 1, 0)));
+	if (vlen(cross(d, v3(0, 1, 0))) < 0.1f) side = v3(1, 0, 0);
+	prism(&SM(MAT_WHITE), a, b, side, norm(cross(side, d)), w0, d0, w1, d1, v3(col[0], col[1], col[2]), true);
+}
+
+static const char *EXTRA_GLYPH[5][7] = {                                           // V E N I C
+	{ "X...X", "X...X", "X...X", "X...X", ".X.X.", ".X.X.", "..X.." },
+	{ "XXXXX", "X....", "X....", "XXXX.", "X....", "X....", "XXXXX" },
+	{ "X...X", "XX..X", "X.X.X", "X.X.X", "X..XX", "X...X", "X...X" },
+	{ "XXXXX", "..X..", "..X..", "..X..", "..X..", "..X..", "XXXXX" },
+	{ ".XXXX", "X....", "X....", "X....", "X....", "X....", ".XXXX" } };
+
+// Capitol Records: a stack of round floors, slabs of white between bands of dark glass, a needle on top
+static void capitol(float cx, float cz)
+{
+	curChunk = EX_NORTH;
+	static const float slab[3] = { 1.35f, 1.33f, 1.28f }, glass[3] = { 0.30f, 0.42f, 0.58f }, base[3] = { 0.8f, 0.78f, 0.72f }, red[3] = { 1.6f, 0.25f, 0.2f };
+	drum(cx, cz, -0.1f, 3.0f, 9.0f, 9.0f, 10, base, true);                                   // the low podium
+	float y = 3.0f;
+	for (int f = 0; f < 11; f++) {
+		drum(cx, cz, y, y + 1.9f, 6.9f, 6.9f, 10, glass, false);
+		drum(cx, cz, y + 1.9f, y + 2.5f, 7.7f, 7.7f, 10, slab, true);                       // each floor's slab sticks out past the glass
+		y += 2.5f;
+	}
+	drum(cx, cz, y, y + 2.0f, 6.0f, 4.2f, 10, slab, true);                                   // the cap
+	drum(cx, cz, y + 2.0f, y + 12.0f, 0.9f, 0.1f, 6, red, false);                           // the needle
+}
+
+// Dodger Stadium: four pastel tiers, the blue seating bowl, the green field, six light towers, the parking lot around it
+static void dodger(float cx, float cz)
+{
+	curChunk = EX_NORTH;
+	static const float cream[3] = { 1.25f, 1.15f, 0.95f }, sky[3] = { 0.55f, 0.85f, 1.2f }, orange[3] = { 1.5f, 0.85f, 0.35f }, yellow[3] = { 1.5f, 1.35f, 0.5f }, seat[3] = { 0.18f, 0.32f, 0.85f }, seat2[3] = { 0.5f, 0.55f, 0.75f };
+	static const float lot[3] = { 0.5f, 0.5f, 0.53f }, grass[3] = { 0.9f, 1.0f, 0.9f }, dirt[3] = { 1.1f, 0.85f, 0.6f }, steel[3] = { 0.75f, 0.76f, 0.8f }, lamp[3] = { 2.2f, 2.2f, 1.8f };
+	const int N = 20;
+	ring_flat(cx, cz, 0.02f, 50.0f, 108.0f, 16, lot, MAT_WHITE);
+	drum(cx, cz, 0.0f, 5.5f, 47.0f, 47.0f, N, cream, false);
+	drum(cx, cz, 5.5f, 10.0f, 46.0f, 45.0f, N, sky, false);
+	drum(cx, cz, 10.0f, 14.0f, 44.0f, 43.0f, N, orange, false);
+	drum(cx, cz, 14.0f, 18.0f, 42.0f, 41.0f, N, yellow, false);
+	ring_flat(cx, cz, 18.0f, 36.0f, 41.5f, N, cream, MAT_WHITE);
+	bowl_band(cx, cz, 18.0f, 10.0f, 38.0f, 30.0f, N, seat);
+	bowl_band(cx, cz, 10.0f, 4.0f, 30.0f, 22.0f, N, seat2);
+	bowl_band(cx, cz, 4.0f, 1.2f, 22.0f, 17.0f, N, seat);
+	{ Mesh *m = &SM(MAT_GRASS); float k = shade(0, 1, 0), c[3] = { grass[0] * k, grass[1] * k, grass[2] * k };
+	  for (int i = 0; i < N; i++) { float a0 = i * 2 * PI_F / N, a1 = (i + 1) * 2 * PI_F / N;
+		SV f0 = sv(cx, 1.2f, cz, cx / 12, cz / 12, c, 1), f1 = sv(cx + 17.0f * cosf(a1), 1.2f, cz + 17.0f * sinf(a1), (cx + 17.0f * cosf(a1)) / 12, (cz + 17.0f * sinf(a1)) / 12, c, 1), f2 = sv(cx + 17.0f * cosf(a0), 1.2f, cz + 17.0f * sinf(a0), (cx + 17.0f * cosf(a0)) / 12, (cz + 17.0f * sinf(a0)) / 12, c, 1);
+		tri(m, &f0, &f1, &f2); } }
+	{ float k = shade(0, 1, 0), c[3] = { dirt[0] * k, dirt[1] * k, dirt[2] * k };                      // the infield: a diamond of dirt
+	  SV d0 = sv(cx, 1.25f, cz + 11.0f, 0.5f, 0.5f, c, 1), d1 = sv(cx + 9.0f, 1.25f, cz, 0.5f, 0.5f, c, 1), d2 = sv(cx, 1.25f, cz - 7.0f, 0.5f, 0.5f, c, 1), d3 = sv(cx - 9.0f, 1.25f, cz, 0.5f, 0.5f, c, 1);
+	  quad(&SM(MAT_WHITE), &d0, &d1, &d2, &d3); }
+	for (int i = 0; i < 6; i++) {                                                                       // light towers
+		float a = i * 2 * PI_F / 6 + 0.5f, x = cx + 46.0f * cosf(a), z = cz + 46.0f * sinf(a);
+		sbox(MAT_WHITE, x - 0.45f, 0, z - 0.45f, x + 0.45f, 36.0f, z + 0.45f, steel, 1);
+		sbox(MAT_WHITE, x - 3.6f, 36.0f, z - 0.7f, x + 3.6f, 40.0f, z + 0.7f, steel, 1);
+		sbox(MAT_WHITE, x - 3.4f, 36.4f, z - 0.75f, x + 3.4f, 39.6f, z + 0.75f, lamp, 1);
+	}
+	sbox(MAT_WHITE, cx - 7.0f, 18.0f, cz - 46.5f, cx + 7.0f, 25.0f, cz - 44.0f, steel, 1);          // the big scoreboard
+	sbox(MAT_WHITE, cx - 6.4f, 18.5f, cz - 44.1f, cx + 6.4f, 24.4f, cz - 43.8f, seat, 1);
+}
+
+// the Theme Building at LAX: two crossing arches carrying a saucer-shaped restaurant
+static void theme_building(float cx, float cz)
+{
+	curChunk = EX_SOUTH;
+	static const float white[3] = { 1.4f, 1.4f, 1.38f }, glass[3] = { 0.28f, 0.42f, 0.58f }, roofc[3] = { 1.3f, 1.3f, 1.3f }, steel[3] = { 0.8f, 0.8f, 0.85f };
+	const int SEG = 6; const float SPAN = 28.0f, TOP = 19.0f;
+	for (int arch = 0; arch < 2; arch++) for (int i = 0; i < 2 * SEG; i++) {
+		float t0 = -1.0f + i * (1.0f / SEG), t1 = t0 + 1.0f / SEG;
+		V3 a = arch ? v3(cx, TOP * (1 - t0 * t0), cz + SPAN * t0) : v3(cx + SPAN * t0, TOP * (1 - t0 * t0), cz);
+		V3 b = arch ? v3(cx, TOP * (1 - t1 * t1), cz + SPAN * t1) : v3(cx + SPAN * t1, TOP * (1 - t1 * t1), cz);
+		float w0 = 1.1f + 1.3f * t0 * t0, w1 = 1.1f + 1.3f * t1 * t1;
+		sbeam(a, b, arch ? 1.5f : w0, arch ? w0 : 1.5f, arch ? 1.5f : w1, arch ? w1 : 1.5f, white);
+	}
+	drum(cx, cz, TOP + 0.2f, TOP + 1.8f, 5.0f, 16.0f, 14, white, false);                       // underside of the saucer
+	drum(cx, cz, TOP + 1.8f, TOP + 4.3f, 16.0f, 16.0f, 14, glass, false);                      // the dining room's windows
+	drum(cx, cz, TOP + 4.3f, TOP + 6.0f, 16.0f, 6.0f, 14, roofc, true);                        // the dome of the roof
+	drum(cx, cz, TOP + 6.0f, TOP + 14.0f, 1.3f, 0.5f, 8, steel, true);                         // the tower with its antenna
+	drum(cx, cz, TOP + 14.0f, TOP + 20.0f, 0.2f, 0.05f, 4, steel, false);
+}
+
+// the Venice sign: an arch of letters over the street at the boardwalk, lettered on both sides
+static void venice_sign(float x, float zc)
+{
+	curChunk = EX_BEACH;
+	static const float post[3] = { 0.5f, 0.52f, 0.58f }, board[3] = { 0.12f, 0.2f, 0.45f }, neon[3] = { 2.4f, 2.2f, 1.5f };
+	const float cell = 0.54f, span = 12.4f;
+	sbox(MAT_WHITE, x - 0.4f, 0, zc - span - 0.4f, x + 0.4f, 9.4f, zc - span + 0.4f, post, 1);
+	sbox(MAT_WHITE, x - 0.4f, 0, zc + span - 0.4f, x + 0.4f, 9.4f, zc + span + 0.4f, post, 1);
+	sbox(MAT_WHITE, x - 0.3f, 5.0f, zc - span, x + 0.3f, 9.8f, zc + span, board, 1);
+	static const int glyph[6] = { 6, 7, 8, 9, 10, 7 };                                                 // V E N I C E
+	const float lw = 5 * cell, gap = 0.7f, total = 6 * lw + 5 * gap;
+	for (int side = 0; side < 2; side++) {
+		float px = side ? x - 0.34f : x + 0.34f;
+		for (int L = 0; L < 6; L++) {
+			const char **rows = EXTRA_GLYPH[glyph[L] - 6];
+			float u0 = L * (lw + gap);                                                                  // distance along the reading direction
+			for (int r = 0; r < 7; r++) for (int c = 0; c < 5; c++) {
+				if (rows[r][c] != 'X') continue;
+				float zc0 = side ? zc - total * 0.5f + u0 + c * cell : zc + total * 0.5f - u0 - (c + 1) * cell, zc1 = zc0 + cell, ya = 9.2f - (r + 1) * cell * 0.9f - 0.15f, yb = ya + cell * 0.9f;
+				SV a = sv(px, ya, zc0, 0.5f, 0.5f, neon, 1), b = sv(px, ya, zc1, 0.5f, 0.5f, neon, 1), cc = sv(px, yb, zc1, 0.5f, 0.5f, neon, 1), d = sv(px, yb, zc0, 0.5f, 0.5f, neon, 1);
+				quad(&SM(MAT_WHITE), &a, &b, &cc, &d);
+			}
+		}
+	}
+}
+
+// Randy's Donuts: a giant doughnut standing on posts on a rooftop
+static void randys_donut(void)
+{
+	const World *w = &SG->w;
+	int i0 = w->bfirst[5][3], n = w->bcount[5][3];
+	if (n <= 0 || w->park[5][3]) return;
+	const Box *b = &w->box[i0];
+	for (int k = 0; k < n; k++) if (w->box[i0 + k].y1 > b->y1 && w->box[i0 + k].kind == BK_BLDG) b = &w->box[i0 + k];
+	float cx = 0.5f * (b->x0 + b->x1), cz = 0.5f * (b->z0 + b->z1), y0 = b->y1;
+	chunk_at(cx, cz);
+	static const float dough[3] = { 1.3f, 0.92f, 0.5f }, icing[3] = { 1.75f, 0.7f, 0.95f }, post[3] = { 0.5f, 0.5f, 0.55f };
+	const float R = 2.7f, r = 1.1f, yc = y0 + 3.0f + R + r;
+	sbox(MAT_WHITE, cx - 0.2f, y0, cz - 1.4f, cx + 0.2f, yc - R, cz - 1.0f, post, 1);
+	sbox(MAT_WHITE, cx - 0.2f, y0, cz + 1.0f, cx + 0.2f, yc - R, cz + 1.4f, post, 1);
+	const int NT = 14, NP = 6;
+	for (int i = 0; i < NT; i++) for (int j = 0; j < NP; j++) {
+		float th[2] = { i * 2 * PI_F / NT, (i + 1) * 2 * PI_F / NT }, ph[2] = { j * 2 * PI_F / NP, (j + 1) * 2 * PI_F / NP };
+		SV v[4]; V3 nsum = v3(0, 0, 0);
+		for (int q = 0; q < 4; q++) {
+			float t = th[(q == 1 || q == 2) ? 1 : 0], p = ph[(q >= 2) ? 1 : 0];
+			V3 rad = v3(0, cosf(t), sinf(t)), nn = add(mul(rad, cosf(p)), v3(sinf(p), 0, 0));
+			V3 pt = add(v3(cx, yc + R * rad.y, cz + R * rad.z), mul(nn, r));
+			nsum = add(nsum, nn);
+			v[q] = sv(pt.x, pt.y, pt.z, 0.5f, 0.5f, dough, 1);
+		}
+		V3 nm = norm(nsum);
+		bool front = fabsf(nm.x) > 0.5f;                                                               // the faces that look along the axis carry the icing
+		float k = shadev(nm); const float *base = front ? icing : dough;
+		float c[3] = { base[0] * k, base[1] * k, base[2] * k };
+		for (int q = 0; q < 4; q++) { v[q].c[0] = c[0]; v[q].c[1] = c[1]; v[q].c[2] = c[2]; }
+		quad(&SM(MAT_WHITE), &v[0], &v[1], &v[2], &v[3]);
+		quad(&SM(MAT_WHITE), &v[0], &v[3], &v[2], &v[1]);                                              // seen from both sides
+	}
+}
+
+// a helipad: a dark square with a yellow ring and a white H
+static void helipads(void)
+{
+	static const float dark[3] = { 0.42f, 0.42f, 0.46f }, ring[3] = { 1.7f, 1.4f, 0.25f }, white[3] = { 1.7f, 1.7f, 1.6f };
+	for (int i = 0; i < N_PADS; i++) {
+		float x = PADS[i][0], z = PADS[i][1];
+		if (i == 0) chunk_at(x, z); else curChunk = EX_BEACH;
+		float y = i == 0 ? 0.14f : 0.05f;
+		ring_flat(x, z, y, 0.0f, 7.4f, 16, ring, MAT_WHITE);
+		ring_flat(x, z, y + 0.02f, 0.0f, 6.7f, 16, dark, MAT_WHITE);
+		flat(MAT_WHITE, x - 2.2f, z - 2.6f, x - 1.4f, z + 2.6f, y + 0.05f, white, 0.0f);
+		flat(MAT_WHITE, x + 1.4f, z - 2.6f, x + 2.2f, z + 2.6f, y + 0.05f, white, 0.0f);
+		flat(MAT_WHITE, x - 1.4f, z - 0.4f, x + 1.4f, z + 0.4f, y + 0.05f, white, 0.0f);
+	}
+}
+
+static void landmarks(void)
+{
+	capitol(130.0f, -52.0f);
+	dodger(CITY * 0.82f, -100.0f);
+	theme_building(CITY * 0.38f, CITY + 95.0f);
+	venice_sign(-5.0f, 3 * PITCH);
+	randys_donut();
+	helipads();
+}
+
 static void scenery_static(void)
 {
 	outskirts();
@@ -289,4 +507,5 @@ static void scenery_static(void)
 	beach_palms();
 	hills();
 	freeway();
+	landmarks();
 }

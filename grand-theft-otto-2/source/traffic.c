@@ -391,13 +391,13 @@ static void ped_step(Game *g, int idx, float dt)
 	// cars: startled by fast ones passing close, hurt by any that touch
 	for (int i = 0; i < MAX_CAR; i++) {
 		const Car *c = &g->car[i];
-		if (!c->on) continue;
+		if (!c->on || car_flying(c)) continue;
 		float dx = c->x - p->x, dz = c->z - p->z;
 		if (dx * dx + dz * dz > 8.0f * 8.0f) continue;
 		float sp = sqrtf(c->vx * c->vx + c->vz * c->vz);
 		float cx[3], cz[3]; car_circles(c, cx, cz);
 		for (int q = 0; q < 3; q++) {
-			float ex = p->x - cx[q], ez = p->z - cz[q], d2 = ex * ex + ez * ez, r = CAR_R + 0.3f;
+			float ex = p->x - cx[q], ez = p->z - cz[q], d2 = ex * ex + ez * ez, r = car_radius(c->kind) + 0.3f;
 			if (sp > 2.5f && d2 < r * r && !c->wreck) {
 				p->state = PED_DOWN; p->timer = 3.2f; p->vx = c->vx * 0.6f; p->vz = c->vz * 0.6f; p->yaw = atan2f(c->vx, -c->vz);
 				damage_ped(g, idx, clampf(sp * 7.0f, 15.0f, 150.0f), c->driven ? 1 : 0);

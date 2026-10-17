@@ -73,6 +73,21 @@ static void add_landmark(World *w, float cx, float cz, const float half[4], cons
 	w->nbld++;
 }
 
+// Los Angeles City Hall: a wide white base, a stepped tower and a pyramid roof (half widths along x / z and tops of its tiers)
+static void add_city_hall(World *w, float cx, float cz)
+{
+	static const float hx[5] = { 17.5f, 14.0f, 8.5f, 6.2f, 3.8f }, hz[5] = { 15.0f, 11.5f, 8.5f, 6.2f, 3.8f }, top[5] = { 17.0f, 34.0f, 98.0f, 119.0f, 136.0f };
+	float yb = 0;
+	for (int k = 0; k < 5; k++) {
+		Box *b = add_box(w, cx - hx[k], 0, cz - hz[k], cx + hx[k], top[k], cz + hz[k], MAT_CREAM, BK_BLDG);
+		if (!b) return;
+		b->yb = yb; yb = top[k];
+		b->tint[0] = 1.12f; b->tint[1] = 1.1f; b->tint[2] = 1.04f;
+		if (k == 4) b->roof = RF_PYRAMID;
+	}
+	w->nbld++;
+}
+
 void city_generate(World *w, unsigned seed)
 {
 	unsigned st = seed, *s = &st;
@@ -84,6 +99,7 @@ void city_generate(World *w, unsigned seed)
 		if (w->park[j][i]) continue;
 		float x0 = (i + BLOCK_LO) * PITCH, x1 = (i + BLOCK_HI) * PITCH, z0 = (j + BLOCK_LO) * PITCH, z1 = (j + BLOCK_HI) * PITCH;
 		if (i == 6 && j == 1) { static const float hf[4] = { 17.0f, 12.5f, 8.5f, 4.5f }, tp[4] = { 78.0f, 128.0f, 170.0f, 204.0f }; add_landmark(w, 0.5f * (x0 + x1), 0.5f * (z0 + z1), hf, tp, 4); w->bcount[j][i] = w->nbox - w->bfirst[j][i]; continue; }
+		if (i == 6 && j == 2) { add_city_hall(w, 0.5f * (x0 + x1), 0.5f * (z0 + z1)); w->bcount[j][i] = w->nbox - w->bfirst[j][i]; continue; }
 		if (i == 5 && j == 2) { static const float hf[4] = { 15.0f, 11.0f, 7.0f, 0 }, tp[4] = { 70.0f, 112.0f, 146.0f, 0 }; add_landmark(w, 0.5f * (x0 + x1), 0.5f * (z0 + z1), hf, tp, 3); w->bcount[j][i] = w->nbox - w->bfirst[j][i]; continue; }
 		float tall = (i >= w->downtown0 && j < w->downtown1) ? 1.0f - 0.25f * ((NB - 1 - i) + j) * 0.5f : 0.0f;
 		float cols[2][2]; int nc = 1;
@@ -178,4 +194,37 @@ bool city_push_circle(const World *w, float *x, float *z, float r, float n[2])
 	}
 	if (hit) { float l = sqrtf(n[0] * n[0] + n[1] * n[1]); if (l > 1e-6f) { n[0] /= l; n[1] /= l; } }
 	return hit;
+}
+
+// a helicopter's circle against the buildings it is not above: boxes whose top is below ylo (or whose base is above yhi) do not count
+bool city_push_circle_y(const World *w, float *x, float *z, float r, float ylo, float yhi, float n[2])
+{
+	bool hit = false;
+	n[0] = n[1] = 0;
+	FOR_NEAR(w, *x, *z, r + 0.5f, b) {
+		if (b->y1 < ylo || b->y0 > yhi) continue;
+		float cx = clampf(*x, b->x0, b->x1), cz = clampf(*z, b->z0, b->z1);
+		float dx = *x - cx, dz = *z - cz, d2 = dx * dx + dz * dz;
+		if (d2 >= r * r) continue;
+		float nx, nz, pen;
+		if (d2 > 1e-8f) { float d = sqrtf(d2); nx = dx / d; nz = dz / d; pen = r - d; }
+		else {
+			float l = *x - b->x0, rr = b->x1 - *x, t = *z - b->z0, bt = b->z1 - *z, m = fminf(fminf(l, rr), fminf(t, bt));
+			nx = nz = 0; if (m == l) nx = -1; else if (m == rr) nx = 1; else if (m == t) nz = -1; else nz = 1;
+			pen = m + r;
+		}
+		*x += nx * pen; *z += nz * pen; n[0] += nx; n[1] += nz; hit = true;
+	}
+	if (hit) { float l = sqrtf(n[0] * n[0] + n[1] * n[1]); if (l > 1e-6f) { n[0] /= l; n[1] /= l; } }
+	return hit;
+}
+
+// the top of the highest building under a circle (0 over the street): a helicopter can set down on a roof
+float city_roof_h(const World *w, float x, float z, float r)
+{
+	float top = 0;
+	FOR_NEAR(w, x, z, r + 0.5f, b) {
+		if (x + r > b->x0 && x - r < b->x1 && z + r > b->z0 && z - r < b->z1 && b->y1 > top) top = b->y1;
+	}
+	return top;
 }

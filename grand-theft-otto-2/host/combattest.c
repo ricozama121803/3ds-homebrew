@@ -1,5 +1,6 @@
 // Combat, wanted level and police: scripted scenarios plus a random soak.
 // Build: gcc -O2 -o /tmp/combattest host/combattest.c -lm && /tmp/combattest
+#define TEST_LOADOUT 0                       // these scenarios are about real ammo and the police taking weapons away
 #include "../source/game.h"
 #include "../source/city.c"
 #include "../source/game.c"

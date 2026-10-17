@@ -131,14 +131,16 @@ int main(void)
 		in.cx = in.cx > 1 ? 1 : in.cx < -1 ? -1 : in.cx; in.cy = in.cy > 1 ? 1 : in.cy < -1 ? -1 : in.cy;
 		in.gas = (held & (KEY_R | KEY_ZR)) != 0;                               // R: shoot on foot, gas in a car
 		in.hand = (held & (KEY_A | KEY_L | KEY_ZL)) != 0;                      // A or L: handbrake in a car
-		in.cover = (held & (KEY_L | KEY_ZL)) != 0;                             // L: take cover on foot
+		in.aim = (held & (KEY_L | KEY_ZL)) != 0;                               // L: aim / lock onto a target on foot (flick the circle pad to switch)
+		in.dpx = (held & KEY_DRIGHT) ? 1.0f : (held & KEY_DLEFT) ? -1.0f : 0.0f;       // D-pad: also picks a weapon on the weapon wheel
+		in.dpy = (held & KEY_DUP) ? 1.0f : (held & KEY_DDOWN) ? -1.0f : 0.0f;
 		in.brake = (held & KEY_B) != 0;                                        // B: brake / reverse; two quick taps on foot = sprint
 		in.a_p = (down & KEY_A) != 0;
 		in.b_p = (down & KEY_B) != 0;
 		in.x_p = (down & KEY_Y) != 0;                                          // Y: next weapon
 		in.enter_p = (down & KEY_X) != 0;                                      // X: get in / out of a car
 		in.start_p = (down & KEY_START) != 0;
-		in.select_p = (down & KEY_SELECT) != 0;
+		in.select_p = (down & KEY_SELECT) != 0;                                // SELECT: weapon wheel (restart is on the pause screen)
 		in.up_p = (down & KEY_DUP) != 0;
 		in.down_p = (down & KEY_DDOWN) != 0;
 		if (held & KEY_TOUCH) {

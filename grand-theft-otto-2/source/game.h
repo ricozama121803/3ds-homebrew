@@ -58,6 +58,8 @@ void  city_generate(World *w, unsigned seed);
 float city_ray(const World *w, const float o[3], const float d[3], float tmax, float n[3]);   // distance to the first box hit, or -1
 void  city_move(const World *w, float p[3], const float d[3], Contact *c);                     // move the on-foot body with collision (axis by axis)
 bool  city_push_circle(const World *w, float *x, float *z, float r, float n[2]);               // push a ground circle out of the buildings; true (and the push direction) if it hit
+bool  city_push_circle_y(const World *w, float *x, float *z, float r, float ylo, float yhi, float n[2]);   // same, only against buildings that reach into the height range
+float city_roof_h(const World *w, float x, float z, float r);                                  // top of the highest building under a circle (0 over a street)
 static inline bool world_walkable(float x, float z)       // on foot: the city, the beach and the pier
 {
 	if (z >= 1.0f && z <= CITY - 1.0f && x >= BEACH_X && x <= CITY - 1.0f) return true;
@@ -75,13 +77,18 @@ typedef struct {
 	float lx, ly;                            // circle pad: move / steer
 	float cx, cy;                            // C-stick / d-pad: camera
 	float tdx, tdy;                          // touch drag on the bottom screen (pixels this frame)
-	bool run, gas, brake, hand, cover;       // held: (unused), R = gas / shoot, B = brake, A or L = handbrake, L = take cover (on foot)
+	float dpx, dpy;                          // D-pad as held (-1 / 0 / 1): picks a weapon on the weapon wheel
+	bool run, gas, brake, hand, aim;         // held: (unused), R = gas / shoot, B = brake, A or L = handbrake, L = aim / lock on (on foot)
 	bool enter_p, a_p, b_p, x_p, start_p, select_p, up_p, down_p, touch_p;
 	int weap;                                // touch: weapon slot tapped this frame + 1 (0 = none)
 	float tx, ty;
 } Input;
 
 enum { W_FISTS, W_PISTOL, W_SMG, W_SHOTGUN, W_COUNT };
+#ifndef TEST_LOADOUT
+#define TEST_LOADOUT 1                       // testing: Otto starts (and restarts) with every weapon and never runs out of ammo; set to 0 for the real game
+#endif
+#define TEST_AMMO    999
 enum { PS_ALIVE, PS_WASTED, PS_BUSTED };
 typedef struct {
 	float p[3], v[3];                        // feet position, velocity
@@ -89,14 +96,16 @@ typedef struct {
 	int weapon, ammo[W_COUNT]; bool has[W_COUNT];
 	int cash;
 	float fireCd, aimT, flashT, punchT, hurtT, lastShotT;     // aimT 0..1: arm raised; flashT: muzzle flash left; punchT: punch left; hurtT: red flash left
-	int target;                              // ped being auto-aimed at, or -1
+	int target;                              // ped being aimed at (auto-aim or the lock), or -1
+	int lock;                                // ped locked onto while L is held, or -1
+	float lockCd, lockLosT, lockMag;         // time until the lock may switch again, how long the locked ped has been out of sight, the stick's length last frame
 	int ps; float psT;                       // alive / wasted / busted, and for how long
 	float arrestT;                           // how long a cop has had hold of Otto
 	float aimYaw;
 	int punchSide;                           // alternates: right jab, left cross
 	bool punchHit;                           // the punch has not landed yet (it does when the fist is fully out)
-	bool cover, sprint;                      // crouched behind a wall or car; running flat out (two quick taps of B)
-	float coverT, coverNx, coverNz, bTapT, sprintT;   // cover blend 0..1, the direction away from the cover, time since the last B tap, how long the stick has been let go
+	bool sprint;                             // running flat out (two quick taps of B)
+	float sprintBoost, bTapT, sprintT;       // 0..1: more taps of B, a faster sprint; time since the last B tap; how long the stick has been let go
 	float face;                              // body heading (yaw)
 	float phase;                             // gait cycles travelled (the fractional part picks the animation frame)
 	float speed;                             // smoothed ground speed
@@ -104,7 +113,8 @@ typedef struct {
 	float enterT;                            // seat transition time left
 } Player;
 
-enum { CAR_SEDAN, CAR_SPORTS, CAR_VAN, CAR_TAXI, CAR_POLICE, CAR_SWAT, CAR_KINDS };    // same order as LINEUP in assets/models/build_cars.py
+enum { CAR_SEDAN, CAR_SPORTS, CAR_VAN, CAR_TAXI, CAR_POLICE, CAR_SWAT, CAR_KINDS,    // CAR_KINDS: the Blender-modelled cars, same order as LINEUP in assets/models/build_cars.py
+       CAR_BIKE = CAR_KINDS, CAR_HELI, CAR_ALL };                                    // a motorcycle and a helicopter are built from prisms in scene.c
 // A car driven by the computer: it follows a lane (one per direction, right-hand traffic) along a grid line, obeys the traffic lights and turns at junctions on a curve.
 typedef struct {
 	bool on;
@@ -129,6 +139,7 @@ typedef struct {
 	float lean, pitch;                       // body roll / pitch from the suspension (radians)
 	float col[3];
 	bool braking, driven;
+	float y, vy, rpm, rotor;                 // helicopter: height of the skids above the ground, climb rate, rotor speed 0..1, rotor angle
 	float hp;
 	Ai ai;
 	bool bot;                                // steered by chase input below (police)
@@ -181,6 +192,8 @@ typedef struct {
 	float respawnT, pnsT, pickT, stillT;
 	bool paused;
 	float time, hintT;
+	bool wheel; int wheelSel; float wheelT;  // the weapon wheel (SELECT): open, the weapon under the stick, how long it has been open
+	float hitT, killT;                       // crosshair hit marker and kill marker time left
 	unsigned rng;
 	float sens; bool invertY, showFps, lowq; float fps;
 	bool quit, saveNeeded;
@@ -188,12 +201,15 @@ typedef struct {
 
 #define CAR_LEN 4.5f
 #define CAR_R   1.05f                        // collision circles: three along the car
+static inline float car_radius(int kind) { return kind == CAR_BIKE ? 0.62f : kind == CAR_HELI ? 1.5f : CAR_R; }
+static inline float car_spacing(int kind) { return kind == CAR_BIKE ? 0.55f : kind == CAR_HELI ? 1.0f : 1.45f; }
 
 void  game_init(Game *g, bool lowq);
 void  game_start(Game *g);                                  // new game: Otto on the street, a few cars parked around
 void  game_update(Game *g, const Input *in, float dt);
 int   game_nearest_car(const Game *g, float x, float z, float maxd);   // closest unoccupied car within maxd of the point, or -1
 int   game_add_car(Game *g, int kind, float x, float z, float yaw);
+bool  car_flying(const Car *c);                             // a helicopter well above the ground
 void  car_circles(const Car *c, float cx[3], float cz[3]); // world positions of the car's 3 collision circles
 
 // ---- traffic.c ------------------------------------------------------------------------------------------------------------
@@ -212,6 +228,8 @@ extern const WeaponDef WPN[W_COUNT];
 #define SPRAY_X    (5 * PITCH)
 #define SPRAY_Z    (3 * PITCH + 26.0f)
 #define SPRAY_R    5.5f
+#define N_PADS     3                         // helipads: in the park south-east of downtown and two on the beach
+static const float PADS[N_PADS][3] = { { 5.5f * PITCH, 6.5f * PITCH, 0.0f }, { -38.0f, 140.0f, 1.57f }, { -38.0f, 390.0f, 1.57f } };    // x, z, heading of the parked helicopter
 
 // ---- combat.c: weapons, bullets, blood, damage, cash and pickups, explosions, WASTED / BUSTED ----------------------------------------------------------
 void  combat_init(Game *g);

@@ -282,8 +282,8 @@ int main(int argc, char **argv)
 	}
 	// the cars, one of each kind, 3/4 view
 	{
-		int shown = 0; bool seen[CAR_KINDS] = { 0 };
-		for (int i = 0; i < MAX_CAR && shown < CAR_KINDS; i++) if (G.car[i].on && !seen[G.car[i].kind]) {
+		int shown = 0; bool seen[CAR_ALL] = { 0 };
+		for (int i = 0; i < MAX_CAR && shown < CAR_ALL; i++) if (G.car[i].on && !seen[G.car[i].kind]) {
 			seen[G.car[i].kind] = true; shown++;
 			char nm[32]; snprintf(nm, sizeof nm, "c%d_kind", G.car[i].kind);
 			snaplook(out, nm, (float[3]){ G.car[i].x, 0.8f, G.car[i].z }, G.car[i].yaw + 0.9f, 7.5f, 1.8f, 45);
@@ -303,6 +303,52 @@ int main(int argc, char **argv)
 		printf("speed after braking %.1f\n", G.p.speed);
 		Input e = idle; e.enter_p = true; run(0.1f, e); printf("after exit: car %d\n", G.p.car); run(0.5f, idle); snap(out, "d5_exited");
 	}
+	// motorcycles, a rider, helicopters, lock-on and the weapon wheel
+	{
+		const float SX = 4 * PITCH, SZ = 4 * PITCH + 24;
+		game_start(&G); for (int i = 0; i < MAX_PED; i++) G.ped[i].on = false; for (int i = 0; i < MAX_CAR; i++) G.car[i].on = false; G.hintT = 0;
+		G.p.p[0] = SX + 3; G.p.p[2] = SZ + 20; G.p.face = 0; G.cam.yaw = 0;
+		int bi = game_add_car(&G, CAR_BIKE, SX + 6.4f, SZ - 6, 0); G.car[bi].col[0] = 0.8f; G.car[bi].col[1] = 0.1f; G.car[bi].col[2] = 0.08f;
+		snaplook(out, "m1_bike_side", (float[3]){ G.car[bi].x, 0.6f, G.car[bi].z }, G.car[bi].yaw + PI_F / 2, 4.2f, 0.4f, 40);
+		snaplook(out, "m2_bike_34", (float[3]){ G.car[bi].x, 0.6f, G.car[bi].z }, G.car[bi].yaw + PI_F * 0.8f, 4.2f, 0.9f, 40);
+		snaplook(out, "m3_bike_front", (float[3]){ G.car[bi].x, 0.6f, G.car[bi].z }, G.car[bi].yaw + PI_F * 0.15f, 4.2f, 0.5f, 40);
+		G.p.p[0] = G.car[bi].x - 2.4f; G.p.p[2] = G.car[bi].z; { Input x = idle; x.enter_p = true; run(0.05f, x); }
+		printf("on the bike: car %d\n", G.p.car);
+		snaplook(out, "m4_rider_side", (float[3]){ G.car[bi].x, 0.8f, G.car[bi].z }, G.car[bi].yaw + PI_F / 2, 4.0f, 0.4f, 40);
+		snaplook(out, "m5_rider_rear", (float[3]){ G.car[bi].x, 0.9f, G.car[bi].z }, G.car[bi].yaw + PI_F * 0.9f, 3.8f, 0.6f, 40);
+		snaplook(out, "m5b_rider_front", (float[3]){ G.car[bi].x, 0.9f, G.car[bi].z }, G.car[bi].yaw + PI_F * 0.2f, 3.8f, 0.5f, 40);
+		Input d = idle; d.gas = true; run(2.0f, d); snap(out, "m6_ride");
+		d.lx = 0.7f; run(0.7f, d); snap(out, "m7_lean");
+		snaplook(out, "m8_lean_side", (float[3]){ G.car[bi].x, 0.8f, G.car[bi].z }, G.car[bi].yaw + PI_F * 0.9f, 4.2f, 0.7f, 40);
+		// helicopters
+		game_start(&G); G.hintT = 0; for (int i = 0; i < MAX_PED; i++) G.ped[i].on = false;
+		int hi = -1; for (int i = 0; i < MAX_CAR; i++) if (G.car[i].on && G.car[i].kind == CAR_HELI) { hi = i; break; }
+		Car *h = &G.car[hi];
+		snaplook(out, "e1_heli_side", (float[3]){ h->x, 1.4f, h->z }, h->yaw + PI_F / 2, 13.0f, 1.0f, 45);
+		snaplook(out, "e2_heli_34", (float[3]){ h->x, 1.4f, h->z }, h->yaw + PI_F * 0.8f, 13.0f, 3.0f, 45);
+		snaplook(out, "e3_heli_front", (float[3]){ h->x, 1.4f, h->z }, h->yaw + PI_F * 0.15f, 11.0f, 1.5f, 45);
+		G.p.p[0] = h->x + 4.0f; G.p.p[2] = h->z; { Input x = idle; x.enter_p = true; run(0.05f, x); }
+		snap(out, "e4_heli_ground");
+		Input up = idle; up.gas = true; run(4.0f, up); snap(out, "e5_heli_up");
+		Input fw = idle; fw.ly = 1; fw.lx = 0.4f; run(3.0f, fw); snap(out, "e6_heli_fly");
+		fw.lx = 0; run(3.0f, fw); fw.gas = true; run(3.0f, fw); snap(out, "e7_heli_high");
+		printf("heli at %.0f %.0f %.0f\n", h->x, h->y, h->z);
+		// crosshair, lock-on, hit and kill markers
+		game_start(&G); for (int i = 0; i < MAX_PED; i++) G.ped[i].on = false; for (int i = 0; i < MAX_CAR; i++) G.car[i].on = false; G.hintT = 0;
+		G.p.p[0] = SX + 3; G.p.p[2] = SZ; G.p.face = 0; G.cam.yaw = 0;
+		for (int k = 0; k < 2; k++) { Ped *p = &G.ped[k]; memset(p, 0, sizeof *p); p->on = true; p->hp = k ? 60 : 30; p->x = SX + (k ? 5.0f : 1.0f); p->z = SZ - 9; p->state = PED_IDLE; p->timer = 100; p->scale = 1; p->node = p->prev = traffic_nearest_node(&G, p->x, p->z); p->shirt = (unsigned char)(k * 4 + 1); p->pants = (unsigned char)k; p->skin = (unsigned char)k; p->hair = (unsigned char)(k + 1); }
+		Input lk = idle; lk.aim = true; run(0.5f, lk); snap(out, "k1_lock");
+		Input fl = lk; fl.lx = 1; run(0.3f, fl); run(0.4f, lk); snap(out, "k2_switched");
+		fl.lx = -1; run(0.3f, fl); run(0.4f, lk);
+		Input fire = lk; fire.gas = true; bool gotHit = false, gotKill = false;
+		for (int i = 0; i < 240 && !gotKill; i++) {
+			run(1.0f / 60, fire);
+			if (G.hitT > 0.15f && !gotHit) { gotHit = true; snap(out, "k3_hit"); }
+			if (G.killT > 0.75f) { gotKill = true; snap(out, "k4_kill"); }
+		}
+		Input sel = idle; sel.select_p = true; run(0.05f, sel); Input dpr = idle; dpr.dpx = 1; run(0.2f, dpr); snap(out, "k5_wheel");
+		game_start(&G); G.hintT = 0;
+	}
 	// combat: guns in hand, a shootout, the police, an explosion, WASTED, pickups
 	{
 		const float SX = 4 * PITCH, SZ = 4 * PITCH + 24;
@@ -315,17 +361,6 @@ int main(int argc, char **argv)
 			snprintf(nm, sizeof nm, "w%d_aim3", w); snaplook(out, nm, (float[3]){ G.p.p[0], 1.0f, G.p.p[2] }, G.p.face + PI_F * 0.75f, 3.4f, 0.3f, 42);
 			snprintf(nm, sizeof nm, "w%d_close", w); snaplook(out, nm, (float[3]){ G.p.p[0] + sinf(G.p.face) * 0.5f, 1.3f, G.p.p[2] - cosf(G.p.face) * 0.5f }, G.p.face + PI_F * 0.62f, 1.9f, 0.15f, 40);
 			snprintf(nm, sizeof nm, "w%d_aimf", w); snaplook(out, nm, (float[3]){ G.p.p[0], 1.0f, G.p.p[2] }, G.p.face + PI_F, 3.4f, 0.2f, 42);
-		}
-		{                                                                          // in cover behind a wall
-			game_start(&G); for (int i = 0; i < MAX_PED; i++) G.ped[i].on = false; for (int i = 0; i < MAX_CAR; i++) G.car[i].on = false; G.hintT = 0;
-			G.p.p[0] = SX + 12.8f - 1.6f; G.p.p[2] = 4 * PITCH + 34; G.p.face = 0; G.cam.yaw = 0;
-			Input cv = idle; cv.cover = true; run(0.8f, cv);
-			snap(out, "cv3_cover_game");
-			cv.gas = true; run(0.5f, cv); snap(out, "cv4_cover_pop"); cv.gas = false; run(0.6f, cv);
-			snaplook(out, "cv1_cover_side", (float[3]){ G.p.p[0], 0.7f, G.p.p[2] }, G.p.face - PI_F / 2, 3.2f, 0.3f, 42);
-			snaplook(out, "cv2_cover_front", (float[3]){ G.p.p[0], 0.7f, G.p.p[2] }, G.p.face + PI_F * 0.8f, 3.2f, 0.3f, 42);
-			game_start(&G); G.hintT = 0; for (int i = 0; i < MAX_PED; i++) G.ped[i].on = false; for (int i = 0; i < MAX_CAR; i++) G.car[i].on = false;
-			G.p.p[0] = SX + 3; G.p.p[2] = SZ; G.p.face = 0; G.cam.yaw = 0; G.p.has[W_SMG] = G.p.has[W_SHOTGUN] = true; G.p.ammo[W_SMG] = 60; G.p.ammo[W_SHOTGUN] = 16;
 		}
 		G.p.weapon = W_FISTS;
 		for (int k = 0; k < 8; k++) {                                          // a jab and a cross, frame by frame
@@ -377,6 +412,18 @@ int main(int argc, char **argv)
 	snapfree(out, "b5_wheel_close", PIER_X + 45.0f, 5.0f, 250.0f, DEG(-75), 0.2f, 60);
 	{ float ex = 5 * PITCH, ez = 2 * PITCH, dx = PATCH[0].x - ex, dz = PATCH[0].z - ez; snapfree(out, "h1_sign", ex, 3.0f, ez, atan2f(dx, -dz), atan2f(PATCH[0].y + 15.0f, sqrtf(dx * dx + dz * dz)) - 0.02f, 64); printf("sign at %.0f %.0f %.0f, distance %.0f\n", PATCH[0].x, PATCH[0].y, PATCH[0].z, sqrtf(dx * dx + dz * dz)); }
 	{ float ex = 64.0f, ez = 2 * PITCH, dx = PATCH[1].x - ex, dz = PATCH[1].z - ez; snapfree(out, "h2_obs", ex, 3.0f, ez, atan2f(dx, -dz), atan2f(PATCH[1].y + 8.0f, sqrtf(dx * dx + dz * dz)), 58); }
+	// the landmarks
+	snaplook(out, "l1_capitol", (float[3]){ 130.0f, 14.0f, -52.0f }, DEG(160), 70.0f, 8.0f, 55);
+	snaplook(out, "l2_dodger", (float[3]){ CITY * 0.82f, 10.0f, -100.0f }, DEG(190), 150.0f, 60.0f, 60);
+	snaplook(out, "l2b_dodger_air", (float[3]){ CITY * 0.82f, 4.0f, -100.0f }, DEG(150), 45.0f, 38.0f, 62);
+	snaplook(out, "l3_theme", (float[3]){ CITY * 0.38f, 18.0f, CITY + 95.0f }, DEG(10), 85.0f, 8.0f, 55);
+	snaplook(out, "l4_venice", (float[3]){ -5.0f, 5.5f, 3 * PITCH }, DEG(75), 38.0f, 1.0f, 60);
+	snaplook(out, "l4b_venice_far", (float[3]){ -5.0f, 5.5f, 3 * PITCH }, DEG(80), 110.0f, 4.0f, 50);
+	snaplook(out, "l5_cityhall", (float[3]){ 6.5f * PITCH, 60.0f, 2.5f * PITCH }, DEG(215), 140.0f, 5.0f, 55);
+	{ const Box *b = &G.w.box[G.w.bfirst[5][3]]; for (int k = 0; k < G.w.bcount[5][3]; k++) if (G.w.box[G.w.bfirst[5][3] + k].y1 > b->y1 && G.w.box[G.w.bfirst[5][3] + k].kind == BK_BLDG) b = &G.w.box[G.w.bfirst[5][3] + k];
+	  snaplook(out, "l6_donut", (float[3]){ 0.5f * (b->x0 + b->x1), b->y1 + 4.5f, 0.5f * (b->z0 + b->z1) }, DEG(100), 28.0f, 4.0f, 55); }
+	snaplook(out, "l7_pad", (float[3]){ PADS[0][0], 0.0f, PADS[0][1] }, DEG(200), 26.0f, 18.0f, 60);
+	snaplook(out, "l8_pad_beach", (float[3]){ PADS[1][0], 0.0f, PADS[1][1] }, DEG(250), 30.0f, 14.0f, 60);
 	snapfree(out, "f1_freeway", CITY - 6.0f, 3.0f, 230.0f, DEG(92), 0.12f, 66);
 	snapfree(out, "d1_downtown", 4.8f * PITCH, 4.0f, 3.4f * PITCH, DEG(20), 0.16f, 66);
 	snapfree(out, "d2_street", 4 * PITCH + 3, 2.2f, 4 * PITCH + 40, DEG(0), 0.02f, 66);

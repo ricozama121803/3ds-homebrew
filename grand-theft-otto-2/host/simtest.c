@@ -30,14 +30,15 @@ int main(void)
 		if (before >= 0 && G.p.car < 0) exits++;
 		float vals[] = { G.p.p[0], G.p.p[2], G.cam.eye[0], G.cam.eye[1], G.cam.eye[2], G.cam.yaw };
 		for (int i = 0; i < 6; i++) if (!isfinite(vals[i])) { printf("frame %d: NaN in player/camera\n", frame); return 1; }
-		if (G.p.p[0] < 0 || G.p.p[0] > CITY || G.p.p[2] < 0 || G.p.p[2] > CITY) { printf("frame %d: player left the city (%.1f, %.1f)\n", frame, G.p.p[0], G.p.p[2]); fails++; }
+		bool flying = G.p.car >= 0 && car_flying(&G.car[G.p.car]);                 // a helicopter pilot may leave the city and fly over buildings
+		if (!flying && (G.p.p[0] < 0 || G.p.p[0] > CITY || G.p.p[2] < 0 || G.p.p[2] > CITY)) { printf("frame %d: player left the city (%.1f, %.1f)\n", frame, G.p.p[0], G.p.p[2]); fails++; }
 		for (int i = 0; i < MAX_CAR; i++) {
 			Car *c = &G.car[i]; if (!c->on) continue;
 			if (!isfinite(c->x) || !isfinite(c->z) || !isfinite(c->yaw)) { printf("frame %d: car %d NaN\n", frame, i); return 1; }
 			float cx[3], cz[3]; car_circles(c, cx, cz);
-			for (int k = 0; k < 3; k++) if (inside(cx[k], cz[k], CAR_R * 0.8f)) { if (fails < 10) printf("frame %d: car %d inside a building (%.1f, %.1f)\n", frame, i, cx[k], cz[k]); fails++; break; }
+			for (int k = 0; k < 3 && c->y < 0.5f; k++) if (inside(cx[k], cz[k], car_radius(c->kind) * 0.8f)) { if (fails < 10) printf("frame %d: car %d inside a building (%.1f, %.1f)\n", frame, i, cx[k], cz[k]); fails++; break; }
 		}
-		if (G.p.car < 0 && inside(G.p.p[0], G.p.p[2], 0.3f)) { if (fails < 10) printf("frame %d: Otto inside a building (%.1f, %.1f)\n", frame, G.p.p[0], G.p.p[2]); fails++; }
+		if (G.p.car < 0 && !flying && inside(G.p.p[0], G.p.p[2], 0.3f)) { if (fails < 10) printf("frame %d: Otto inside a building (%.1f, %.1f)\n", frame, G.p.p[0], G.p.p[2]); fails++; }
 	}
 	printf("entered %d times, exited %d times, failures %d\n", enters, exits, fails);
 	return fails ? 1 : 0;
