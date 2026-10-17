@@ -1,0 +1,41 @@
+[
+  {
+    "clip": "walk",
+    "source": "16_15",
+    "frames": [
+      145,
+      283
+    ],
+    "frame_index": "zero-based including calibration frame",
+    "duration": 1.1499954000000001,
+    "stride_model_units": 1.218583433161136,
+    "source_speed_model_units": 1.0596420065342314,
+    "sha256": "7459cd4be169477b4e2c629075a9cde9436e37a87cdf4e774574400f4ec942d8"
+  },
+  {
+    "clip": "jog",
+    "source": "16_35",
+    "frames": [
+      15,
+      110
+    ],
+    "frame_index": "zero-based including calibration frame",
+    "duration": 0.7916635,
+    "stride_model_units": 2.125858304260843,
+    "source_speed_model_units": 2.6853054413407254,
+    "sha256": "d20d54a9ccebd7aaf4aa6c4d7662c4905d47009401895de216a914edecf287be"
+  },
+  {
+    "clip": "sprint",
+    "source": "09_01",
+    "frames": [
+      6,
+      92
+    ],
+    "frame_index": "zero-based including calibration frame",
+    "duration": 0.7166638,
+    "stride_model_units": 2.425154532140346,
+    "source_speed_model_units": 3.3839500922752705,
+    "sha256": "90641ccca814b9d8d59f63576a548bb5612477364462d142a9f741268fbe3b78"
+  }
+]
