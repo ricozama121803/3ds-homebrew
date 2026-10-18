@@ -38,7 +38,7 @@ int main(void)
 			float cx[3], cz[3]; car_circles(c, cx, cz);
 			for (int k = 0; k < 3 && c->y < 0.5f; k++) if (inside(cx[k], cz[k], car_radius(c->kind) * 0.8f)) { if (fails < 10) printf("frame %d: car %d inside a building (%.1f, %.1f)\n", frame, i, cx[k], cz[k]); fails++; break; }
 		}
-		if (G.p.car < 0 && !flying && inside(G.p.p[0], G.p.p[2], 0.3f)) { if (fails < 10) printf("frame %d: Otto inside a building (%.1f, %.1f)\n", frame, G.p.p[0], G.p.p[2]); fails++; }
+		if (G.p.car < 0 && !flying && G.p.p[1] < 0.5f /* a roof after a parachute landing is fine */ && inside(G.p.p[0], G.p.p[2], 0.3f)) { if (fails < 10) printf("frame %d: Otto inside a building (%.1f, %.1f) y %.2f airT %.2f chute %.2f car %d ps %d region %d speed %.1f\n", frame, G.p.p[0], G.p.p[2], G.p.p[1], G.p.airT, G.p.chute, G.p.car, G.p.ps, G.region, G.p.speed); fails++; }
 	}
 	printf("entered %d times, exited %d times, failures %d\n", enters, exits, fails);
 	return fails ? 1 : 0;

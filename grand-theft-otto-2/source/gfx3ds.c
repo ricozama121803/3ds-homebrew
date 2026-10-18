@@ -17,7 +17,9 @@ static bool s_ok;
 static const float IOD = 0.18f, FOCUS = 9.0f;
 #define FOG_START 60.0f
 #define FOG_END   1100.0f
-#define HAZE_RGBA (0xFF000000u | ((u32)(0.80f * 255) << 0) | ((u32)(0.88f * 255) << 8) | ((u32)(0.97f * 255) << 16))     // 0xAABBGGRR
+static u32 s_haze = 0xFF000000u | ((u32)(0.80f * 255) << 0) | ((u32)(0.88f * 255) << 8) | ((u32)(0.97f * 255) << 16);     // 0xAABBGGRR: the haze colour of the region
+#define HAZE_RGBA s_haze
+static void set_haze(const float h[3]) { s_haze = 0xFF000000u | ((u32)(h[0] * 255) << 0) | ((u32)(h[1] * 255) << 8) | ((u32)(h[2] * 255) << 16); }
 
 bool gfx_init(const Game *g)
 {
@@ -49,7 +51,23 @@ bool gfx_init(const Game *g)
 	if (!s_stat || !s_dyn[0] || !s_dyn[1]) return false;
 	scene_build_static(g, &s_scene, s_stat);
 	GSPGPU_FlushDataCache(s_stat, sizeof(Vtx) * (size_t)s_statCount);
+	set_haze(REGIONS[g->region].haze);
 	s_ok = true;
+	return true;
+}
+
+// the game moved to another region: build its static scene into a fresh buffer (called while the screen is black)
+bool gfx_reload(const Game *g)
+{
+	C3D_FrameSync();
+	int total = scene_build_static(g, &s_scene, NULL);
+	Vtx *nb = (Vtx *)linearAlloc(sizeof(Vtx) * (size_t)total);
+	if (!nb) return false;
+	scene_build_static(g, &s_scene, nb);
+	GSPGPU_FlushDataCache(nb, sizeof(Vtx) * (size_t)total);
+	linearFree(s_stat);
+	s_stat = nb; s_statCount = total;
+	set_haze(REGIONS[g->region].haze);
 	return true;
 }
 

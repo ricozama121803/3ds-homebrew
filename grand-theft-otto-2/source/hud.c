@@ -54,11 +54,11 @@ static void help_page(void)
 	T("CONTROLS", 160, 2, 0.5f, ORANGE, AL_C);
 	static const char *rows[][2] = {
 		{ "On foot", "" }, { "Circle Pad", "walk / run" }, { "B B B ...", "sprint; keep tapping for faster" }, { "R", "shoot (auto-aims) / punch" }, { "L  (hold)", "aim; lock on. Circle Pad: switch target" },
-		{ "Y", "take / leave cover (by a wall or car)" }, { "SELECT", "weapon wheel (Circle Pad / D-pad)" }, { "X", "get into the nearest vehicle" },
-		{ "Car / motorcycle", "" }, { "Circle Pad", "steer" }, { "R  /  B", "gas  /  brake, reverse" }, { "A  or  L", "handbrake (drift)" }, { "X", "get out (any speed)" },
+		{ "Y", "take / leave cover (by a wall or car)" }, { "D-pad up", "weapon wheel (pick with Circle Pad / D-pad)" }, { "X", "get into the nearest vehicle" },
+		{ "Car / motorcycle", "" }, { "Circle Pad", "steer (bike: pad back + R = wheelie)" }, { "R  /  B", "gas  /  brake, reverse" }, { "A  or  L", "handbrake (drift)" }, { "X", "get out (any speed)" },
 		{ "Helicopter", "" }, { "Circle Pad", "forward / back, turn" }, { "R", "climb" }, { "B  or  A  or  L", "descend (X to get out on the ground)" },
-		{ "Plane (airport)", "R throttle, B brake, pad: bank / pitch; X jump out = parachute" },
-		{ "Camera", "" }, { "C-stick / drag", "turn / tilt the camera" }, { "D-pad L / R / down", "hold: look; 2x tap: turn. Up (aiming): first person" }, { "START", "pause: A respawn, SELECT restart" } };
+		{ "Plane (airport)", "R throttle, B brake, pad: bank / pitch; X jump out, X again = parachute" },
+		{ "Camera", "" }, { "C-stick / drag", "turn / tilt the camera" }, { "D-pad L / R / down", "hold: look; 2x tap: turn. Up: weapon wheel" }, { "START", "pause: A respawn, SELECT restart" } };
 	for (int i = 0; i < 22; i++) {
 		bool head = rows[i][1][0] == 0;
 		float y = 15 + i * 9.9f;
@@ -87,6 +87,22 @@ static void speed_lines(const Game *g)
 
 // a thick line between two points
 static void seg(float x0, float y0, float x1, float y1, float th, u32 col) { C2D_DrawLine(x0, y0, col, x1, y1, col, th, 0); }
+
+// the infinity sign for unlimited ammo, drawn as a figure of eight on its side (the console font has no such glyph)
+static void T_ammo(const char *s, float x, float y, float sc, u32 col, int al)
+{
+	if (strcmp(s, "inf") != 0) { T(s, x, y, sc, col, al); return; }
+	float w = sc * 34.0f, cx = al == AL_C ? x : al == AL_R ? x - w * 0.5f : x + w * 0.5f, cy = y + sc * 14.0f, th = fmaxf(1.4f, sc * 3.6f);
+	for (int pass = 0; pass < 2; pass++) {
+		u32 c = pass ? col : RGBA(0, 0, 0, 170); float o = pass ? 0.0f : 1.0f;
+		float px = 0, py = 0;
+		for (int i = 0; i <= 16; i++) {
+			float t = i * 2 * PI_F / 16, d = 1.0f + sinf(t) * sinf(t), x1 = cx + o + w * 0.5f * cosf(t) / d, y1 = cy + o + w * 0.5f * sinf(t) * cosf(t) / d * 1.1f;
+			if (i) seg(px, py, x1, y1, th, c);
+			px = x1; py = y1;
+		}
+	}
+}
 
 // the crosshair: four ticks around a gap; locked on, it closes in and turns red. Hit marker: white diagonal ticks that flick outward. Kill marker: a big red cross.
 static void crosshair(const Game *g, float cx, float cy, bool locked)
@@ -121,17 +137,17 @@ static void weapon_wheel(const Game *g)
 		panel(x - 2, y - 2, 76, 38, hot ? RGBA(255, 220, 120, 255) : RGBA(0, 0, 0, 160));
 		panel(x, y, 72, 34, sel ? RGBA(210, 100, 24, 255) : has ? RGBA(40, 48, 72, 255) : RGBA(26, 30, 40, 255));
 		T(WPN[i].name, x + 36, y + 2, 0.5f, has ? WHITE : RGBA(255, 255, 255, 90), AL_C);
-		if (!weapon_melee(i)) T(TEST_LOADOUT ? "inf" : "", x + 36, y + 18, 0.4f, GOLD, AL_C);
+		if (!weapon_melee(i)) T_ammo(TEST_LOADOUT ? "inf" : "", x + 36, y + 18, 0.4f, GOLD, AL_C);
 	}
 	T("Circle Pad / D-pad", 200, 106, 0.32f, RGBA(255, 255, 255, 170), AL_C);
-	T("SELECT: close", 200, 118, 0.32f, RGBA(255, 255, 255, 170), AL_C);
+	T("A / B / SELECT: close", 200, 118, 0.32f, RGBA(255, 255, 255, 170), AL_C);
 }
 
-// a discreet compass strip under the stars: the heading the view points along (north = up the map)
+// a discreet compass strip at the very top, centred: the heading the view points along (north = up the map)
 static void compass(const Game *g)
 {
 	float heading = g->cam.yaw + g->cam.look;
-	const float cx = 200.0f, y = 29.0f, span = DEG(55), px = 78.0f;
+	const float cx = 200.0f, y = 3.0f, span = DEG(55), px = 78.0f;
 	static const char *names[8] = { "N", "NE", "E", "SE", "S", "SW", "W", "NW" };
 	panel(cx - px - 4, y - 1, 2 * px + 8, 14, RGBA(0, 0, 0, 55));
 	for (int k = 0; k < 24; k++) {
@@ -175,20 +191,17 @@ void hud_top(const Game *g, const Scene *s)
 		if (!shown && !weapon_melee(p->weapon) && (p->aimT > 0.35f || g->hitT > 0 || g->killT > 0)) crosshair(g, 200, 120, false);
 	}
 	// health, armour
-	panel(0, 0, 150, 38, RGBA(0, 0, 0, 90));
-	bar(8, 6, 120, 9, p->hp / PLAYER_MAX_HP, p->hp < 45 ? RGBA(235, 50, 40, 255) : RGBA(210, 60, 60, 255), RGBA(70, 20, 20, 255));
-	T("HP", 132, 2, 0.32f, RGBA(255, 255, 255, 200), AL_L);
-	bar(8, 20, 120, 7, p->armor / 100.0f, RGBA(70, 130, 235, 255), RGBA(20, 30, 60, 255));
-	T("AR", 132, 14, 0.32f, RGBA(255, 255, 255, 200), AL_L);
-	// cash
-	snprintf(buf, sizeof buf, "$%d", p->cash);
-	T(buf, 394, 3, 0.75f, GOLD, AL_R);
+	panel(0, 0, 76, 17, RGBA(0, 0, 0, 60));
+	bar(5, 4, 56, 3.5f, p->hp / PLAYER_MAX_HP, p->hp < 45 ? RGBA(235, 50, 40, 255) : RGBA(210, 60, 60, 255), RGBA(70, 20, 20, 200));
+	T("HP", 65, 0, 0.22f, RGBA(255, 255, 255, 150), AL_L);
+	bar(5, 10, 56, 2.5f, p->armor / 100.0f, RGBA(70, 130, 235, 255), RGBA(20, 30, 60, 200));
+	T("AR", 65, 6, 0.22f, RGBA(255, 255, 255, 150), AL_L);
 	// wanted stars
 	bool blink = g->starFlash > 0 || (g->stars > 0 && g->unseenT < 0.5f && ((int)(g->time * 3.0f) & 1));
 	for (int i = 0; i < 5; i++) {
 		bool on = i < g->stars;
 		u32 col = on ? (blink ? RGBA(255, 255, 255, 255) : RGBA(255, 210, 40, 255)) : RGBA(255, 255, 255, 60);
-		star(200 + (i - 2) * 22, 14, on ? 9.0f : 7.0f, col);
+		star(324 + i * 17, 11, on ? 7.5f : 5.5f, col);
 	}
 		compass(g);
 	// weapon and ammo
@@ -196,8 +209,8 @@ void hud_top(const Game *g, const Scene *s)
 		const WeaponDef *w = &WPN[p->weapon];
 		panel(0, 206, 120, 34, RGBA(0, 0, 0, 100));
 		T(w->name, 8, 208, 0.5f, WHITE, AL_L);
-		if (!weapon_melee(p->weapon)) { ammo_text(buf, sizeof buf, p->ammo[p->weapon]); T(buf, 112, 208, 0.5f, p->ammo[p->weapon] < 6 ? RGBA(255, 90, 70, 255) : GOLD, AL_R); }
-		else T("SELECT: weapons", 8, 224, 0.3f, RGBA(255, 255, 255, 150), AL_L);
+		if (!weapon_melee(p->weapon)) { ammo_text(buf, sizeof buf, p->ammo[p->weapon]); T_ammo(buf, 112, 208, 0.5f, p->ammo[p->weapon] < 6 ? RGBA(255, 90, 70, 255) : GOLD, AL_R); }
+		else T("D-pad up: weapons", 8, 224, 0.3f, RGBA(255, 255, 255, 150), AL_L);
 	}
 	// driving: speed and car health
 	if (p->car >= 0) {
@@ -212,7 +225,7 @@ void hud_top(const Game *g, const Scene *s)
 		bar(306, 232, 88, 4, c->hp / 100.0f, c->hp < 30 ? RGBA(255, 120, 40, 255) : RGBA(120, 220, 120, 255), RGBA(40, 40, 40, 255));
 	} else if (p->cover && p->ps == PS_ALIVE) {
 		T("Y  leave cover      L / R  lean out and aim", 200, 190, 0.45f, GOLD, AL_C);
-	} else if (game_nearest_car(g, p->p[0], p->p[2], 3.4f) >= 0 && !g->paused && p->ps == PS_ALIVE) {
+	} else if (p->p[1] < 1.0f && game_nearest_car(g, p->p[0], p->p[2], 3.4f) >= 0 && !g->paused && p->ps == PS_ALIVE) {
 		T("X   get in", 250, 190, 0.55f, GOLD, AL_C);
 	}
 	if (p->car < 0 && !p->cover && p->ps == PS_ALIVE && !g->paused && !g->wheel) {
@@ -223,7 +236,13 @@ void hud_top(const Game *g, const Scene *s)
 	}
 	if (p->car < 0 && p->airT > 0.05f && p->ps == PS_ALIVE) {                 // falling or under the parachute
 		snprintf(buf, sizeof buf, "ALT %d m", (int)(p->p[1] + 0.5f)); T(buf, 394, 190, 0.5f, RGBA(150, 220, 255, 255), AL_R);
-		T(p->chute > 0.3f ? "parachute open: steer with the circle pad" : "free fall", 394, 206, 0.32f, RGBA(255, 255, 255, 190), AL_R);
+		if (p->chute > 0.3f) T("parachute open: steer with the circle pad", 394, 206, 0.32f, RGBA(255, 255, 255, 190), AL_R);
+		else if (p->p[1] > 5.0f) {                                                                // the big flashing instruction at the top
+			bool on = ((int)(g->time * 3.0f) & 1) != 0;
+			panel(40, 52, 320, 44, RGBA(0, 0, 0, 120));
+			T("PRESS  X  TO OPEN", 200, 54, 0.75f, on ? RGBA(255, 220, 90, 255) : WHITE, AL_C);
+			T("YOUR PARACHUTE", 200, 76, 0.75f, on ? RGBA(255, 220, 90, 255) : WHITE, AL_C);
+		}
 	}
 	// arrest meter
 	if (p->arrestT > 0.05f && p->ps == PS_ALIVE) {
@@ -237,7 +256,7 @@ void hud_top(const Game *g, const Scene *s)
 		float a = g->hintT > 1 ? 255 : g->hintT * 255;
 		float t = 9.0f - g->hintT;
 		if (t < 4.0f) T("GRAND THEFT OTTO II", 200, 40, 0.9f, with_alpha(ORANGE, a), AL_C);
-		T("R shoot   L aim   Y cover   SELECT weapons   X get in   B B B sprint", 200, 70, 0.36f, with_alpha(WHITE, a * 0.85f), AL_C);
+		T("R shoot   L aim   Y cover   D-pad up weapons   X get in   B B B sprint", 200, 70, 0.36f, with_alpha(WHITE, a * 0.85f), AL_C);
 	}
 	// WASTED / BUSTED
 	if (p->ps != PS_ALIVE) {
@@ -246,7 +265,14 @@ void hud_top(const Game *g, const Scene *s)
 		bool w = p->ps == PS_WASTED;
 		T(w ? "WASTED" : "BUSTED", 200, 78, 1.8f * (1.3f - 0.3f * k), w ? RGBA(220, 30, 30, (int)(255 * k)) : RGBA(80, 130, 255, (int)(255 * k)), AL_C);
 	}
+	if (g->bannerT > 0 && g->fade < 0.5f) {                                    // the name of the region just entered
+		float a = fminf(1.0f, g->bannerT / 0.8f) * 255, k = fminf(1.0f, (3.2f - g->bannerT) / 0.4f);
+		const char *nm = REGIONS[g->region].name;
+		T(nm, 200, 52 - 6 * (1 - k), 0.8f, with_alpha(ORANGE, a * k), AL_C);
+		T("welcome to", 200, 42, 0.32f, RGBA(255, 255, 255, (int)(a * k * 0.7f)), AL_C);
+	}
 	if (g->wheel) weapon_wheel(g);
+	if (g->fade > 0.003f) panel(0, 0, 400, 240, RGBA(0, 0, 0, (int)(255 * fminf(1.0f, g->fade))));      // the fade between regions
 	if (g->paused) {
 		panel(0, 0, 400, 240, RGBA(0, 0, 0, 140));
 		T("PAUSED", 200, 30, 1.0f, WHITE, AL_C);
@@ -265,24 +291,57 @@ void hud_top(const Game *g, const Scene *s)
 // ---- bottom screen: the city map and weapon buttons -------------------------------------------------------------------------------------------
 #define MAP_X 6.0f
 #define MAP_Y 6.0f
-#define MAP_X0 BEACH_X                                    // the map shows the beach strip too
-#define MAP_S (232.0f / (CITY - MAP_X0))
+static float MAP_X0 = BEACH_X, MAP_S = 232.0f / (CITY - BEACH_X);        // the city's map shows the beach strip too; the other regions' maps are the grid only
 
 static void map_pt(float wx, float wz, float *x, float *y) { *x = MAP_X + clampf(wx - MAP_X0, 0, CITY - MAP_X0) * MAP_S; *y = MAP_Y + wz * MAP_S; }
 
+// the world map: the towns as tiles joined by their roads; the one you are in is outlined, the picked one is yellow
+static void world_map(const Game *g)
+{
+	panel(MAP_X - 3, MAP_Y - 3, 232 + 6, 205 + 6, RGBA(8, 20, 40, 255));
+	panel(MAP_X, MAP_Y, 232, 205, RGBA(30, 52, 84, 255));
+	T("WORLD", MAP_X + 116, MAP_Y + 1, 0.4f, RGBA(255, 255, 255, 200), AL_C);
+	{ float x, y, w, h, x2, y2, w2, h2; world_tile(REG_CITY, &x, &y, &w, &h); world_tile(REG_HILLS, &x2, &y2, &w2, &h2); panel(x + w, y + h / 2 - 3, x2 - x - w, 6, RGBA(90, 90, 96, 255)); panel(x + w, y + h / 2 - 0.5f, x2 - x - w, 1, RGBA(230, 190, 40, 255));
+	  world_tile(REG_AIRPORT, &x2, &y2, &w2, &h2); panel(x + w / 2 - 3, y + h, 6, y2 - y - h, RGBA(90, 90, 96, 255)); panel(x + w / 2 - 0.5f, y + h, 1, y2 - y - h, RGBA(230, 190, 40, 255)); }
+	static const u32 COL[REG_COUNT] = { 0xFFB08A5Au, 0xFF9C9488u, 0xFF4F8FD8u };
+	static const char *TAG[REG_COUNT] = { "city, beach, towers", "runways, planes", "desert suburb" };
+	for (int r = 0; r < REG_COUNT; r++) {
+		float x, y, w, h; world_tile(r, &x, &y, &w, &h);
+		bool here = r == g->region, sel = r == g->mapSel;
+		panel(x - 2, y - 2, w + 4, h + 4, sel ? RGBA(255, 220, 90, 255) : here ? RGBA(255, 255, 255, 255) : RGBA(0, 0, 0, 200));
+		panel(x, y, w, h, COL[r] | 0xFF000000u);
+		for (int k = 1; k < 4; k++) { panel(x + w * k / 4.0f, y, 1, h, RGBA(0, 0, 0, 40)); panel(x, y + h * k / 4.0f, w, 1, RGBA(0, 0, 0, 40)); }
+		static const char *SHORT[REG_COUNT] = { "LOS OTTO", "AIRPORT", "HILLS" };
+		T(SHORT[r], x + w / 2, y + 3, 0.36f, WHITE, AL_C);
+		T(TAG[r], x + w / 2, y + h - 12, 0.22f, RGBA(255, 255, 255, 215), AL_C);
+		if (here) {
+			float px = x + clampf(g->p.p[0] / CITY, 0, 1) * w, py = y + clampf(g->p.p[2] / CITY, 0, 1) * h;
+			tri_dir(px, py, 5.0f, g->cam.yaw, RGBA(240, 100, 20, 255)); tri_dir(px, py, 2.8f, g->cam.yaw, RGBA(255, 255, 255, 255));
+			T("you are here", x + w / 2, y + h / 2 - 3, 0.26f, RGBA(255, 255, 255, 235), AL_C);
+		}
+	}
+	T(g->mapSel >= 0 ? "TRAVEL to the picked town" : "tap a town", MAP_X + 116, MAP_Y + 190, 0.3f, RGBA(255, 255, 255, 190), AL_C);
+}
+
 static void city_map(const Game *g)
 {
+	if (g->mapMode == 1) { world_map(g); return; }
+	MAP_X0 = g->region == REG_CITY ? BEACH_X : 0.0f; MAP_S = (g->region == REG_CITY ? 232.0f : 205.0f) / (CITY - MAP_X0);
 	float side = CITY * MAP_S, wide = (CITY - MAP_X0) * MAP_S;
 	panel(MAP_X - 3, MAP_Y - 3, wide + 6, side + 6, RGBA(8, 20, 40, 255));
 	panel(MAP_X, MAP_Y, wide, side, RGBA(70, 72, 80, 255));
+	if (g->region == REG_CITY) {
 	{ float sx0, sy0; map_pt(MAP_X0, 0, &sx0, &sy0); float ex, ey; map_pt(-14.0f, 0, &ex, &ey); panel(sx0, sy0, ex - sx0, side, RGBA(214, 192, 142, 255)); }                // sand
 	{ float ex, ey, px, py; map_pt(-14.0f, 0, &ex, &ey); map_pt(0, 0, &px, &py); panel(ex, ey, px - ex, side, RGBA(150, 146, 140, 255)); }                                        // boardwalk
 	{ float px, py; map_pt(MAP_X0, PIER_Z0, &px, &py); panel(MAP_X, py, 6, (PIER_Z1 - PIER_Z0) * MAP_S, RGBA(150, 110, 70, 255)); }                                          // the pier heads off to the west
+	}
 	const World *w = &g->w;
 	for (int j = 0; j < NB; j++) for (int i = 0; i < NB; i++) {
 		float x0 = (i + 0.15f) * PITCH, z0 = (j + 0.15f) * PITCH, sz = 0.7f * PITCH;
 		float mx, my; map_pt(x0, z0, &mx, &my);
 		if (w->park[j][i]) { panel(mx, my, sz * MAP_S, sz * MAP_S, RGBA(52, 120, 76, 255)); continue; }
+		if (w->lot[j][i]) { panel(mx, my, sz * MAP_S, sz * MAP_S, RGBA(96, 98, 108, 255)); continue; }
+		if (w->field[j][i]) { panel(mx, my, sz * MAP_S, sz * MAP_S, RGBA(212, 160, 108, 255)); continue; }
 		float top = 0;
 		for (int k = w->bfirst[j][i]; k < w->bfirst[j][i] + w->bcount[j][i]; k++) if (w->box[k].y1 > top) top = w->box[k].y1;
 		float t = clampf(top / 100.0f, 0, 1);
@@ -294,7 +353,7 @@ static void city_map(const Game *g)
 		map_pt(HOSPITAL_X, HOSPITAL_Z, &x, &y); panel(x - 4, y - 4, 8, 8, RGBA(250, 250, 250, 255)); panel(x - 3, y - 1, 6, 2, RGBA(220, 30, 30, 255)); panel(x - 1, y - 3, 2, 6, RGBA(220, 30, 30, 255));
 		map_pt(POLICE_X, POLICE_Z, &x, &y); panel(x - 4, y - 4, 8, 8, RGBA(40, 80, 220, 255)); star(x, y, 3.2f, RGBA(255, 255, 255, 255));
 		map_pt(SPRAY_X, SPRAY_Z, &x, &y); panel(x - 3, y - 3, 6, 6, RGBA(190, 70, 240, 255));
-		for (int i = 0; i < N_PADS; i++) { map_pt(PADS[i][0], PADS[i][1], &x, &y); panel(x - 3, y - 3, 6, 6, RGBA(60, 70, 90, 255)); panel(x - 2, y - 0.5f, 4, 1, RGBA(255, 255, 255, 255)); panel(x - 2, y - 2, 1, 4, RGBA(255, 255, 255, 255)); panel(x + 1, y - 2, 1, 4, RGBA(255, 255, 255, 255)); }
+		for (int i = 0; i < g->npad; i++) { map_pt(g->pad[i][0], g->pad[i][1], &x, &y); panel(x - 3, y - 3, 6, 6, RGBA(60, 70, 90, 255)); panel(x - 2, y - 0.5f, 4, 1, RGBA(255, 255, 255, 255)); panel(x - 2, y - 2, 1, 4, RGBA(255, 255, 255, 255)); panel(x + 1, y - 2, 1, 4, RGBA(255, 255, 255, 255)); }
 	}
 	for (int i = 0; i < MAX_PICKUP; i++) {
 		const Pickup *k = &g->pick[i];
@@ -331,7 +390,7 @@ static void weapon_buttons(const Game *g)
 		bool has = weapon_usable(&g->p, i), sel = g->p.weapon == i;
 		panel(x, y, 36, 22, sel ? RGBA(200, 90, 20, 255) : has ? RGBA(46, 54, 78, 255) : RGBA(26, 30, 40, 255));
 		T(short_[i], x + 18, y, 0.3f, has ? WHITE : RGBA(255, 255, 255, 80), AL_C);
-		if (!weapon_melee(i)) { ammo_text(buf, sizeof buf, g->p.ammo[i]); T(buf, x + 18, y + 10, 0.3f, has ? GOLD : RGBA(255, 255, 255, 70), AL_C); }
+		if (!weapon_melee(i)) { ammo_text(buf, sizeof buf, g->p.ammo[i]); T_ammo(buf, x + 18, y + 10, 0.3f, has ? GOLD : RGBA(255, 255, 255, 70), AL_C); }
 	}
 }
 
@@ -342,6 +401,16 @@ void hud_bottom(const Game *g)
 	char buf[48];
 	city_map(g);
 	weapon_buttons(g);
+	{                                                                       // the map buttons: WORLD / TOWN, and TRAVEL once a town is picked
+		bool world = g->mapMode == 1;
+		panel(MAP_BTN_X, MAP_TOGGLE_Y, MAP_BTN_W, MAP_BTN_H, RGBA(46, 54, 78, 255)); panel(MAP_BTN_X, MAP_TOGGLE_Y, MAP_BTN_W, 1, RGBA(255, 255, 255, 90));
+		T(world ? "TOWN" : "WORLD", MAP_BTN_X + MAP_BTN_W / 2, MAP_TOGGLE_Y + 3, 0.4f, WHITE, AL_C);
+		if (world && g->mapSel >= 0) {
+			bool ok = g->stars == 0;
+			panel(MAP_BTN_X, MAP_TRAVEL_Y, MAP_BTN_W, MAP_BTN_H, ok ? RGBA(200, 90, 20, 255) : RGBA(70, 40, 40, 255));
+			T(ok ? "TRAVEL" : "wanted!", MAP_BTN_X + MAP_BTN_W / 2, MAP_TRAVEL_Y + 3, 0.4f, ok ? WHITE : RGBA(255, 140, 120, 255), AL_C);
+		}
+	}
 	float x = 246;
 	T("OTTO", x, 6, 0.6f, ORANGE, AL_L);
 	snprintf(buf, sizeof buf, "$%d", g->p.cash); T(buf, x, 26, 0.55f, GOLD, AL_L);

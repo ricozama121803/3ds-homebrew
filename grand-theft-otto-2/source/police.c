@@ -3,7 +3,7 @@
 #include "game.h"
 #include "otto_gait.h"
 
-static const float STAR_HEAT[5] = { 10.0f, 45.0f, 100.0f, 180.0f, 300.0f };       // heat that gives 1 .. 5 stars
+static const float STAR_HEAT[5] = { 20.0f, 90.0f, 220.0f, 420.0f, 700.0f };      // heat that gives 1 .. 5 stars: a long way up (a civilian killed is 28, a cop 60), and one star at a time       // heat that gives 1 .. 5 stars
 static const int FOOT_WANT[6] = { 0, 3, 5, 7, 9, 12 }, CAR_WANT[6] = { 0, 1, 2, 3, 4, 5 }, SWAT_WANT[6] = { 0, 0, 1, 2, 3, 4 };
 #define PATROL_COPS 3
 
@@ -129,6 +129,7 @@ static void cop_step(Game *g, int idx, float dt)
 		if (city_push_circle(&g->w, &px, &pz, 0.72f, n)) { p->x = px; p->z = pz; }
 		p->vx = sx / fmaxf(dt, 1e-4f); p->vz = sz / fmaxf(dt, 1e-4f);
 	} else { p->vx = p->vz = 0; }
+	{ float n2[2], qx = p->x, qz = p->z; if (city_push_circle(&g->w, &qx, &qz, 0.6f, n2)) { p->x = qx; p->z = qz; } }       // whatever happened this frame (a shove, a corner), he is never left inside a building
 	float moveYaw = atan2f(gx, -gz), faceYaw = direct && hostile ? atan2f(dx, -dz) : moveYaw;
 	if (p->speed < 0.4f && direct) faceYaw = atan2f(dx, -dz);
 	p->yaw = wrapang(p->yaw + wrapang(faceYaw - p->yaw) * fminf(1.0f, dt * 10.0f));
@@ -142,8 +143,8 @@ static void cop_step(Game *g, int idx, float dt)
 		float aimY = onFoot ? 1.1f : pl->car >= 0 ? g->car[pl->car].y + 1.4f : 1.0f;
 		float pitch = atan2f(aimY - 1.3f, fmaxf(d, 1.0f));
 		const WeaponDef *w = swat ? &WPN[W_SHOTGUN] : &WPN[W_PISTOL];
-		fire_bullet(g, 1, m, atan2f(tx + tvx * 0.15f - m[0], -(tz + tvz * 0.15f - m[2])), pitch, w, swat ? 0.7f : 0.45f);
-		p->shootCd = swat ? 1.0f + prnd(g) * 0.4f : 0.55f + prnd(g) * 0.55f; p->flashT = 0.08f;
+		fire_bullet(g, 1, m, atan2f(tx + tvx * 0.15f - m[0], -(tz + tvz * 0.15f - m[2])), pitch, w, swat ? 0.35f : 0.25f);
+		p->shootCd = swat ? 1.4f + prnd(g) * 0.5f : 0.85f + prnd(g) * 0.9f; p->flashT = 0.08f;
 		spawn_particles(g, PT_SPARK, m[0], m[1], m[2], 2, 2.0f, 0.06f, 0.15f);
 	}
 	// holding Otto
@@ -257,7 +258,8 @@ void police_update(Game *g, float dt)
 	// stars from heat
 	int s = 0;
 	for (int k = 0; k < 5; k++) if (g->heat >= STAR_HEAT[k]) s = k + 1;
-	if (s > g->stars) { g->stars = s; g->starFlash = 2.0f; }
+	if (g->starCd > 0) g->starCd -= dt;
+	if (s > g->stars && (g->stars == 0 || g->starCd <= 0)) { g->stars++; g->starFlash = 2.0f; g->starCd = 14.0f; }       // at most one more star every 14 seconds
 	if (g->starFlash > 0) g->starFlash -= dt;
 	if (g->stars == 0) {
 		if (old > 0) police_reset(g);

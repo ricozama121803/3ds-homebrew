@@ -18,6 +18,7 @@ int main(int argc, char **argv)
 	float minutes = argc > 1 ? (float)atof(argv[1]) : 10.0f;
 	game_init(&G, false);
 	if (argc > 2) { G.rng ^= (unsigned)atoi(argv[2]) * 2654435761u; game_start(&G); }
+	if (argc > 3) region_enter(&G, atoi(argv[3]));                           // soak another region
 	{   // carjacking: stop a traffic car, stand next to it and press Y
 		int ci = -1; for (int i = 0; i < MAX_CAR; i++) if (G.car[i].on && G.car[i].ai.on) { ci = i; break; }
 		Car *c = &G.car[ci]; c->ai.v = 0; c->vx = c->vz = 0;

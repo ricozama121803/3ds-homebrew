@@ -102,7 +102,9 @@ int main(void)
 		return 1;
 	}
 
-	const u32 clearBot = C2D_Color32(14, 16, 22, 255), clearTop = C2D_Color32(204, 224, 247, 255);
+	g.regionDirty = false;
+	const u32 clearBot = C2D_Color32(14, 16, 22, 255);
+	u32 clearTop = C2D_Color32(204, 224, 247, 255);
 	u64 last = svcGetSystemTick(), lastSave = last;
 	touchPosition lastTouch = { 0, 0 };
 
@@ -124,7 +126,7 @@ int main(void)
 		if (cstick) irrstCstickRead(&cs);
 		stick(cp.dx / 150.0f, cp.dy / 150.0f, &in.lx, &in.ly);                  // circle pad: move / steer
 		stick(cs.dx / 150.0f, cs.dy / 150.0f, &in.cx, &in.cy);                  // C-stick: camera
-		// the D-pad does not move the camera: left / right / down glance and turn, up toggles first-person aiming (game.c)
+		// the D-pad does not move the camera: left / right / down glance and turn, up opens the weapon wheel (game.c)
 		in.cx = in.cx > 1 ? 1 : in.cx < -1 ? -1 : in.cx; in.cy = in.cy > 1 ? 1 : in.cy < -1 ? -1 : in.cy;
 		in.gas = (held & (KEY_R | KEY_ZR)) != 0;                               // R: shoot on foot, gas in a car
 		in.hand = (held & (KEY_A | KEY_L | KEY_ZL)) != 0;                      // A or L: handbrake in a car
@@ -137,7 +139,7 @@ int main(void)
 		in.x_p = (down & KEY_Y) != 0;                                          // Y: take / leave cover (next to a wall or car), otherwise the next weapon
 		in.enter_p = (down & KEY_X) != 0;                                      // X: get in / out of a car
 		in.start_p = (down & KEY_START) != 0;
-		in.select_p = (down & KEY_SELECT) != 0;                                // SELECT: weapon wheel (restart is on the pause screen)
+		in.select_p = (down & KEY_SELECT) != 0;                                // SELECT: closes the weapon wheel (D-pad up opens it); restart is on the pause screen
 		in.up_p = (down & KEY_DUP) != 0;
 		in.down_p = (down & KEY_DDOWN) != 0;
 		if (held & KEY_TOUCH) {
@@ -168,6 +170,10 @@ int main(void)
 		hud_frame_begin();
 
 		C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
+		if (g.regionDirty) {                                                // a new region: rebuild the scene (the screen is black at this moment)
+			gfx_reload(&g); g.regionDirty = false;
+			const float *hz = REGIONS[g.region].haze; clearTop = C2D_Color32((u8)(hz[0] * 255), (u8)(hz[1] * 255), (u8)(hz[2] * 255), 255);
+		}
 		u64 t2 = svcGetSystemTick();
 		Scene *scene = gfx_begin(&g);
 		u64 t3 = svcGetSystemTick();

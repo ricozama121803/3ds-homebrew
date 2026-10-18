@@ -205,8 +205,19 @@ static void save(const char *dir, const char *name)
 	fclose(f);
 }
 
+static int built_region = 0;
+static void ensure_static(void)                                  // the static scene belongs to one region: rebuild it when the game is in another
+{
+	if (built_region == G.region) return;
+	int t = scene_build_static(&G, &S, NULL);
+	stat_buf = realloc(stat_buf, sizeof(Vtx) * (size_t)t);
+	scene_build_static(&G, &S, stat_buf);
+	built_region = G.region;
+	printf("region %d (%s): static %d triangles, %.1f MB\n", G.region, REGIONS[G.region].name, t / 3, t * 36 / 1048576.0);
+}
 static void snap(const char *dir, const char *name)
 {
+	ensure_static();
 	scene_build(&G, &S);
 	draw_scene(&S);
 	printf("%-12s opaque %5d  alpha %4d  add %4d\n", name, S.count[D_OPAQUE], S.count[D_ALPHA], S.count[D_ADD]);
@@ -225,6 +236,7 @@ static void run(float seconds, Input in)
 }
 static void snapfree(const char *dir, const char *name, float x, float y, float z, float yaw, float pitch, float fov)
 {
+	ensure_static();
 	G.cam.eye[0] = x; G.cam.eye[1] = y; G.cam.eye[2] = z; G.cam.yaw = yaw; G.cam.pitch = pitch; G.cam.fov = fov;
 	scene_build(&G, &S); draw_scene(&S);
 	printf("%-14s opaque %5d  alpha %4d\n", name, S.count[D_OPAQUE], S.count[D_ALPHA]);
@@ -393,6 +405,9 @@ int main(int argc, char **argv)
 				Input aim = idle; aim.aim = true; run(0.5f, aim); snap(out, "c3_wall_peek");
 				Input fire = aim; fire.gas = true; run(0.5f, fire); snap(out, "c4_wall_shoot");
 				run(1.5f, aim);
+				memset(G.ped, 0, sizeof G.ped);
+				G.p.p[0] = wb->x0 - 1.0f; G.p.p[2] = wb->z1 - 3.0f; G.p.face = PI_F / 2; G.cam.yaw = PI_F / 2; G.cam.manualT = 0; { Input y2 = idle; y2.x_p = true; run(0.1f, y2); }
+				Input pu = idle; pu.lx = 1; run(2.0f, pu); snap(out, "c9_wrap_start"); run(0.5f, pu); snap(out, "c9b_wrap_mid"); run(2.0f, pu); snap(out, "c9c_wrap_after");
 			}
 			game_start(&G); for (int i = 0; i < MAX_PED; i++) G.ped[i].on = false; for (int i = 0; i < MAX_CAR; i++) G.car[i].on = false; G.hintT = 0;
 			float cxp = SX + 20.0f, czp = SZ - 20.0f;
@@ -420,7 +435,7 @@ int main(int argc, char **argv)
 		run(0.5f, fire); snap(out, "x2_hit");
 		run(1.2f, fire); snap(out, "x3_aftermath");
 		// the police at 4 stars
-		game_start(&G); G.hintT = 0; G.p.p[0] = SX + 3; G.p.p[2] = SZ; G.heat = 260; G.p.armor = 100;
+		game_start(&G); G.hintT = 0; G.p.p[0] = SX + 3; G.p.p[2] = SZ; G.heat = 450; G.p.armor = 100;
 		run(20.0f, idle); snap(out, "x4_police");
 		run(14.0f, idle); snap(out, "x5_police_close");
 		// an explosion
@@ -447,7 +462,7 @@ int main(int argc, char **argv)
 		game_start(&G); G.hintT = 0;
 	}
 	// airport, street furniture, over-the-shoulder aim
-	G.hintT = 0;
+	G.hintT = 0; region_enter(&G, REG_AIRPORT);
 	const float SX = 4 * PITCH, SZ = 4 * PITCH + 24;
 	snapfree(out, "ap1_overview", 270.0f, 160.0f, CITY + 20.0f, DEG(0), -0.42f, 62);
 	snapfree(out, "ap2_gates", 250.0f, 14.0f, CITY + 245.0f, DEG(10), -0.12f, 62);
@@ -468,7 +483,7 @@ int main(int argc, char **argv)
 		{ Ped *q = &G.ped[0]; memset(q, 0, sizeof *q); q->on = true; q->hp = 600; q->x = SX + 3; q->z = SZ - 20; q->state = PED_IDLE; q->timer = 100; q->scale = 1; q->node = q->prev = traffic_nearest_node(&G, q->x, q->z); q->shirt = 3; }
 		Input sh = idle; sh.aim = true; run(1.0f, sh); snap(out, "sh1_aim_shoulder"); sh.gas = true; run(0.3f, sh); snap(out, "sh2_fire_shoulder");
 	}
-	// aiming close up, first person, a flyable airliner, the fence, spoilers
+	// aiming close up, a flyable airliner, the fence, spoilers
 	{
 		const float SX2 = 4 * PITCH, SZ2 = 4 * PITCH + 24;
 		game_start(&G); for (int i = 0; i < MAX_CAR; i++) G.car[i].on = false; for (int i = 0; i < MAX_PED; i++) G.ped[i].on = false; G.hintT = 0;
@@ -478,11 +493,8 @@ int main(int argc, char **argv)
 		G.p.weapon = W_SMG; run(0.6f, a1); snap(out, "ai2_close_smg");
 		G.p.weapon = W_SNIPER; run(0.6f, a1); snap(out, "ai2b_close_sniper");
 		G.p.weapon = W_PISTOL; run(0.6f, a1); snap(out, "ai2c_close_pistol");
-		G.p.weapon = W_RIFLE; Input u1 = a1; u1.up_p = true; run(0.05f, u1); run(0.6f, a1); snap(out, "ai3_fps");
-		Input f1 = a1; f1.gas = true; run(0.15f, f1); snap(out, "ai4_fps_fire");
-		G.p.weapon = W_RPG; run(0.6f, a1); snap(out, "ai4b_fps_rpg");
 		run(0.1f, idle);
-		game_start(&G); for (int i = 0; i < MAX_PED; i++) G.ped[i].on = false; G.hintT = 0;
+		game_start(&G); region_enter(&G, REG_AIRPORT); for (int i = 0; i < MAX_PED; i++) G.ped[i].on = false; G.hintT = 0;
 		int pi = -1; for (int i = 0; i < MAX_CAR; i++) if (G.car[i].on && G.car[i].kind == CAR_PLANE) { pi = i; break; }
 		if (pi >= 0) {
 			G.p.p[0] = G.car[pi].x; G.p.p[2] = G.car[pi].z + 5.5f; { Input x = idle; x.enter_p = true; run(0.05f, x); }
@@ -503,11 +515,12 @@ int main(int argc, char **argv)
 		int h = -1; for (int i = 0; i < MAX_CAR; i++) if (G.car[i].on && G.car[i].kind == CAR_HELI) { h = i; break; }
 		G.p.p[0] = G.car[h].x + 4.0f; G.p.p[2] = G.car[h].z; { Input x = idle; x.enter_p = true; run(0.05f, x); }
 		Input up = idle; up.gas = true; run(9.0f, up); run(0.3f, idle); { Input x = idle; x.enter_p = true; run(0.05f, x); }
-		run(0.6f, idle); snap(out, "sk1_freefall"); run(1.2f, idle); snap(out, "sk2_chute_opening"); run(2.0f, idle); snap(out, "sk3_chute");
+		run(0.6f, idle); snap(out, "sk1_freefall"); run(0.8f, idle); { Input px = idle; px.enter_p = true; run(0.05f, px); } run(0.4f, idle); snap(out, "sk2_chute_opening"); run(2.0f, idle); snap(out, "sk3_chute");
 		Input dr = idle; dr.ly = 1; run(1.5f, dr); snap(out, "sk4_glide");
 		game_start(&G); G.hintT = 0; snap(out, "cm1_compass");
 		G.cam.yaw = DEG(120); snap(out, "cm2_compass_se");
 		G.paused = true; snap(out, "u2_pause"); G.paused = false;
+		region_enter(&G, REG_AIRPORT);
 		int pi = -1; for (int i = 0; i < MAX_CAR; i++) if (G.car[i].on && G.car[i].kind == CAR_PLANE) { pi = i; break; }
 		G.p.p[0] = G.car[pi].x; G.p.p[2] = G.car[pi].z + 4.0f; { Input x = idle; x.enter_p = true; run(0.05f, x); }
 		run(0.5f, idle); snap(out, "pl4_small_plane");
@@ -533,11 +546,59 @@ int main(int argc, char **argv)
 	snaplook(out, "l5_cityhall", (float[3]){ 6.5f * PITCH, 60.0f, 2.5f * PITCH }, DEG(215), 140.0f, 5.0f, 55);
 	{ const Box *b = &G.w.box[G.w.bfirst[5][3]]; for (int k = 0; k < G.w.bcount[5][3]; k++) if (G.w.box[G.w.bfirst[5][3] + k].y1 > b->y1 && G.w.box[G.w.bfirst[5][3] + k].kind == BK_BLDG) b = &G.w.box[G.w.bfirst[5][3] + k];
 	  snaplook(out, "l6_donut", (float[3]){ 0.5f * (b->x0 + b->x1), b->y1 + 4.5f, 0.5f * (b->z0 + b->z1) }, DEG(100), 28.0f, 4.0f, 55); }
-	snaplook(out, "l7_pad", (float[3]){ PADS[0][0], 0.0f, PADS[0][1] }, DEG(200), 26.0f, 18.0f, 60);
-	snaplook(out, "l8_pad_beach", (float[3]){ PADS[1][0], 0.0f, PADS[1][1] }, DEG(250), 30.0f, 14.0f, 60);
+	snaplook(out, "l7_pad", (float[3]){ PADS_CITY[0][0], 0.0f, PADS_CITY[0][1] }, DEG(200), 26.0f, 18.0f, 60);
+	snaplook(out, "l8_pad_beach", (float[3]){ PADS_CITY[1][0], 0.0f, PADS_CITY[1][1] }, DEG(250), 30.0f, 14.0f, 60);
 	snapfree(out, "f1_freeway", CITY - 6.0f, 3.0f, 230.0f, DEG(92), 0.12f, 66);
 	snapfree(out, "d1_downtown", 4.8f * PITCH, 4.0f, 3.4f * PITCH, DEG(20), 0.16f, 66);
 	snapfree(out, "d2_street", 4 * PITCH + 3, 2.2f, 4 * PITCH + 40, DEG(0), 0.02f, 66);
-	G.paused = true; snap(out, "u1_pause");
+	G.paused = true; snap(out, "u1_pause"); G.paused = false;
+	// locking onto somebody far away with the camera tipped down: the camera frames them, then returns
+	{
+		const float SXf = 4 * PITCH, SZf = 4 * PITCH + 24;
+		game_start(&G); for (int i = 0; i < MAX_PED; i++) G.ped[i].on = false; for (int i = 0; i < MAX_CAR; i++) G.car[i].on = false; G.hintT = 0;
+		G.p.p[0] = SXf + 3; G.p.p[2] = SZf; G.p.face = 0; G.cam.yaw = 0; G.cam.pitch = -0.75f; G.cam.manualT = 0; G.p.weapon = W_RIFLE;
+		{ Ped *q = &G.ped[0]; memset(q, 0, sizeof *q); q->on = true; q->hp = 900; q->x = SXf + 3; q->z = SZf - 34; q->state = PED_IDLE; q->timer = 100; q->scale = 1; q->node = q->prev = traffic_nearest_node(&G, q->x, q->z); q->shirt = 3; }
+		run(0.4f, idle); snap(out, "lf0_before");
+		Input lk2 = idle; lk2.aim = true; run(1.2f, lk2); snap(out, "lf1_far_lock");
+		run(2.5f, idle); snap(out, "lf2_after");
+	}
+	// a wheelie
+	{
+		game_start(&G); for (int i = 0; i < MAX_PED; i++) G.ped[i].on = false; for (int i = 0; i < MAX_CAR; i++) G.car[i].on = false; G.hintT = 0;
+		int bw = game_add_car(&G, CAR_BIKE, 4 * PITCH + 6.4f, 4 * PITCH + 24.0f + 200.0f, 0); G.p.p[0] = 4 * PITCH + 4.5f; G.p.p[2] = 4 * PITCH + 224.0f; { Input x = idle; x.enter_p = true; run(0.1f, x); }
+		Input gs = idle; gs.gas = true; run(1.2f, gs); Input nb = gs; nb.ly = -1; run(1.3f, nb);
+		snaplook(out, "wl1_wheelie_side", (float[3]){ G.car[bw].x, 0.9f, G.car[bw].z }, DEG(90), 5.0f, 0.5f, 42);
+		snaplook(out, "wl2_wheelie_34", (float[3]){ G.car[bw].x, 0.9f, G.car[bw].z }, DEG(150), 5.0f, 1.0f, 42);
+		snap(out, "wl3_wheelie_chase");
+	}
+	// the skydiving poses, from the side and the front
+	{
+		game_start(&G); for (int i = 0; i < MAX_PED; i++) G.ped[i].on = false; for (int i = 0; i < MAX_CAR; i++) G.car[i].on = false; G.hintT = 0;
+		G.p.p[0] = 4 * PITCH + 3; G.p.p[2] = 4 * PITCH + 24; G.p.p[1] = 60.0f; G.p.airT = 1.5f; G.p.face = DEG(0); G.p.v[1] = -30.0f;
+		float t[3] = { G.p.p[0], 60.9f, G.p.p[2] };
+		snaplook(out, "sd1_free_side", t, DEG(90), 3.2f, 0.4f, 42); snaplook(out, "sd2_free_above", (float[3]){ t[0], 60.0f, t[2] }, DEG(0), 0.2f, 4.5f, 55); snaplook(out, "sd3_free_front", t, DEG(180), 3.4f, 0.2f, 42);
+		G.p.chute = 1.0f; t[1] = 60.9f;
+		snaplook(out, "sd4_chute_side", t, DEG(90), 6.0f, 1.8f, 48); snaplook(out, "sd5_chute_front", t, DEG(180), 5.0f, 1.2f, 50); snaplook(out, "sd6_chute_close", (float[3]){ t[0], 61.2f, t[2] }, DEG(150), 2.6f, 0.3f, 40);
+	}
+	// the world map and the parachute prompt
+	{
+		game_start(&G); G.hintT = 0; G.mapMode = 1; G.mapSel = REG_HILLS; snap(out, "wm1_world_map"); G.mapSel = -1; G.mapMode = 0;
+		snap(out, "wm0_town_map");
+		game_start(&G); G.hintT = 0; G.p.p[1] = 120.0f; G.p.airT = 1.2f; G.p.v[1] = -25.0f; snap(out, "pc1_prompt");
+		G.p.chute = 1.0f; snap(out, "pc2_open");
+		G.p.p[1] = 0; G.p.airT = 0; G.p.chute = 0; G.wheel = true; G.wheelSel = 4; snap(out, "wh1_wheel");
+	}
+	// the regions
+	for (int r = 0; r < REG_COUNT; r++) {
+		game_start(&G); region_enter(&G, r); G.hintT = 0; G.bannerT = 0; for (int i = 0; i < MAX_PED; i++) if (r == REG_CITY) G.ped[i].on = false;
+		char nm[32];
+		G.p.p[0] = 4 * PITCH + 3; G.p.p[2] = 4 * PITCH + 24; G.p.face = 0; G.cam.yaw = 0; G.cam.manualT = 0; run(0.5f, idle);
+		snprintf(nm, sizeof nm, "rg%d_street", r); snap(out, nm);
+		G.bannerT = 2.6f; G.fade = 0; snprintf(nm, sizeof nm, "rg%d_banner", r); snap(out, nm); G.bannerT = 0; G.fade = 0.55f; snprintf(nm, sizeof nm, "rg%d_fade", r); snap(out, nm); G.fade = 0;
+		snprintf(nm, sizeof nm, "rg%d_over", r); snapfree(out, nm, CITY * 0.5f, 140.0f, CITY * 0.5f + 190.0f, DEG(0), -0.5f, 62);
+		snprintf(nm, sizeof nm, "rg%d_block", r); snapfree(out, nm, 2 * PITCH + 20, 14.0f, 2 * PITCH + 60, DEG(20), -0.2f, 62);
+		snprintf(nm, sizeof nm, "rg%d_far", r); snapfree(out, nm, 4 * PITCH + 3, 6.0f, 4 * PITCH + 90, DEG(100), 0.02f, 70);
+		for (int k = 0; k < G.w.ngate; k++) { const Gate *gt = &G.w.gate[k]; float ex = gt->dir < 2 ? (gt->dir == 0 ? CITY - 20 : 20) : 256.0f, ez = gt->dir < 2 ? 256.0f : (gt->dir == 2 ? CITY - 20 : 20); float yaw = gt->dir == 0 ? DEG(90) : gt->dir == 1 ? DEG(-90) : gt->dir == 2 ? DEG(180) : 0.0f; snprintf(nm, sizeof nm, "rg%d_gate%d", r, k); snapfree(out, nm, ex, 3.0f, ez, yaw, 0.05f, 64); }
+	}
 	return 0;
 }

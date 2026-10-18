@@ -74,13 +74,16 @@ static void chunk_info(int c, float *cx, float *cz, float *cy, float *rv, float 
 static void outskirts(void)
 {
 	curChunk = NCH;
-	const float dry[3] = { 1.0f, 0.80f, 0.44f }, sea[3] = { 0.85f, 0.92f, 1.0f };
-	const float xe = 2600.0f, zn = -2600.0f, zs = CITY + 2600.0f, step = 500.0f;
-	// dry land: everything east of the beach and around the grid
-	for (float z = zn; z < zs - 1; z += step) for (float x = BEACH_X + 6; x < xe - 1; x += (x < 0 ? 0 : 0) + step) {
+	const RegionDef *rd = &REGIONS[SG->region];
+	const bool city = SG->region == REG_CITY, desert = SG->region == REG_HILLS;
+	const float sea[3] = { 0.85f, 0.92f, 1.0f };
+	const float xe = 2600.0f, zn = -2600.0f, zs = CITY + 2600.0f, step = 500.0f, xw = city ? BEACH_X + 6 : -2600.0f;
+	// dry land: everything around the grid (in the city: east of the beach)
+	for (float z = zn; z < zs - 1; z += step) for (float x = xw; x < xe - 1; x += step) {
 		float x1 = fminf(x + step, xe), z1 = fminf(z + step, zs);
-		flat(MAT_GRASS, x, z, x1, z1, -0.12f, dry, 1.0f / 22.0f);
+		flat(desert ? MAT_SAND : MAT_GRASS, x, z, x1, z1, -0.12f, rd->dry, desert ? 1.0f / 14.0f : 1.0f / 22.0f);
 	}
+	if (!city) return;
 	// the Pacific, west of the beach
 	for (float z = zn; z < zs - 1; z += step) for (float x = -2700.0f; x < BEACH_X + 5.9f; x += step) {
 		float x1 = fminf(x + step, BEACH_X + 6), z1 = fminf(z + step, zs);
@@ -481,10 +484,11 @@ static void randys_donut(void)
 static void helipads(void)
 {
 	static const float dark[3] = { 0.42f, 0.42f, 0.46f }, ring[3] = { 1.7f, 1.4f, 0.25f }, white[3] = { 1.7f, 1.7f, 1.6f };
-	for (int i = 0; i < N_PADS; i++) {
-		float x = PADS[i][0], z = PADS[i][1];
-		if (i == 0) chunk_at(x, z); else curChunk = EX_BEACH;
-		float y = i == 0 ? 0.14f : 0.05f;
+	for (int i = 0; i < SG->npad; i++) {
+		float x = SG->pad[i][0], z = SG->pad[i][1];
+		bool beach = SG->region == REG_CITY && x < 0;
+		if (!beach) chunk_at(x, z); else curChunk = EX_BEACH;
+		float y = !beach ? 0.14f : 0.05f;
 		ring_flat(x, z, y, 0.0f, 7.4f, 16, ring, MAT_WHITE);
 		ring_flat(x, z, y + 0.02f, 0.0f, 6.7f, 16, dark, MAT_WHITE);
 		flat(MAT_WHITE, x - 2.2f, z - 2.6f, x - 1.4f, z + 2.6f, y + 0.05f, white, 0.0f);
@@ -575,36 +579,150 @@ static void fence_run(float x0, float z0, float x1, float z1, bool air)
 		else { sbox(GRP_DETAIL, x - 0.03f, 1.0f, az, x + 0.03f, 1.07f, bz, rail, 1); sbox(GRP_DETAIL, x - 0.05f, 2.4f, az, x + 0.05f, 2.5f, bz, top, 1); }
 	}
 }
+// a stretch of fence with an opening between a0 and a1 along it (a0 == a1: none)
+static void fence_gap(float x0, float z0, float x1, float z1, float g0, float g1, bool air)
+{
+	bool alongX = fabsf(x1 - x0) > fabsf(z1 - z0);
+	float u0 = alongX ? x0 : z0, u1 = alongX ? x1 : z1, fixedc = alongX ? z0 : x0;
+	if (g1 <= g0 || g1 < u0 || g0 > u1) { fence_run(x0, z0, x1, z1, air); return; }
+	if (g0 > u0) { if (alongX) fence_run(u0, fixedc, g0, fixedc, air); else fence_run(fixedc, u0, fixedc, g0, air); }
+	if (g1 < u1) { if (alongX) fence_run(g1, fixedc, u1, fixedc, air); else fence_run(fixedc, g1, fixedc, u1, air); }
+}
 static void fences(void)
 {
-	const float xa = AIR_X0 - 20.0f - 0.4f, xb = AIR_X1 + 0.4f, zs = CITY - 0.6f, ze = AIR_Z1 + 0.4f;
-	fence_run(BEACH_X, 0.6f, CITY - 0.6f, 0.6f, false);                          // north edge, from the water's edge
-	fence_run(CITY - 0.6f, 0.6f, CITY - 0.6f, zs, false);                        // east edge
-	fence_run(BEACH_X, zs, xa, zs, false);                                       // south edge, west of the airport entrance
-	fence_run(xb, zs, CITY - 0.6f, zs, false);                                   // and east of it
-	fence_run(xa, zs, xa, ze, true);                                        // the airport: west, east and south sides
-	fence_run(xb, zs, xb, ze, true);
-	fence_run(xa, ze, xb, ze, true);
+	const World *w = &SG->w;
+	const float zs = CITY - 0.6f, xe = CITY - 0.6f, G0 = 220.0f, G1 = 300.0f;
+	float gN0 = 0, gN1 = 0, gE0 = 0, gE1 = 0, gS0 = 0, gS1 = 0, gW0 = 0, gW1 = 0;       // the openings of the gate roads on each side
+	for (int k = 0; k < w->ngate; k++) { int d = w->gate[k].dir; if (d == 0) { gE0 = G0; gE1 = G1; } else if (d == 1) { gW0 = G0; gW1 = G1; } else if (d == 2) { gS0 = G0; gS1 = G1; } else { gN0 = G0; gN1 = G1; } }
+	if (SG->region == REG_CITY) {
+		fence_run(BEACH_X, 0.6f, xe, 0.6f, false);                              // north edge, from the water's edge
+		fence_gap(xe, 0.6f, xe, zs, gE0, gE1, false);                           // east edge (the road to Sunset Hills goes through)
+		fence_gap(BEACH_X, zs, xe, zs, gS0, gS1, false);                        // south edge (the road to the airport)
+	} else if (SG->region == REG_AIRPORT) {
+		const float xa = AIR_X0 - 20.0f - 0.4f, xb = AIR_X1 + 0.4f, ze = AIR_Z1 + 0.4f;
+		fence_gap(0.6f, 0.6f, xe, 0.6f, gN0, gN1, false);                       // north edge, with the road in from the city
+		fence_run(0.6f, 0.6f, 0.6f, zs, false); fence_run(xe, 0.6f, xe, zs, false);
+		fence_run(0.6f, zs, xa, zs, false); fence_run(xb, zs, xe, zs, false);   // south edge of the district, either side of the airfield
+		fence_run(xa, zs, xa, ze, true); fence_run(xb, zs, xb, ze, true); fence_run(xa, ze, xb, ze, true);
+	} else {
+		fence_run(0.6f, 0.6f, xe, 0.6f, false); fence_run(xe, 0.6f, xe, zs, false); fence_run(0.6f, zs, xe, zs, false);
+		fence_gap(0.6f, 0.6f, 0.6f, zs, gW0, gW1, false);                       // west edge, with the road in from the city
+	}
+	(void)gS0; (void)gS1;
+	// the sides of each gate road
+	for (int k = 0; k < w->ngate; k++) {
+		const Gate *gt = &w->gate[k];
+		if (gt->dir < 2) { float xa = gt->dir == 0 ? CITY : gt->x0, xb = gt->dir == 0 ? gt->x1 : 0.0f; fence_run(xa, gt->z0, xb, gt->z0, false); fence_run(xa, gt->z1, xb, gt->z1, false); fence_run(gt->dir == 0 ? gt->x1 : gt->x0, gt->z0, gt->dir == 0 ? gt->x1 : gt->x0, gt->z1, false); }
+		else { float za = gt->dir == 2 ? CITY : gt->z0, zb = gt->dir == 2 ? gt->z1 : 0.0f; fence_run(gt->x0, za, gt->x0, zb, false); fence_run(gt->x1, za, gt->x1, zb, false); fence_run(gt->x0, gt->dir == 2 ? gt->z1 : gt->z0, gt->x1, gt->dir == 2 ? gt->z1 : gt->z0, false); }
+	}
+}
+
+// the road out of a town: an asphalt strip continuing the main street, a gantry sign with the destination's emblem
+static void gate_roads(void)
+{
+	const World *w = &SG->w;
+	static const float asph[3] = { 0.36f, 0.36f, 0.4f }, yel[3] = { 1.7f, 1.4f, 0.25f }, board[3] = { 0.12f, 0.5f, 0.28f }, white[3] = { 1.7f, 1.7f, 1.65f }, post[3] = { 0.5f, 0.5f, 0.55f };
+	for (int k = 0; k < w->ngate; k++) {
+		const Gate *gt = &w->gate[k];
+		bool xdir = gt->dir < 2;
+		float a0 = xdir ? gt->x0 : gt->z0, a1 = xdir ? gt->x1 : gt->z1;                 // along the road
+		float s0 = 256.0f - 11.0f, s1 = 256.0f + 11.0f;                                  // across: the town's main street, 22 m wide
+		chunk_at(xdir ? (gt->dir == 0 ? CITY - 1.0f : 1.0f) : s0, xdir ? s0 : (gt->dir == 2 ? CITY - 1.0f : 1.0f));
+		curChunk = NCH;
+		if (xdir) { flat(MAT_ROOF, a0, s0, a1, s1, 0.04f, asph, 1.0f / 8.0f); flat(MAT_WHITE, a0, 255.85f, a1, 256.15f, 0.07f, yel, 0); }
+		else { flat(MAT_ROOF, s0, a0, s1, a1, 0.04f, asph, 1.0f / 8.0f); flat(MAT_WHITE, 255.85f, a0, 256.15f, a1, 0.07f, yel, 0); }
+		float pos = gt->dir == 0 ? gt->x1 - 24.0f : gt->dir == 1 ? gt->x0 + 24.0f : gt->dir == 2 ? gt->z1 - 24.0f : gt->z0 + 24.0f;      // the gantry 24 m before the end
+		float px0 = pos - 0.4f, px1 = pos + 0.4f;
+		if (xdir) {
+			sbox(MAT_WHITE, px0, 0, s0 - 1.2f, px1, 7.0f, s0 - 0.4f, post, 1); sbox(MAT_WHITE, px0, 0, s1 + 0.4f, px1, 7.0f, s1 + 1.2f, post, 1);
+			sbox(MAT_WHITE, px0, 5.0f, s0 - 1.0f, px1, 7.0f, s1 + 1.0f, board, 1);
+		} else {
+			sbox(MAT_WHITE, s0 - 1.2f, 0, px0, s0 - 0.4f, 7.0f, px1, post, 1); sbox(MAT_WHITE, s1 + 0.4f, 0, px0, s1 + 1.2f, 7.0f, px1, post, 1);
+			sbox(MAT_WHITE, s0 - 1.0f, 5.0f, px0, s1 + 1.0f, 7.0f, px1, board, 1);
+		}
+		// the emblem on the board (both faces): a plane for the airport, a sun for the hills, a skyline for the city
+		float face[2] = { pos - 0.45f, pos + 0.45f };
+		for (int f = 0; f < 2; f++) {
+			float c = 256.0f, ya = 5.3f;
+			#define EMB(u0, v0, u1, v1, col) do { if (xdir) sbox(MAT_WHITE, face[f] - 0.02f, ya + (v0), c + (u0), face[f] + 0.02f, ya + (v1), c + (u1), col, 1); else sbox(MAT_WHITE, c + (u0), ya + (v0), face[f] - 0.02f, c + (u1), ya + (v1), face[f] + 0.02f, col, 1); } while (0)
+			if (gt->dest == REG_AIRPORT) { EMB(-0.4f, 0.1f, 0.4f, 1.6f, white); EMB(-3.0f, 0.7f, 3.0f, 1.1f, white); EMB(-1.2f, 0.1f, 1.2f, 0.4f, white); }
+			else if (gt->dest == REG_HILLS) { static const float sun[3] = { 2.0f, 1.4f, 0.3f }; EMB(-1.0f, 0.3f, 1.0f, 1.5f, sun); EMB(-2.2f, 0.7f, -1.4f, 1.0f, sun); EMB(1.4f, 0.7f, 2.2f, 1.0f, sun); }
+			else { EMB(-3.0f, 0.1f, -2.0f, 0.9f, white); EMB(-1.6f, 0.1f, -0.4f, 1.6f, white); EMB(0.0f, 0.1f, 1.2f, 1.2f, white); EMB(1.6f, 0.1f, 2.6f, 0.7f, white); }
+			#undef EMB
+		}
+	}
+}
+
+// ---- Sunset Hills: the desert around it, red mesas on the horizon, cacti and boulders -------------------------------------------------------------------------
+static void cactus(float x, float z, float sc, unsigned h)
+{
+	static const float green[3] = { 0.32f, 0.56f, 0.30f }, dark[3] = { 0.26f, 0.46f, 0.26f };
+	float w = 0.3f * sc, H = (2.6f + 1.6f * hf(h)) * sc, ah = H * (0.4f + 0.2f * hf(h >> 6)), bh = H * (0.5f + 0.25f * hf(h >> 9)), a = 0.34f * sc;
+	sbox(GRP_DETAIL, x - w, 0, z - w, x + w, H, z + w, green, 1);
+	sbox(GRP_DETAIL, x - 1.0f * sc, ah, z - a * 0.5f, x - w, ah + a, z + a * 0.5f, dark, 1);
+	sbox(GRP_DETAIL, x - 1.0f * sc, ah, z - a * 0.5f, x - 1.0f * sc + a, ah + 1.1f * sc, z + a * 0.5f, dark, 1);
+	sbox(GRP_DETAIL, x + w, bh, z - a * 0.5f, x + 1.0f * sc, bh + a, z + a * 0.5f, dark, 1);
+	sbox(GRP_DETAIL, x + 1.0f * sc - a, bh, z - a * 0.5f, x + 1.0f * sc, bh + 0.9f * sc, z + a * 0.5f, dark, 1);
+}
+static void boulder(float x, float z, float r, float h, unsigned seed)
+{
+	float t = 0.85f + 0.3f * hf(seed), tint[3] = { 0.66f * t, 0.46f * t, 0.36f * t };
+	pyramid(GRP_DETAIL, x - r, z - r * 0.8f, x + r, z + r * 0.8f, 0, h, tint, false);
+}
+static void mesas(void)
+{
+	curChunk = NCH;
+	unsigned st = 0x3E5A5u;
+	static const float rock[3][3] = { { 0.88f, 0.46f, 0.28f }, { 0.78f, 0.38f, 0.24f }, { 0.94f, 0.58f, 0.36f } };
+	for (int i = 0; i < 18; i++) {
+		float a = i * 2 * PI_F / 18 + rndf(&st) * 0.2f, r = CITY * 0.5f + 360.0f + rndf(&st) * 520.0f, cx = CITY * 0.5f + cosf(a) * r, cz = CITY * 0.5f + sinf(a) * r;
+		float w = 90.0f + rndf(&st) * 150.0f, d = 70.0f + rndf(&st) * 120.0f, h = 40.0f + rndf(&st) * 85.0f;
+		for (int t = 0; t < 3; t++) {
+			float k = t == 0 ? 1.0f : t == 1 ? 0.72f : 0.5f, y0 = t == 0 ? 0 : h * (t == 1 ? 0.45f : 0.8f), y1 = h * (t == 0 ? 0.45f : t == 1 ? 0.8f : 1.0f);
+			sbox(MAT_WHITE, cx - w * 0.5f * k, y0, cz - d * 0.5f * k, cx + w * 0.5f * k, y1, cz + d * 0.5f * k, rock[t], 1);
+		}
+	}
+}
+// a lattice radio mast: four tapering legs, cross rings, a red light on top
+static void mast(const Box *b)
+{
+	float cx = 0.5f * (b->x0 + b->x1), cz = 0.5f * (b->z0 + b->z1), H = b->y1;
+	static const float steel[3] = { 1.25f, 1.25f, 1.3f }, red[3] = { 2.4f, 0.25f, 0.2f };
+	for (int i = 0; i < 4; i++) {
+		float sx = (i & 1) ? 1.0f : -1.0f, sz = (i & 2) ? 1.0f : -1.0f;
+		sbeam(v3(cx + sx * 1.5f, 0, cz + sz * 1.5f), v3(cx + sx * 0.25f, H, cz + sz * 0.25f), 0.12f, 0.12f, 0.06f, 0.06f, steel);
+	}
+	for (int k = 1; k <= 7; k++) {
+		float y = H * k / 8.0f, hw = 1.5f - 1.25f * (y / H);
+		sbox(MAT_WHITE, cx - hw, y, cz - hw - 0.04f, cx + hw, y + 0.12f, cz - hw + 0.04f, steel, 1); sbox(MAT_WHITE, cx - hw, y, cz + hw - 0.04f, cx + hw, y + 0.12f, cz + hw + 0.04f, steel, 1);
+		sbox(MAT_WHITE, cx - hw - 0.04f, y, cz - hw, cx - hw + 0.04f, y + 0.12f, cz + hw, steel, 1); sbox(MAT_WHITE, cx + hw - 0.04f, y, cz - hw, cx + hw + 0.04f, y + 0.12f, cz + hw, steel, 1);
+	}
+	sbox(MAT_WHITE, cx - 0.35f, H, cz - 0.35f, cx + 0.35f, H + 1.2f, cz + 0.35f, red, 1);
 }
 
 static void landmarks(void)
 {
 	capitol(130.0f, -52.0f);
 	dodger(CITY * 0.82f, -100.0f);
-	theme_building(CITY * 0.38f, CITY + 95.0f);
 	venice_sign(-5.0f, 3 * PITCH);
 	randys_donut();
 	helipads();
-	airport();
-	fences();
 }
 
 static void scenery_static(void)
 {
 	outskirts();
-	beach();
-	beach_palms();
-	hills();
-	freeway();
-	landmarks();
+	switch (SG->region) {
+	case REG_CITY:
+		beach(); beach_palms(); hills(); freeway(); landmarks();
+		break;
+	case REG_AIRPORT:
+		theme_building(CITY * 0.38f, CITY + 95.0f); airport(); helipads();
+		break;
+	default:
+		mesas(); helipads();
+		break;
+	}
+	fences();
+	gate_roads();
 }

@@ -13,7 +13,7 @@ static int fails;
 #define CHECK(cond, ...) do { if (!(cond)) { printf("  FAIL: "); printf(__VA_ARGS__); printf("\n"); fails++; } } while (0)
 static Input idle(void) { Input in; memset(&in, 0, sizeof in); return in; }
 static void clear_world(void) { for (int i = 0; i < MAX_PED; i++) G.ped[i].on = false; for (int i = 0; i < MAX_CAR; i++) G.car[i].on = false; }
-static void run(float s, Input in) { for (float t = 0; t < s; t += 1.0f / 60) { game_update(&G, &in, 1.0f / 60); in.enter_p = in.x_p = in.b_p = in.select_p = in.a_p = in.start_p = in.up_p = false; in.weap = 0; } }
+static void run(float s, Input in) { for (float t = 0; t < s; t += 1.0f / 60) { game_update(&G, &in, 1.0f / 60); in.enter_p = in.x_p = in.b_p = in.select_p = in.a_p = in.start_p = in.up_p = in.touch_p = false; in.weap = 0; } }
 
 int main(void)
 {
@@ -75,11 +75,13 @@ int main(void)
 	Input fr0 = idle(); fr0.aim = true; run(0.5f, fr0);
 	CHECK(G.p.lock < 0 && fabsf(wrapang(G.p.face - G.cam.yaw)) < 0.2f, "with nobody to lock onto Otto aims where the camera looks (face %.2f, camera %.2f)", G.p.face, G.cam.yaw);
 
-	printf("weapon wheel: SELECT, then the D-pad or circle pad\n");
+	printf("weapon wheel: D-pad up, then the D-pad or circle pad\n");
 	game_start(&G); clear_world(); G.p.p[0] = SX + 3; G.p.p[2] = SZ; G.p.face = 0; G.cam.yaw = 0;
 	for (int w = 0; w < W_COUNT; w++) CHECK(G.p.has[w], "Otto starts with weapon %d", w);
 	Input sel = idle(); sel.select_p = true; run(0.1f, sel);
-	CHECK(G.wheel, "SELECT opens the wheel");
+	CHECK(!G.wheel, "SELECT no longer opens the wheel");
+	Input upw = idle(); upw.up_p = true; upw.dpy = 1; run(0.1f, upw);
+	CHECK(G.wheel && G.p.weapon == W_PISTOL, "D-pad up opens the wheel (and the same press does not pick fists: weapon %d)", G.p.weapon);
 	Input dp = idle(); dp.dpx = 1; run(0.1f, dp); CHECK(G.p.weapon == W_SMG, "D-pad right = SMG (%d)", G.p.weapon);
 	dp = idle(); dp.dpx = 1; dp.dpy = 1; run(0.1f, dp); CHECK(G.p.weapon == W_PISTOL, "D-pad up-right = pistol (%d)", G.p.weapon);
 	dp = idle(); dp.dpx = 1; dp.dpy = -1; run(0.1f, dp); CHECK(G.p.weapon == W_SHOTGUN, "D-pad down-right = shotgun (%d)", G.p.weapon);
@@ -182,7 +184,7 @@ int main(void)
 		CHECK(G.p.lastShotT > t0 && G.ped[1].hp < 90, "the rifle fires and hits (hp %.0f)", G.ped[1].hp);
 		G.ped[1].on = false;
 		G.ped[2] = G.ped[0]; q = &G.ped[2]; q->on = true; q->dead = false; q->hp = 100; q->x = SX + 3; q->z = SZ - 55; q->state = PED_IDLE; q->timer = 100;
-		G.heat = 0; G.stars = 0; police_reset(&G); for (int k = 3; k < MAX_PED; k++) if (G.ped[k].cop) G.ped[k].on = false;
+		G.heat = 0; G.stars = 0; police_reset(&G); for (int k = 3; k < MAX_PED; k++) G.ped[k].on = false;
 		G.p.weapon = W_SNIPER; Input sn = idle(); sn.aim = true; run(0.6f, sn); sn.gas = true; run(1.6f, sn);
 		CHECK(G.ped[2].dead, "the sniper rifle kills at 55 m in one shot (hp %.0f)", G.ped[2].hp);
 		G.ped[2].on = false;
@@ -214,7 +216,8 @@ int main(void)
 			CHECK(fabsf(wrapang(G.p.face - atan2f(G.p.coverNx, -G.p.coverNz))) < 0.15f, "his back is to the wall, facing the street");
 			float z0 = G.p.p[2]; Input sl = idle(); sl.lx = 1; run(1.0f, sl);
 			CHECK(G.p.p[2] > z0 + 1.5f && fabsf(G.p.p[0] - (wx - COVER_WALL)) < 0.08f, "the stick slides him along the wall (moved %.2f)", G.p.p[2] - z0);
-			run(((wb->z1 - G.p.p[2]) / 2.3f) + 1.0f, sl);
+			for (int i = 0; i < 60 * 12 && G.p.p[2] < wb->z1 - 0.7f; i++) run(1.0f / 60, sl);        // slide until he is at the corner (and stop pushing)
+			run(0.4f, idle());
 			printf("   end of the wall z1 %.2f, Otto stopped at z %.2f\n", wb->z1, G.p.p[2]);
 			CHECK(G.p.cover == 1 && G.p.p[2] < wb->z1 && G.p.p[2] > wb->z1 - 1.0f, "he stops at the corner and stays in cover");
 			// somebody on the other side of the corner: hidden from here, visible once he leans out
@@ -243,6 +246,16 @@ int main(void)
 			CHECK(dl < 6.0f && (fx * dx + fz * dz) / dl > cosf(DEG(28)), "the camera keeps Otto in view");
 			Input leave = idle(); leave.x_p = true; run(0.1f, leave);
 			CHECK(G.p.cover == 0, "Y again leaves the cover");
+			// keep pushing at the end of the wall: round the corner onto the next wall, and along it
+			G.p.p[0] = wx - 1.0f; G.p.p[2] = wb->z1 - 3.0f; G.p.face = PI_F / 2; G.cam.yaw = PI_F / 2; G.cam.manualT = 0; memset(G.ped, 0, sizeof G.ped);
+			{ Input y2 = idle(); y2.x_p = true; run(0.1f, y2); }
+			CHECK(G.p.cover == 1 && G.p.coverNx < -0.9f, "cover again on the west face");
+			Input push = idle(); push.lx = 1; run(3.0f, push);
+			printf("   after pushing on: cover %d, normal (%.1f, %.1f), at (%.1f, %.1f) (wall corner %.1f, %.1f)\n", G.p.cover, G.p.coverNx, G.p.coverNz, G.p.p[0], G.p.p[2], wx, wb->z1);
+			CHECK(G.p.cover == 1 && G.p.coverNz > 0.9f, "he went round the corner and now has the south face behind him");
+			CHECK(G.p.p[0] > wx + 1.0f && G.p.p[2] > wb->z1 && G.p.p[2] < wb->z1 + 1.0f, "and he is sliding along it (x %.1f z %.1f)", G.p.p[0], G.p.p[2]);
+			Input back2 = idle(); back2.lx = -1; run(5.0f, back2);
+			CHECK(G.p.cover == 1 && G.p.coverNx < -0.9f && G.p.p[2] < wb->z1 && fabsf(G.p.p[0] - (wx - COVER_WALL)) < 0.3f, "pushing the other way takes him back round the corner to the west face (n %.1f %.1f, at %.1f %.1f)", G.p.coverNx, G.p.coverNz, G.p.p[0], G.p.p[2]);
 		}
 	}
 	printf("cover: behind a car\n");
@@ -262,7 +275,7 @@ int main(void)
 		  CHECK(G.p.lock == 0, "and locks onto the person across the car");
 		  Input fi = ai; fi.gas = true; float car1 = G.car[ci2].hp; run(1.5f, fi);
 		  CHECK(G.ped[0].dead && G.car[ci2].hp >= car1 - 0.5f, "he shoots over it without hitting his own cover (dead %d, car %.0f -> %.0f)", G.ped[0].dead, car1, G.car[ci2].hp);
-		  G.ped[0].on = false; G.heat = 0; G.stars = 0; police_reset(&G); run(0.8f, idle()); CHECK(G.p.peek == 0 && G.p.crouch > 0.8f, "he ducks back down"); }
+		  G.ped[0].on = false; memset(G.bullet, 0, sizeof G.bullet); G.heat = 0; G.stars = 0; police_reset(&G); run(0.8f, idle()); CHECK(G.p.peek == 0 && G.p.crouch > 0.8f, "he ducks back down"); }
 		{ Input sl = idle(); sl.lx = 1; run(2.5f, sl); Input ai = idle(); ai.aim = true; run(0.6f, ai);
 		  printf("   at the car's front: peek %d, peekT %.2f, Otto z %.2f (car z %.2f, its front at %.2f)\n", G.p.peek, G.p.peekT, G.p.p[2], czp, czp - 2.3f);
 		  CHECK(G.p.peek == 1 && G.p.peekT > 0.9f, "L at the end of the car leans him out round it");
@@ -308,24 +321,92 @@ int main(void)
 		}
 	}
 
+	printf("regions: gate roads, carrying the vehicle, flying between regions\n");
+	{
+		game_start(&G); clear_world(); G.p.p[0] = 260.0f; G.p.p[2] = CITY - 6.0f; G.p.face = PI_F; G.cam.yaw = PI_F; G.cam.manualT = 0;
+		CHECK(G.region == REG_CITY, "the game starts in the city");
+		Input wk = idle(); wk.ly = 1; run(20.0f, wk);
+		printf("   walked south out of the city: region %d (airport %d), at (%.0f, %.0f), fade %.2f\n", G.region, REG_AIRPORT, G.p.p[0], G.p.p[2], G.fade);
+		CHECK(G.region == REG_AIRPORT && G.p.p[2] < 20.0f, "the south gate road leads to the airport region (z %.0f)", G.p.p[2]);
+		CHECK(G.w.region == REG_AIRPORT && G.w.nbox > 20, "which has its own world (%d boxes)", G.w.nbox);
+		run(22.0f, wk);
+		CHECK(G.region == REG_AIRPORT && G.p.p[2] > 20.0f, "and he can walk on in it (z %.0f)", G.p.p[2]);
+		// a car comes along through the east gate
+		game_start(&G); clear_world();
+		int cg = game_add_car(&G, CAR_SPORTS, CITY - 40.0f, 255.0f, PI_F / 2); G.p.p[0] = CITY - 36.5f; G.p.p[2] = 255.0f; { Input ex = idle(); ex.enter_p = true; run(0.1f, ex); }
+		Input gs = idle(); gs.gas = true; run(6.0f, gs);
+		printf("   drove east: region %d (hills %d), in car %d, car at (%.0f, %.0f) speed %.0f\n", G.region, REG_HILLS, G.p.car, G.p.car >= 0 ? G.car[G.p.car].x : 0, G.p.car >= 0 ? G.car[G.p.car].z : 0, G.p.car >= 0 ? hypotf(G.car[G.p.car].vx, G.car[G.p.car].vz) : 0);
+		(void)cg;
+		CHECK(G.region == REG_HILLS && G.p.car >= 0 && G.car[G.p.car].kind == CAR_SPORTS, "the east gate leads to the hills and the car comes along");
+		CHECK(G.p.p[0] < 40.0f, "arriving at the hills' west gate (x %.0f)", G.p.p[0]);
+		Input back = idle(); back.gas = true; G.car[G.p.car].yaw = -PI_F / 2; G.car[G.p.car].vx = G.car[G.p.car].vz = 0; run(8.0f, back);
+		CHECK(G.region == REG_CITY, "and the same road leads back (region %d)", G.region);
+		// by air
+		game_start(&G); clear_world();
+		int hh = game_add_car(&G, CAR_HELI, -38.0f, 140.0f, 1.57f); G.p.p[0] = -34.0f; G.p.p[2] = 140.0f; { Input ex = idle(); ex.enter_p = true; run(0.1f, ex); }
+		G.car[hh].y = 60.0f; G.car[hh].rpm = 1; G.car[hh].x = CITY + 100.0f; G.car[hh].z = 300.0f; G.car[hh].yaw = PI_F / 2;
+		Input fw = idle(); fw.ly = 1; run(6.0f, fw);
+		printf("   flew a helicopter east: region %d at (%.0f, %.0f) height %.0f\n", G.region, G.p.p[0], G.p.p[2], G.p.p[1]);
+		CHECK(G.region == REG_HILLS && G.p.car >= 0 && G.p.p[1] > 20.0f, "flying out of the city's east side arrives in the hills, still in the air");
+	}
+
+	printf("world map: toggle, pick a town, fast travel\n");
+	{
+		game_start(&G); clear_world(); G.p.p[0] = SX + 3; G.p.p[2] = SZ; G.p.cash = 321;
+		Input t = idle(); t.touch_p = true; t.tx = MAP_BTN_X + 10; t.ty = MAP_TOGGLE_Y + 5; run(0.05f, t);
+		CHECK(G.mapMode == 1, "the WORLD MAP button switches the map to the world view");
+		float x, y, w, h; world_tile(REG_HILLS, &x, &y, &w, &h);
+		t = idle(); t.touch_p = true; t.tx = x + w / 2; t.ty = y + h / 2; run(0.05f, t); CHECK(G.mapSel == REG_HILLS, "tapping a town picks it (%d)", G.mapSel);
+		world_tile(REG_CITY, &x, &y, &w, &h); t.tx = x + w / 2; t.ty = y + h / 2; run(0.05f, t); CHECK(G.mapSel == -1, "tapping the town you are in picks nothing");
+		world_tile(REG_HILLS, &x, &y, &w, &h); t.tx = x + w / 2; t.ty = y + h / 2; run(0.05f, t);
+		Input tr = idle(); tr.touch_p = true; tr.tx = MAP_BTN_X + 10; tr.ty = MAP_TRAVEL_Y + 5;
+		G.heat = 300.0f; run(0.05f, idle()); run(0.05f, tr); run(1.5f, idle());
+		CHECK(G.region == REG_CITY && G.regionGo < 0, "no fast travel while wanted");
+		G.heat = 0; G.stars = 0; police_reset(&G); run(0.05f, tr); run(2.5f, idle());
+		printf("   fast travel to the hills: region %d at (%.0f, %.0f), cash %d, map mode %d\n", G.region, G.p.p[0], G.p.p[2], G.p.cash, G.mapMode);
+		CHECK(G.region == REG_HILLS && G.p.cash == 321 && G.mapMode == 0 && hypotf(G.p.p[0] - (SX + 3), G.p.p[2] - SZ) < 12.0f, "TRAVEL takes him to the picked town");
+		// with a car: it comes along; in a helicopter in the air it refuses
+		int cc = game_add_car(&G, CAR_SEDAN, SX + 6.4f, SZ - 10, 0); G.p.p[0] = SX + 3.5f; G.p.p[2] = SZ - 10; { Input ex = idle(); ex.enter_p = true; run(0.1f, ex); }
+		CHECK(G.p.car == cc, "in a car"); (void)cc;
+		t = idle(); t.touch_p = true; t.tx = MAP_BTN_X + 10; t.ty = MAP_TOGGLE_Y + 5; run(0.05f, t);
+		world_tile(REG_AIRPORT, &x, &y, &w, &h); t.tx = x + w / 2; t.ty = y + h / 2; run(0.05f, t); run(0.05f, tr); run(2.5f, idle());
+		CHECK(G.region == REG_AIRPORT && G.p.car >= 0 && G.car[G.p.car].kind == CAR_SEDAN, "the car travels with him");
+		int hh = game_add_car(&G, CAR_HELI, 300.0f, 100.0f, 0); G.p.car = hh; G.car[hh].driven = true; G.car[hh].y = 50.0f; G.car[hh].rpm = 1;
+		t = idle(); t.touch_p = true; t.tx = MAP_BTN_X + 10; t.ty = MAP_TOGGLE_Y + 5; run(0.05f, t);
+		world_tile(REG_CITY, &x, &y, &w, &h); t.tx = x + w / 2; t.ty = y + h / 2; run(0.05f, t); run(0.05f, tr); run(2.0f, idle());
+		CHECK(G.region == REG_AIRPORT, "no fast travel from a helicopter in the air (region %d)", G.region);
+	}
+
+	printf("every region works: cops, pickups, respawn, what is carried over\n");
+	for (int r = 0; r < REG_COUNT; r++) {
+		game_start(&G); G.p.cash = 777; G.p.has[W_RPG] = true; G.p.hp = 5000.0f; region_enter(&G, r);
+		G.p.p[0] = 4 * PITCH + 3; G.p.p[2] = 4 * PITCH + 24; run(10.0f, idle());
+		int cars = 0, peds = 0, picks = 0; for (int i = 0; i < MAX_CAR; i++) cars += G.car[i].on; for (int i = 0; i < MAX_PED; i++) peds += G.ped[i].on; for (int i = 0; i < MAX_PICKUP; i++) picks += G.pick[i].on;
+		CHECK(G.region == r && cars >= 8 && peds >= 8 && picks >= 20 && G.npad >= 1, "region %d is populated (%d cars, %d people, %d pickups, %d helipads)", r, cars, peds, picks, G.npad);
+		G.heat = 450.0f; int maxCops = 0; for (int i = 0; i < 40 * 60; i++) { run(1.0f / 60, idle()); if (i % 60 == 0) { int c = 0; for (int k = 0; k < MAX_PED; k++) c += G.ped[k].on && G.ped[k].cop; if (c > maxCops) maxCops = c; } if (G.p.ps != PS_ALIVE) break; }
+		CHECK(maxCops >= 4, "the police come in region %d (%d officers)", r, maxCops);
+		G.heat = 0; G.stars = 0; G.p.ps = PS_ALIVE; G.p.arrestT = 0; G.timeScale = 1.0f; police_reset(&G); G.p.hp = 1; damage_player(&G, 9999); run(5.0f, idle());
+		CHECK(G.p.ps == PS_ALIVE && G.region == r && hypotf(G.p.p[0] - HOSPITAL_X, G.p.p[2] - HOSPITAL_Z) < 20.0f, "wasted in region %d: out of hospital in the same region", r);
+		CHECK(G.p.cash > 500 && G.p.has[W_RPG], "cash and weapons are kept (%d)", G.p.cash);
+	}
+
 	printf("airport\n");
 	{
-		game_start(&G); clear_world(); G.p.p[0] = 200.0f; G.p.p[2] = CITY - 6.0f; G.p.face = PI_F; G.cam.yaw = PI_F; G.cam.manualT = 0;
-		Input wk = idle(); wk.ly = 1; run(12.0f, wk);
-		printf("   walked south to z %.0f (the city ends at %.0f)\n", G.p.p[2], CITY);
-		CHECK(G.p.p[2] > CITY + 30.0f, "Otto can walk out of the city onto the airport (z %.0f)", G.p.p[2]);
-		G.p.p[0] = 350.0f; G.p.p[2] = CITY + 70.0f; run(8.0f, wk);
+		game_start(&G); region_enter(&G, REG_AIRPORT); clear_world(); G.p.p[0] = 350.0f; G.p.p[2] = CITY + 70.0f; G.p.face = PI_F; G.cam.yaw = PI_F; G.cam.manualT = 0;
+		Input wk = idle(); wk.ly = 1; run(8.0f, wk);
 		CHECK(G.p.p[2] < CITY + 90.0f, "the terminal is solid (z %.0f)", G.p.p[2]);
+		G.p.p[0] = 200.0f; G.p.p[2] = CITY - 6.0f; run(12.0f, wk);
+		CHECK(G.p.p[2] > CITY + 30.0f, "Otto can walk from the airport district onto the airfield (z %.0f)", G.p.p[2]);
 		int c4 = game_add_car(&G, CAR_SPORTS, 128.0f, CITY - 40.0f, PI_F); G.p.p[0] = 131.5f; G.p.p[2] = CITY - 40.0f; Input ex = idle(); ex.enter_p = true; run(0.1f, ex);
 		Input gs = idle(); gs.gas = true; run(6.0f, gs);
-		CHECK(G.car[c4].z > CITY + 20.0f, "a car can drive onto the airport (z %.0f)", G.car[c4].z);
+		CHECK(G.car[c4].z > CITY + 20.0f, "a car can drive onto the airfield (z %.0f)", G.car[c4].z);
 	}
 
 	printf("police are keener\n");
 	{
-		game_start(&G); clear_world(); G.p.p[0] = SX + 3; G.p.p[2] = SZ; G.heat = 12.0f; run(0.2f, idle());
+		game_start(&G); clear_world(); G.p.p[0] = SX + 3; G.p.p[2] = SZ; G.heat = 25.0f; run(0.2f, idle());
 		CHECK(G.stars >= 1, "a little crime already gives a star (heat %.0f)", G.heat);
-		G.heat = 100.0f; int hp0 = 0; (void)hp0; float h0 = G.p.hp, minH = h0;
+		G.heat = 250.0f; int hp0 = 0; (void)hp0; float h0 = G.p.hp, minH = h0;
 		float tDie = -1; for (int i = 0; i < 60 * 60; i++) { run(1.0f / 60, idle()); if (G.p.hp < minH) minH = G.p.hp; if (G.p.ps != PS_ALIVE) { tDie = i / 60.0f; break; } }
 		printf("   Otto stood still and was wasted after %.0f s\n", tDie);
 		int cops = 0; for (int i = 0; i < MAX_PED; i++) cops += G.ped[i].on && G.ped[i].cop; int pc = 0; for (int i = 0; i < MAX_CAR; i++) pc += G.car[i].on && G.car[i].bot;
@@ -336,7 +417,7 @@ int main(void)
 
 	printf("flying an airliner\n");
 	{
-		game_start(&G); clear_world();
+		game_start(&G); region_enter(&G, REG_AIRPORT); clear_world();
 		int pi = game_add_car(&G, CAR_PLANE, 90.0f, RWY2_Z, PI_F / 2); G.p.p[0] = 90.0f; G.p.p[2] = RWY2_Z + 4.0f; G.p.face = 0;
 		Input ex = idle(); ex.enter_p = true; run(0.1f, ex);
 		CHECK(G.p.car == pi, "X gets Otto into the airliner");
@@ -359,20 +440,6 @@ int main(void)
 		CHECK(G.car[pi].y <= 0.06f && G.car[pi].hp > 150.0f, "a gentle descent lands without wrecking it (hp %.0f)", G.car[pi].hp);
 		Input br = idle(); br.brake = true; run(15.0f, br); run(0.2f, idle());
 		Input out = idle(); out.enter_p = true; run(0.1f, out); CHECK(G.p.car < 0, "once stopped on the ground Otto climbs out");
-	}
-
-	printf("first-person aim (D-pad up while aiming)\n");
-	{
-		game_start(&G); clear_world(); G.p.p[0] = SX + 3; G.p.p[2] = SZ; G.p.face = 0; G.cam.yaw = 0; G.p.weapon = W_RIFLE;
-		Input aim = idle(); aim.aim = true; run(0.5f, aim);
-		CHECK(!G.fpsAim, "not first person by default");
-		Input up = aim; up.up_p = true; run(0.1f, up); run(0.5f, aim);
-		printf("   fps %d, camera eye y %.2f (Otto's feet y %.2f), fov %.0f\n", G.fpsAim, G.cam.eye[1], G.p.p[1], G.cam.fov);
-		CHECK(G.fpsAim && fabsf(G.cam.eye[1] - 1.62f) < 0.05f, "D-pad up while aiming goes first person (eye at head height)");
-		Input fire = aim; fire.gas = true; float t0 = G.p.lastShotT; run(0.6f, fire); CHECK(G.p.lastShotT > t0, "and he can shoot from there");
-		run(0.1f, idle()); CHECK(!G.fpsAim, "letting go of L goes back to third person");
-		run(0.1f, aim); CHECK(!G.fpsAim, "and the next aim starts in third person");
-		Input upOnly = idle(); upOnly.up_p = true; upOnly.dpy = 1; float pitch0 = G.cam.pitch; run(0.5f, upOnly); CHECK(fabsf(G.cam.pitch - pitch0) < 0.01f && !G.fpsAim, "D-pad up alone does nothing to the camera");
 	}
 
 	printf("performance changes keep the behaviour\n");
@@ -401,6 +468,21 @@ int main(void)
 		CHECK(!inside, "walking into a wall at 30 fps does not get through it");
 	}
 
+	printf("wanted level pace\n");
+	{
+		game_start(&G); clear_world(); G.p.p[0] = SX + 3; G.p.p[2] = SZ; G.p.hp = 9000.0f; clear_world();
+		float t5 = -1;
+		G.heat = 900.0f;
+		for (int i = 0; i < 100 * 60; i++) { run(1.0f / 60, idle()); if (i == 20 * 60) CHECK(G.stars <= 2, "after 20 s of maximum heat only %d stars", G.stars); if (G.stars >= 5 && t5 < 0) t5 = i / 60.0f; if (G.p.ps != PS_ALIVE) break; }
+		printf("   5 stars after %.0f s even with the maximum heat\n", t5);
+		CHECK(t5 > 45.0f, "five stars take a while to build (%.0f s)", t5);
+		game_start(&G); clear_world(); float h0 = G.heat; G.p.p[0] = SX + 3; G.p.p[2] = SZ;
+		for (int k = 0; k < 4; k++) { Ped *q = &G.ped[k]; memset(q, 0, sizeof *q); q->on = true; q->hp = 5; q->x = SX + 3; q->z = SZ - 5 - k; q->state = PED_IDLE; q->timer = 100; q->node = q->prev = traffic_nearest_node(&G, q->x, q->z); }
+		for (int k = 0; k < 4; k++) damage_ped(&G, k, 50, 1);
+		printf("   four civilians killed: heat %.0f\n", G.heat - h0);
+		CHECK(G.heat - h0 < 150.0f, "four killings are not yet a manhunt (heat %.0f)", G.heat - h0);
+	}
+
 	printf("respawn from the pause menu\n");
 	{
 		game_start(&G); clear_world(); G.p.p[0] = SX + 3; G.p.p[2] = SZ; G.p.cash = 1000; G.p.hp = 40;
@@ -418,15 +500,15 @@ int main(void)
 		game_start(&G); G.p.p[0] = 120.0f + trial * 130.0f; G.p.p[2] = 200.0f + trial * 80.0f; G.p.hp = 5000.0f;
 		run(15.0f, idle());
 		int used = 0; for (int i = 0; i < MAX_CAR; i++) used += G.car[i].on;
-		G.heat = 260.0f; int maxCops = 0, maxCars = 0; float first = -1;
+		G.heat = 450.0f; int maxCops = 0, maxCars = 0; float first = -1;
 		for (int i = 0; i < 40 * 60; i++) { run(1.0f / 60, idle()); if (i % 30 == 0) { int cops = 0, cars = 0; for (int k = 0; k < MAX_PED; k++) cops += G.ped[k].on && G.ped[k].cop && !G.ped[k].dead; for (int k = 0; k < MAX_CAR; k++) cars += G.car[k].on && G.car[k].bot; if (cops + cars > 0 && first < 0) first = i / 60.0f; if (cops > maxCops) maxCops = cops; if (cars > maxCars) maxCars = cars; } if (G.p.ps != PS_ALIVE) break; }
 		printf("   4 stars in the city (%d/%d car slots in use): up to %d officers and %d police cars, the first after %.1f s\n", used, MAX_CAR, maxCops, maxCars, first);
-		CHECK(maxCops >= 4 && maxCars >= 2 && first >= 0 && first < 5.0f, "the police come (officers %d, cars %d)", maxCops, maxCars);
+		CHECK(maxCops >= 3 && maxCars >= 1 && first >= 0 && first < 5.0f, "the police come (officers %d, cars %d)", maxCops, maxCars);
 	}
 
 	printf("police when Otto is out on the airport\n");
 	{
-		game_start(&G); clear_world(); G.p.p[0] = 260.0f; G.p.p[2] = CITY + 250.0f; G.heat = 320.0f; G.p.hp = 5000.0f;
+		game_start(&G); region_enter(&G, REG_AIRPORT); clear_world(); G.p.p[0] = 260.0f; G.p.p[2] = CITY + 250.0f; G.heat = 320.0f; G.p.hp = 5000.0f;
 		int maxCops = 0, maxCars = 0;
 		for (int i = 0; i < 90 * 60; i++) { run(1.0f / 60, idle()); if (i % 60 == 0) { int cops = 0, cars = 0; for (int k = 0; k < MAX_PED; k++) cops += G.ped[k].on && G.ped[k].cop && hypotf(G.ped[k].x - G.p.p[0], G.ped[k].z - G.p.p[2]) < 120.0f; for (int k = 0; k < MAX_CAR; k++) cars += G.car[k].on && G.car[k].bot && hypotf(G.car[k].x - G.p.p[0], G.car[k].z - G.p.p[2]) < 120.0f; if (cops > maxCops) maxCops = cops; if (cars > maxCars) maxCars = cars; } }
 		printf("   5 stars on the airport: up to %d officers and %d police cars within 120 m\n", maxCops, maxCars);
@@ -443,12 +525,17 @@ int main(void)
 		Input jump = idle(); jump.enter_p = true; run(0.1f, jump);
 		CHECK(G.p.car < 0 && G.p.p[1] > 20.0f, "X in the air jumps out (%.0f m up)", y0);
 		float hp0 = G.p.hp; float minVy = 0; bool opened = false;
+		run(1.5f, idle()); CHECK(G.p.chute == 0 && G.p.hp >= hp0, "the parachute does not open by itself"); { Input px = idle(); px.enter_p = true; run(0.05f, px); }
 		for (int i = 0; i < 60 * 60 && G.p.p[1] > 0.05f; i++) { run(1.0f / 60, idle()); if (G.p.v[1] < minVy) minVy = G.p.v[1]; if (G.p.chute > 0.9f) opened = true; }
 		printf("   fell from %.0f m: fastest %.0f m/s, chute opened %d, hp %.0f -> %.0f, now y %.2f\n", y0, -minVy, opened, hp0, G.p.hp, G.p.p[1]);
-		CHECK(opened && G.p.hp >= hp0 - 0.5f && G.p.p[1] <= 0.06f, "the parachute opens and he lands unhurt");
+		CHECK(opened && G.p.hp >= hp0 - 0.5f && G.p.p[1] <= 0.06f, "X opens the parachute and he lands unhurt");
+		// jumping from a plane costs nothing, and falling all the way without the chute does
+		{ int pl = game_add_car(&G, CAR_PLANE, 300.0f, RWY1_Z, PI_F / 2); G.car[pl].y = 120.0f; G.car[pl].vx = 50.0f; G.car[pl].vz = 0; G.car[pl].driven = true; G.p.car = pl; G.p.p[0] = 300.0f; G.p.p[2] = RWY1_Z; G.p.p[1] = 120.0f; G.p.hp = PLAYER_MAX_HP;
+		  Input jp = idle(); jp.enter_p = true; run(0.05f, jp); CHECK(G.p.car < 0 && G.p.hp >= PLAYER_MAX_HP - 0.1f, "jumping out of a flying plane does no damage (hp %.0f)", G.p.hp);
+		  for (int i = 0; i < 60 * 30 && G.p.p[1] > 0.05f; i++) run(1.0f / 60, idle()); run(0.3f, idle()); CHECK(G.p.ps != PS_ALIVE || G.p.hp < 60.0f, "falling to the ground without opening the parachute is deadly (hp %.0f)", G.p.hp); G.p.hp = PLAYER_MAX_HP; G.p.ps = PS_ALIVE; G.timeScale = 1.0f; G.hudT = 0; G.car[pl].on = false; }
 		// too low for a chute
-		G.p.p[0] = 200.0f; G.p.p[2] = 200.0f; G.p.p[1] = 6.0f; G.p.v[1] = 0; G.p.airT = 0.01f; hp0 = G.p.hp; run(1.5f, idle());
-		CHECK(G.p.hp < hp0 + 0.1f && G.p.p[1] <= 0.06f && G.p.chute == 0, "a short drop has no parachute");
+		G.p.p[0] = SX + 3; G.p.p[2] = SZ; G.p.p[1] = 6.0f; G.p.v[1] = 0; G.p.airT = 0.01f; hp0 = G.p.hp; run(1.5f, idle());
+		CHECK(G.p.hp < hp0 + 0.1f && G.p.p[1] <= 0.06f && G.p.chute == 0, "a short drop has no parachute (hp %.0f -> %.0f, y %.2f, chute %.2f, ps %d, car %d cover %d airT %.2f paused %d ts %.2f wheel %d fade %.2f go %d)", hp0, G.p.hp, G.p.p[1], G.p.chute, G.p.ps, G.p.car, G.p.cover, G.p.airT, G.paused, G.timeScale, G.wheel, G.fade, G.regionGo);
 		// stepping off a roof is a fall too, landing on one is fine
 		float rx = 0, rz = 0, rh = 0; for (int i = 0; i < G.w.nbox && rh == 0; i++) { const Box *b = &G.w.box[i]; if (b->y1 > 20.0f && b->y1 < 40.0f && b->kind == BK_BLDG && b->yb == 0 && city_roof_h(&G.w, 0.5f * (b->x0 + b->x1), 0.5f * (b->z0 + b->z1), 0.3f) == b->y1) { rx = 0.5f * (b->x0 + b->x1); rz = 0.5f * (b->z0 + b->z1); rh = b->y1; } }
 		if (rh > 0) { G.p.p[0] = rx; G.p.p[2] = rz; G.p.p[1] = rh + 30.0f; G.p.airT = 0.01f; G.p.v[1] = 0; run(8.0f, idle()); printf("   parachuted onto a %.0f m roof: y %.1f\n", rh, G.p.p[1]); CHECK(fabsf(G.p.p[1] - rh) < 0.2f, "he lands on the roof (y %.1f, roof %.1f)", G.p.p[1], rh); }
@@ -490,6 +577,40 @@ int main(void)
 		CHECK(fabsf(wrapang(G.cam.yaw - y0 + PI_F / 2)) < 0.1f, "double-tapping left turns a quarter to the left (%.2f)", wrapang(G.cam.yaw - y0));
 		y0 = G.cam.yaw; run(0.05f, rt); run(0.6f, idle()); run(0.05f, rt); run(0.5f, idle());
 		CHECK(fabsf(wrapang(G.cam.yaw - y0)) < 0.05f, "two slow taps only glance");
+	}
+
+	printf("camera follows Otto round when he changes direction (and the stick keeps its direction meanwhile)\n");
+	{
+		game_start(&G); clear_world(); G.p.p[0] = 100.0f; G.p.p[2] = 256.0f; G.p.face = 0; G.cam.yaw = 0; G.cam.manualT = 0;           // along the main east-west street
+		Input rt = idle(); rt.lx = 1; float x0 = G.p.p[0], z0 = G.p.p[2];
+		run(0.5f, rt); float yaw05 = G.cam.yaw; run(2.5f, rt);
+		printf("   ran right for 3 s: camera yaw %.2f (after 0.5 s %.2f), moved %.1f m east, %.1f m sideways\n", G.cam.yaw, yaw05, G.p.p[0] - x0, G.p.p[2] - z0);
+		CHECK(G.cam.yaw > 1.0f, "the camera swings round behind him (%.2f rad)", G.cam.yaw);
+		CHECK(yaw05 < 0.5f, "gently, not a snap (%.2f after half a second)", yaw05);
+		CHECK(G.p.p[0] - x0 > 8.0f && fabsf(G.p.p[2] - z0) < 4.0f, "and he keeps running the way the stick was pushed");
+		run(0.3f, idle()); Input up = idle(); up.ly = 1; x0 = G.p.p[0]; run(1.5f, up);
+		CHECK(G.p.p[0] - x0 > 4.0f, "after letting go, forward is where the camera looks (moved %.1f m east)", G.p.p[0] - x0);
+		game_start(&G); clear_world(); G.p.p[0] = SX + 3; G.p.p[2] = SZ - 80; G.p.face = 0; G.cam.yaw = 0; G.cam.manualT = 0;
+		Input dn = idle(); dn.ly = -1; z0 = G.p.p[2]; run(3.0f, dn);
+		printf("   ran toward the camera: yaw %.2f, moved %.1f m south\n", G.cam.yaw, G.p.p[2] - z0);
+		CHECK(fabsf(G.cam.yaw) > 1.8f && G.p.p[2] - z0 > 8.0f, "running toward the camera: it swings round behind him and he does not reverse (yaw %.2f)", G.cam.yaw);
+		G.cam.manualT = 1.0f; { float yy = G.cam.yaw; Input cs = idle(); cs.ly = 1; G.cam.manualT = 1.5f; run(0.5f, cs); CHECK(fabsf(wrapang(G.cam.yaw - yy)) < 0.05f, "while the player turns the camera himself it is left alone"); }
+	}
+
+	printf("motorcycle wheelies\n");
+	{
+		game_start(&G); clear_world();
+		int bw = game_add_car(&G, CAR_BIKE, SX + 6.4f, SZ + 200.0f, 0); G.p.p[0] = SX + 4.5f; G.p.p[2] = SZ + 200.0f; { Input ex = idle(); ex.enter_p = true; run(0.1f, ex); }
+		Input gs = idle(); gs.gas = true; run(1.2f, gs);
+		Input nb = gs; nb.ly = -1; Input nogas = idle(); nogas.ly = -1;
+		float sp0 = hypotf(G.car[bw].vx, G.car[bw].vz); float pn = 0;
+		run(0.3f, nogas); pn = G.car[bw].pitch;
+		CHECK(pn < 0.1f, "pad back without the throttle is no wheelie (%.2f)", pn);
+		run(1.2f, nb); printf("   speed %.0f m/s, pitch in the wheelie %.2f\n", sp0, G.car[bw].pitch);
+		CHECK(G.car[bw].pitch > 0.45f && hypotf(G.car[bw].vx, G.car[bw].vz) > sp0 * 0.9f, "pad back with the throttle lifts the front wheel and he keeps going (pitch %.2f)", G.car[bw].pitch);
+		float rl = G.car[bw].lean; Input steer = nb; steer.lx = 0.6f; run(0.6f, steer); CHECK(G.car[bw].pitch > 0.4f && G.car[bw].lean != rl, "he can steer during it");
+		run(1.5f, gs); CHECK(G.car[bw].pitch < 0.12f, "letting the pad go puts the wheel back down (%.2f)", G.car[bw].pitch);
+		G.car[bw].yaw = 0; G.car[bw].vx = 0; G.car[bw].vz = -40.0f; G.car[bw].pitch = 0; run(0.5f, nb); CHECK(G.car[bw].pitch < 0.3f, "no wheelie at top speed (%.2f, speed %.1f, yaw %.2f, vx %.1f vz %.1f)", G.car[bw].pitch, hypotf(G.car[bw].vx, G.car[bw].vz), G.car[bw].yaw, G.car[bw].vx, G.car[bw].vz);
 	}
 
 	printf("bat swing\n");

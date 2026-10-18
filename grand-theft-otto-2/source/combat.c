@@ -19,7 +19,7 @@ static float srand_(Game *g) { return crand(g) * 2.0f - 1.0f; }
 
 void toast(Game *g, const char *text) { strncpy(g->toast, text, sizeof g->toast - 1); g->toast[sizeof g->toast - 1] = 0; g->toastT = 2.2f; }
 
-void add_heat(Game *g, float a) { g->heat += a; if (g->heat > 500.0f) g->heat = 500.0f; }
+void add_heat(Game *g, float a) { g->heat += a; if (g->heat > 900.0f) g->heat = 900.0f; }
 
 bool los_clear(const Game *g, float ax, float ay, float az, float bx, float by, float bz)
 {
@@ -70,7 +70,7 @@ void damage_player(Game *g, float amount)
 	Player *p = &g->p;
 	if (p->ps != PS_ALIVE || amount <= 0) return;
 	p->hurtT = 0.45f;
-	amount *= 0.75f;                                                       // Otto is tougher than a pedestrian
+	amount *= 0.6f;                                                        // Otto is a lot tougher than a pedestrian
 	if (p->armor > 0) { float take = fminf(p->armor, amount); p->armor -= take; amount -= take; }
 	if (amount > 0) {
 		p->hp -= amount;
@@ -87,7 +87,7 @@ void damage_ped(Game *g, int idx, float amount, int byPlayer)
 	if (!p->on || p->dead) return;
 	p->hp -= amount; p->hurtT = 0.3f;
 	blood_burst(g, p, 4);
-	if (byPlayer) { add_heat(g, p->cop ? 20.0f : 10.0f); g->hitT = 0.22f; }
+	if (byPlayer) { add_heat(g, p->cop ? 12.0f : 6.0f); g->hitT = 0.22f; }
 	if (p->hp <= 0) {
 		if (byPlayer) g->killT = 0.9f;                                         // the crosshair confirms the kill
 		p->dead = true; p->state = PED_DOWN; p->timer = 14.0f; p->speed = 0;
@@ -95,7 +95,7 @@ void damage_ped(Game *g, int idx, float amount, int byPlayer)
 		add_decal(g, p->x, p->z, 1.0f + 0.8f * crand(g));
 		int amt = p->cop ? 30 + (int)(crand(g) * 60) : 5 + (int)(crand(g) * 55);
 		drop_cash(g, p->x + srand_(g) * 0.6f, p->z + srand_(g) * 0.6f, amt);
-		if (byPlayer) add_heat(g, p->cop ? 110.0f : 45.0f);
+		if (byPlayer) add_heat(g, p->cop ? 60.0f : 28.0f);
 	} else if (!p->cop && p->state != PED_DOWN) {
 		p->state = PED_FLEE; p->timer = 5.0f;
 		if (byPlayer) { g->noiseX = g->p.p[0]; g->noiseZ = g->p.p[2]; }
@@ -150,7 +150,7 @@ void spawn_blast(Game *g, float x, float y, float z, int byPlayer)
 	}
 	Player *p = &g->p;
 	if (p->car < 0 && p->ps == PS_ALIVE) { float d = hypotf(p->p[0] - x, p->p[2] - z); if (d < R) damage_player(g, 90.0f * (1 - d / R)); }
-	if (byPlayer) add_heat(g, 35.0f);
+	if (byPlayer) add_heat(g, 25.0f);
 }
 
 // ---- bullets ----------------------------------------------------------------------------------------------------------------------------------------
@@ -282,7 +282,7 @@ static void pickups_update(Game *g, float dt)
 		char buf[28];
 		switch (k->type) {
 		case PK_CASH: p->cash += k->amount; snprintf(buf, sizeof buf, "+$%d", k->amount); toast(g, buf); g->saveNeeded = true; break;
-		case PK_HEALTH: if (p->hp >= PLAYER_MAX_HP) continue; p->hp = fminf(PLAYER_MAX_HP, p->hp + 75.0f); toast(g, "Health"); break;
+		case PK_HEALTH: if (p->hp >= PLAYER_MAX_HP) continue; p->hp = fminf(PLAYER_MAX_HP, p->hp + 110.0f); toast(g, "Health"); break;
 		case PK_ARMOR: if (p->armor >= 100.0f) continue; p->armor = fminf(100.0f, p->armor + 50.0f); toast(g, "Body armor"); break;
 		default: {
 			static const int AMMO[W_COUNT] = { 0, 24, 60, 16, 0, 40, 10, 4 };
@@ -502,7 +502,6 @@ static void player_weapons(Game *g, const Input *in, float dt)
 			if (p->aimT > 0.55f && p->fireCd <= 0 && p->ammo[p->weapon] > 0) {
 				float m[3]; player_muzzle(g, m);
 				float pitch = 0;
-				if (g->fpsAim) { m[0] = g->cam.eye[0] + sinf(p->face) * 0.5f; m[1] = g->cam.eye[1] - 0.05f; m[2] = g->cam.eye[2] - cosf(p->face) * 0.5f; pitch = g->cam.pitch; }      // first person: from the crosshair
 				if (t >= 0) { const Ped *q = &g->ped[t]; float d = hypotf(q->x - m[0], q->z - m[2]); pitch = atan2f(1.15f - m[1], fmaxf(d, 1.0f)); }
 				fire_bullet(g, 0, m, p->face, pitch, w, 1.0f);
 				if (!TEST_LOADOUT) p->ammo[p->weapon]--;
@@ -530,9 +529,9 @@ static void player_weapons(Game *g, const Input *in, float dt)
 	p->aimT += (aimTarget - p->aimT) * fminf(1.0f, dt * (aimTarget > p->aimT ? 12.0f : 6.0f));
 	// the shooting itself is a crime if anybody is around to see it
 	if (g->time - p->lastShotT < 0.25f) {
-		for (int i = 0; i < MAX_PED; i++) { const Ped *q = &g->ped[i]; if (q->on && !q->dead && hypotf(q->x - p->p[0], q->z - p->p[2]) < 45.0f) { add_heat(g, 14.0f * dt); break; } }
+		for (int i = 0; i < MAX_PED; i++) { const Ped *q = &g->ped[i]; if (q->on && !q->dead && hypotf(q->x - p->p[0], q->z - p->p[2]) < 45.0f) { add_heat(g, 7.0f * dt); break; } }
 	}
-	if (p->hurtT <= -3.5f && p->hp < PLAYER_MAX_HP && p->hp > 0) { p->hp = fminf(PLAYER_MAX_HP, p->hp + 5.0f * dt); }       // recovery after a few quiet seconds
+	if (p->hurtT <= -3.5f && p->hp < PLAYER_MAX_HP && p->hp > 0) { p->hp = fminf(PLAYER_MAX_HP, p->hp + 8.0f * dt); }       // recovery after a few quiet seconds
 }
 
 // ---- respawn -------------------------------------------------------------------------------------------------------------------------------------
@@ -563,7 +562,7 @@ void player_respawn(Game *g)
 	Player *p = &g->p;
 	int cash = p->cash;
 	if (p->car >= 0) { g->car[p->car].driven = false; p->car = -1; }
-	p->p[1] = 0; p->v[1] = 0; p->chute = 0; p->airT = 0; g->fpsAim = false; g->wheel = false;
+	p->p[1] = 0; p->v[1] = 0; p->chute = 0; p->airT = 0; g->wheel = false;
 	respawn(g, false);
 	p->cash = cash;
 }
@@ -576,8 +575,14 @@ void combat_init(Game *g)
 	memset(p->has, 0, sizeof p->has); memset(p->ammo, 0, sizeof p->ammo);
 	p->has[W_FISTS] = true; p->has[W_PISTOL] = true; p->ammo[W_PISTOL] = 36; p->weapon = W_PISTOL; p->target = -1; p->lock = -1; p->cover = 0; p->coverCar = -1;
 	if (TEST_LOADOUT) give_weapons(p);
-	memset(g->bullet, 0, sizeof g->bullet); memset(g->part, 0, sizeof g->part); memset(g->decal, 0, sizeof g->decal); memset(g->pick, 0, sizeof g->pick); memset(g->blast, 0, sizeof g->blast);
 	g->heat = 0; g->stars = 0; g->timeScale = 1.0f; g->hudT = 0; g->toastT = 0;
+	combat_world_init(g);
+}
+
+// the pickups and effects of a freshly built region (Otto's weapons and the wanted level are left alone)
+void combat_world_init(Game *g)
+{
+	memset(g->bullet, 0, sizeof g->bullet); memset(g->part, 0, sizeof g->part); memset(g->decal, 0, sizeof g->decal); memset(g->pick, 0, sizeof g->pick); memset(g->blast, 0, sizeof g->blast);
 	// fixed pickups on the pavements: (block i, block j, corner, type)
 	static const int spots[][4] = {
 		{ 3, 3, 0, PK_HEALTH }, { 5, 2, 2, PK_HEALTH }, { 1, 5, 1, PK_HEALTH }, { 6, 6, 3, PK_HEALTH },

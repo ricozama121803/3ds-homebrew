@@ -431,6 +431,7 @@ static void ped_step(Game *g, int idx, float dt)
 			p->yaw = wrapang(p->yaw + wrapang(want_yaw - p->yaw) * fminf(1.0f, dt * 9.0f));
 		}
 	}
+	{ float px = p->x, pz = p->z, n[2]; if (city_push_circle(&g->w, &px, &pz, 0.3f, n)) { p->x = px; p->z = pz; } }       // a walker is never left inside a building (a jittered waypoint at a corner, a teleport to a node)
 	p->vx = sinf(p->yaw) * p->speed; p->vz = -cosf(p->yaw) * p->speed;
 	if (p->speed > 0.05f) p->phase += dt * p->speed / gait_stride(p->speed);
 }
@@ -439,9 +440,10 @@ static void ped_step(Game *g, int idx, float dt)
 void traffic_init(Game *g)
 {
 	for (int i = 0; i < MAX_PED; i++) g->ped[i].on = false;
-	for (int i = 0; i < 14; i++) spawn_ai_car(g, 30.0f);
-	for (int i = 0; i < 22; i++) spawn_ped(g, 12.0f, 1e9f);
-	for (int i = 0; i < 10; i++) spawn_ped(g, 22.0f, 100.0f);                // and a crowd close to where Otto starts
+	const RegionDef *rd = &REGIONS[g->region];
+	for (int i = 0; i < rd->ai; i++) spawn_ai_car(g, 30.0f);
+	for (int i = 0; i < rd->peds * 2 / 3; i++) spawn_ped(g, 12.0f, 1e9f);
+	for (int i = 0; i < rd->peds / 3; i++) spawn_ped(g, 22.0f, 100.0f);      // and a crowd close to where Otto starts
 }
 
 void traffic_update(Game *g, float dt)
@@ -456,7 +458,7 @@ void traffic_update(Game *g, float dt)
 		acc = 0;
 		int cars = 0;
 		for (int i = 0; i < MAX_CAR; i++) cars += g->car[i].on && g->car[i].ai.on;
-		if (cars < 14) spawn_ai_car(g, 110.0f);
+		if (cars < REGIONS[g->region].ai) spawn_ai_car(g, 110.0f);
 	}
 	if (pedAcc > 0.35f) {
 		pedAcc = 0;
@@ -468,9 +470,9 @@ void traffic_update(Game *g, float dt)
 			if (d > 175.0f && p->state != PED_DOWN) { p->on = false; continue; }               // walked off into the distance: make room near Otto
 			peds++; near += d < 110.0f;
 		}
-		int want = 26 + (g->stillT > 3.0f ? (int)fminf(12.0f, (g->stillT - 3.0f) * 3.0f) : 0);     // standing still for a while: up to 12 more people drift in
+		int want = REGIONS[g->region].peds * 4 / 5 + (g->stillT > 3.0f ? (int)fminf(12.0f, (g->stillT - 3.0f) * 3.0f) : 0);     // standing still for a while: up to 12 more people drift in
 		if (near < want) spawn_ped(g, 26.0f, 115.0f);
-		else if (peds < 22) spawn_ped(g, 60.0f, 1e9f);
+		else if (peds < REGIONS[g->region].peds * 2 / 3) spawn_ped(g, 60.0f, 1e9f);
 	}
 }
 

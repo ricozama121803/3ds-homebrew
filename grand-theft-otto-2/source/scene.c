@@ -102,7 +102,7 @@ static void wall(const Box *b, int side)
 	float ca = side < 2 ? ax : az, cb = side < 2 ? bx : bz;
 	float uoff = (b->tint[0] * 37.0f - floorf(b->tint[0] * 37.0f)) * 3.0f;
 	float sh = shade(nx, 0, nz);
-	bool shop = b->kind == BK_BLDG && b->yb == 0.0f && b->y1 > 8.0f && b->mat != MAT_COPPER && b->bld >= 0 && SG && (b->bld % 3) != 0;   // two buildings in three have a shopfront
+	bool shop = b->kind == BK_BLDG && b->yb == 0.0f && b->y1 > 8.0f && b->mat != MAT_COPPER && b->bld >= 0 && SG && (b->bld % 3) != 0 && SG->region != REG_AIRPORT && b->roof != RF_TILE;   // two buildings in three have a shopfront
 	float ys[4]; int ny = 0;
 	float yo = shop ? 5.0f : 0.0f;
 	ys[ny++] = b->yb;
@@ -227,6 +227,8 @@ static void cornice(const Box *b)
 	#undef LC
 }
 
+static void cactus(float x, float z, float sc, unsigned h);                  // scenery.h
+static void boulder(float x, float z, float r, float h, unsigned seed);
 static unsigned hash2(int a, int b) { unsigned h = (unsigned)a * 374761393u + (unsigned)b * 668265263u; h = (h ^ (h >> 13)) * 1274126177u; return h ^ (h >> 16); }
 static float hf(unsigned h) { return (h & 0xFFFF) / 65536.0f; }
 
@@ -234,9 +236,10 @@ static float hf(unsigned h) { return (h & 0xFFFF) / 65536.0f; }
 static void street_props(void)
 {
 	const World *w = &SG->w;
+	const bool desert = SG->region == REG_HILLS, apt = SG->region == REG_AIRPORT;
 	static const float lampT[3] = { 1, 1, 1 };
 	for (int j = 0; j < NB; j++) for (int i = 0; i < NB; i++) {
-		if (w->park[j][i]) continue;
+		if (w->park[j][i] || w->field[j][i]) continue;
 		float x0 = i * PITCH, z0 = j * PITCH, e = 0.174f * PITCH;
 		chunk_at(x0 + 1, z0 + 1);
 		for (int s = 0; s < 4; s++) {
@@ -247,9 +250,10 @@ static void street_props(void)
 			float u0 = 0.2f * PITCH, u1 = 0.5f * PITCH, u2 = 0.8f * PITCH;
 			#define PUT(id, u, y, sc, yw, tn) do { float px = horiz ? x0 + (u) : x0 + fixed, pz = horiz ? z0 + fixed : z0 + (u); prop(id, px, y, pz, yw, sc, tn); } while (0)
 			if (hf(h) < 0.33f) PUT(PR_LAMP, u0 + (hf(h >> 3) - 0.5f) * 4.0f, 0.0f, 1.0f, yaw, lampT);
-			if (hf(h >> 5) < 0.24f) {
+			if (hf(h >> 5) < (desert ? 0.2f : apt ? 0.0f : 0.24f)) {
 				float tn[3] = { 0.85f + 0.3f * hf(h >> 7), 0.9f + 0.2f * hf(h >> 9), 0.85f + 0.3f * hf(h >> 11) };
-				if (hf(h >> 15) < 0.8f) { float px = horiz ? x0 + u1 + (hf(h >> 4) - 0.5f) * 8.0f : x0 + fixed, pz = horiz ? z0 + fixed : z0 + u1 + (hf(h >> 4) - 0.5f) * 8.0f; prop_m(&PALMS[(int)(hf(h >> 17) * 1.99f)], px, 0.0f, pz, hf(h >> 8) * 6.28f, 0.9f + 0.4f * hf(h >> 6), tn); }
+				if (desert) { float px = horiz ? x0 + u1 + (hf(h >> 4) - 0.5f) * 8.0f : x0 + fixed, pz = horiz ? z0 + fixed : z0 + u1 + (hf(h >> 4) - 0.5f) * 8.0f; if (hf(h >> 20) < 0.7f) cactus(px, pz, 0.8f + 0.5f * hf(h >> 6), h >> 3); else boulder(px, pz, 0.8f + hf(h >> 5), 0.9f, h); }
+				else if (hf(h >> 15) < 0.8f) { float px = horiz ? x0 + u1 + (hf(h >> 4) - 0.5f) * 8.0f : x0 + fixed, pz = horiz ? z0 + fixed : z0 + u1 + (hf(h >> 4) - 0.5f) * 8.0f; prop_m(&PALMS[(int)(hf(h >> 17) * 1.99f)], px, 0.0f, pz, hf(h >> 8) * 6.28f, 0.9f + 0.4f * hf(h >> 6), tn); }
 				else PUT(PR_TREE0 + (int)(hf(h >> 13) * 2.99f), u1 + (hf(h >> 4) - 0.5f) * 6.0f, 0.0f, 0.75f + 0.45f * hf(h >> 6), hf(h >> 8) * 6.28f, tn);
 			}
 			if (hf(h >> 10) < 0.04f) PUT(PR_HYDRANT, u2, 0.0f, 1.0f, 0.0f, lampT);
@@ -331,12 +335,18 @@ static void shadows(void)
 static void ground(void)
 {
 	curChunk = NCH;
-	const float c[3] = { 0.92f, 0.92f, 0.92f };
+	const float *c = REGIONS[SG->region].road;                                  // the road tiles are tinted per region
 	for (int j = 0; j < NB; j++) for (int i = 0; i < NB; i++) {
 		float x0 = i * PITCH, x1 = x0 + PITCH, z0 = j * PITCH, z1 = z0 + PITCH;
 		chunk_at(x0 + 1, z0 + 1);
 		SV a = sv(x0, 0, z0, 0, 0, c, 1), b = sv(x1, 0, z0, 1, 0, c, 1), cc = sv(x1, 0, z1, 1, 1, c, 1), d = sv(x0, 0, z1, 0, 1, c, 1);
 		quad(&SM(MAT_ROAD), &a, &b, &cc, &d);
+		if (SG->w.lot[j][i] || SG->w.field[j][i]) {                                  // a tarmac car park / bare desert instead of buildings
+			float gx0 = x0 + 0.148f * PITCH, gx1 = x0 + 0.852f * PITCH, gz0 = z0 + 0.148f * PITCH, gz1 = z0 + 0.852f * PITCH;
+			bool lot = SG->w.lot[j][i]; const float lc[3] = { 0.5f, 0.5f, 0.54f }, fc[3] = { 1.0f, 0.74f, 0.5f }; const float *gc = lot ? lc : fc; float us = lot ? 1.0f / 8.0f : 1.0f / 12.0f;
+			SV g0 = sv(gx0, 0.1f, gz0, gx0 * us, gz0 * us, gc, 1), g1 = sv(gx1, 0.1f, gz0, gx1 * us, gz0 * us, gc, 1), g2 = sv(gx1, 0.1f, gz1, gx1 * us, gz1 * us, gc, 1), g3 = sv(gx0, 0.1f, gz1, gx0 * us, gz1 * us, gc, 1);
+			quad(&SM(lot ? MAT_ROOF : MAT_SAND), &g0, &g1, &g2, &g3);
+		}
 		if (SG->w.park[j][i]) {
 			float gx0 = x0 + 0.148f * PITCH, gx1 = x0 + 0.852f * PITCH, gz0 = z0 + 0.148f * PITCH, gz1 = z0 + 0.852f * PITCH, gc[3] = { 0.85f, 0.88f, 0.85f };
 			SV g0 = sv(gx0, 0.1f, gz0, gx0 / 12, gz0 / 12, gc, 1), g1 = sv(gx1, 0.1f, gz0, gx1 / 12, gz0 / 12, gc, 1), g2 = sv(gx1, 0.1f, gz1, gx1 / 12, gz1 / 12, gc, 1), g3 = sv(gx0, 0.1f, gz1, gx0 / 12, gz1 / 12, gc, 1);
@@ -370,7 +380,7 @@ static void tree(Mesh *m, float x, float z, float size, const float col[3])
 	}
 }
 
-static bool near_pad(float x, float z, float r) { for (int i = 0; i < N_PADS; i++) if (hypotf(x - PADS[i][0], z - PADS[i][1]) < r) return true; return false; }
+static bool near_pad(float x, float z, float r) { for (int i = 0; i < SG->npad; i++) if (hypotf(x - SG->pad[i][0], z - SG->pad[i][1]) < r) return true; return false; }
 
 static void trees(void)
 {
@@ -391,12 +401,22 @@ static void trees(void)
 			}
 			continue;
 		}
+		if (w->field[j][i]) {                                                  // the desert: cacti and boulders
+			chunk_at(i * PITCH + 1, j * PITCH + 1);
+			for (int k = 0; k < (SG->lowq ? 6 : 12); k++) {
+				float x = (i + 0.18f + 0.64f * rndf(&st)) * PITCH, z = (j + 0.18f + 0.64f * rndf(&st)) * PITCH;
+				if (near_pad(x, z, 11.0f)) continue;
+				unsigned h = rnd_next(&st);
+				if (rndf(&st) < 0.6f) cactus(x, z, 0.8f + 0.7f * rndf(&st), h); else boulder(x, z, 1.0f + 1.6f * rndf(&st), 0.9f + 1.4f * rndf(&st), h);
+			}
+		}
 	}
 }
 
 static void backdrop(void)
 {
 	curChunk = NCH;
+	if (SG->region == REG_HILLS) return;                                        // (its horizon is the mesas)
 	unsigned st = 0xBACD0u;
 	for (int i = 0; i < 34; i++) {
 		float a = i * 2 * PI_F / 34 + rndf(&st) * 0.1f, r = CITY * 0.5f + 330 + rndf(&st) * 330, cx = CITY * 0.5f + cosf(a) * r, cz = CITY * 0.5f + sinf(a) * r;
@@ -423,7 +443,7 @@ static void build_sky(void)
 		float e = el[i] * PI_F / 180.0f, a = j * 2 * PI_F / NS;
 		float d[3] = { sinf(a) * cosf(e), sinf(e), -cosf(a) * cosf(e) };
 		for (int k = 0; k < 3; k++) pos[i][j][k] = d[k] * R;
-		static const float hor[3] = { 0.80f, 0.88f, 0.97f }, mid[3] = { 0.46f, 0.67f, 0.94f }, top[3] = { 0.18f, 0.40f, 0.82f };
+		const float *hor = REGIONS[SG->region].skyHor, *mid = REGIONS[SG->region].skyMid, *top = REGIONS[SG->region].skyTop;
 		float c[3];
 		float t = sat(el[i] / 30.0f), t2 = sat((el[i] - 15) / 75.0f);
 		for (int k = 0; k < 3; k++) c[k] = el[i] <= 0 ? hor[k] : lerpf(lerpf(hor[k], mid[k], sqrtf(t)), top[k], t2);
@@ -484,11 +504,13 @@ static void build_static_pass(void)
 		chunk_at(0.5f * (b->x0 + b->x1), 0.5f * (b->z0 + b->z1));
 		if (b->kind == BK_TOWER) { water_tower(b); continue; }
 		if (b->kind == BK_DOME) { dome(b); continue; }
+		if (b->kind == BK_MAST) { mast(b); continue; }
 		for (int s = 0; s < 4; s++) wall(b, s);
 		roof_top(b);
 		if (!SG->lowq && b->kind == BK_BLDG && b->y1 > 8.0f && is_top_tier(i)) cornice(b);     // top tier of a building
 		if (!SG->lowq && b->kind == BK_BLDG && is_top_tier(i)) roof_props(b);
-		if (b->roof == RF_PYRAMID) pyramid(MAT_COPPER, b->x0, b->z0, b->x1, b->z1, b->y1, 5.0f + 0.3f * fminf(b->x1 - b->x0, b->z1 - b->z0), (const float[3]){ 0.95f, 1.0f, 0.95f }, true);
+		if (b->roof == RF_TILE) pyramid(MAT_RED, b->x0 - 0.5f, b->z0 - 0.5f, b->x1 + 0.5f, b->z1 + 0.5f, b->y1, 1.2f + 0.16f * fminf(b->x1 - b->x0, b->z1 - b->z0), (const float[3]){ 1.1f, 0.78f, 0.66f }, true);
+		else if (b->roof == RF_PYRAMID) pyramid(MAT_COPPER, b->x0, b->z0, b->x1, b->z1, b->y1, 5.0f + 0.3f * fminf(b->x1 - b->x0, b->z1 - b->z0), (const float[3]){ 0.95f, 1.0f, 0.95f }, true);
 		else if (b->roof == RF_SPIRE) {
 			float cx = 0.5f * (b->x0 + b->x1), cz = 0.5f * (b->z0 + b->z1), hw = fminf(1.4f, 0.12f * (b->x1 - b->x0)), h = fminf(48.0f, 0.2f * b->y1 + 10.0f);
 			pyramid(MAT_WHITE, cx - hw, cz - hw, cx + hw, cz + hw, b->y1, h, (const float[3]){ 0.8f, 0.82f, 0.86f }, false);
@@ -599,7 +621,6 @@ static void bone_between(int i, V3 h, V3 t, V3 left, V3 forward)
 	bones[i] = (BonePose){ h, add(mul(x, rx.x), add(mul(y, ry.x), mul(z, rz.x))), add(mul(x, rx.y), add(mul(y, ry.y), mul(z, rz.y))), add(mul(x, rx.z), add(mul(y, ry.z), mul(z, rz.z))) };
 }
 static V3 BAT_BASE, BAT_D; static float BAT_ON;                           // the bat held in both hands during a swing (set by pose_skeleton): the knob, the direction, and whether it applies
-static bool FPS_GUN;                                                       // drawing the first-person weapon
 static V3 HAND_R;                                                          // the middle of the right hand after posing (a bat is held there)
 static V3 GUN_POS, GUN_DIR, GUN_LEFT;                                       // where the right hand holds a gun, and which way it points (set by pose_skeleton)
 static V3 RIDE_Y, RIDE_Z, RIDE_FOOT[2], RIDE_HAND[2];                       // a rider: the bike's up and forward axes, where the feet (0 = left) and hands go (set by draw_rider)
@@ -624,7 +645,7 @@ static float seg_len(int bone) { return vlen(sub(arr3(otto_bones[bone].tail), ar
 
 // How Otto (or an officer) stands and holds himself when fighting. aim 0..1 = how much of the stance; gun = holding a gun (else fists);
 // punchU 0..1 runs through a punch (wind-up, strike, recovery) with punchSide 0 = right jab, 1 = left cross.
-typedef struct { float aim; bool gun; int weapon; float punchU; int punchSide; float crouch; bool ride; float cover; } Stance;      // cover 0..1: back flat against a wall
+typedef struct { float aim; bool gun; int weapon; float punchU; int punchSide; float crouch; bool ride; float cover; int sky; } Stance;      // sky: 1 free fall (belly down, arms and legs spread), 2 hanging under the parachute      // cover 0..1: back flat against a wall
 
 // How each gun is held. reach: how far out the right wrist is (fraction of the arm); rise: its height against the shoulder; sup: where the left hand holds the gun;
 // twist: how far the shoulders turn; wide / fwd / back: the feet; bend: how much the knees give. A pistol is held out at arm's length, an SMG low, long guns are pulled into the shoulder.
@@ -671,28 +692,31 @@ static void pose_skeleton(V3 P, float face, float speed, float phase, float fall
 	const GunPose *gp = &GUNPOSE[st->gun ? st->weapon : W_FISTS];
 	V3 aimF = f;                                                            // where the arms point
 	if (ride) { up = RIDE_Y; f = RIDE_Z; }
-	else if (st->gun) {                                                     // the body is turned away from the aim: a slanted stance, not square on
+	else if (st->sky == 1) { up = v3(sinf(face), 0, -cosf(face)); f = v3(0, -1, 0); }       // free fall: lying on the air face down, head the way he is heading
+	else if (st->gun && !st->sky) {                                                     // the body is turned away from the aim: a slanted stance, not square on
 		float bl = gp->blade * st->aim * (1 - fall) * (1 - gait_ease(speed / 0.9f));
 		f = v3(sinf(face + bl), 0, -cosf(face + bl));
 	}                                  // seated on a motorcycle: the body follows the bike's axes
 	V3 R = norm(cross(f, up));
-	float amp = ride ? 0.0f : gait_ease(speed / 0.9f) * (1 - fall);
-	float wUp = ride ? 1.0f : st->aim * (1 - fall);                         // the upper body takes the stance whether or not Otto is walking
+	float amp = ride || st->sky ? 0.0f : gait_ease(speed / 0.9f) * (1 - fall);
+	float wUp = ride || st->sky ? 1.0f : st->aim * (1 - fall);                         // the upper body takes the stance whether or not Otto is walking
 	float wLeg = ride ? 1.0f : fmaxf(wUp * (1 - amp), st->cover * (1 - fall) * (1 - amp));                             // the legs only when he stands still
 	float wCr = st->crouch * (1 - fall) * (1 - amp);                        // crouched
 	bool punching = !st->gun && st->punchU > 0;
 	float twistSide = st->punchSide ? -1.0f : 1.0f;
 	float twist = 0;                                                        // torso rotation about the vertical: + brings the right shoulder forward
-	if (wUp > 0.02f && !ride) twist = wUp * (st->gun ? gp->twist : st->weapon == W_BAT ? bat_twist(punching ? st->punchU : -1.0f) : (punching ? punch_twist(st->punchU) * twistSide : 0.3f));
+	if (wUp > 0.02f && !ride && !st->sky) twist = wUp * (st->gun ? gp->twist : st->weapon == W_BAT ? bat_twist(punching ? st->punchU : -1.0f) : (punching ? punch_twist(st->punchU) * twistSide : 0.3f));
 	int ca, cb; float blend = gait_blend(speed, &ca, &cb);
 	float key = (phase - floorf(phase)) * GAIT_KEYS; int k = (int)key, n = (k + 1) % GAIT_KEYS; float t = key - k;
 	const GaitKey *a = &gait_clips[ca].key[k], *a1 = &gait_clips[ca].key[n], *b = &gait_clips[cb].key[k], *b1 = &gait_clips[cb].key[n];
 	float height = lerpf(lerpf(a->height, a1->height, t), lerpf(b->height, b1->height, t), blend);
-	float lean = ride ? RIDE_LEAN : amp * (0.02f + 0.07f * gait_ease((speed - 2.0f) / 3.0f)) + fall * 1.5f - 0.26f * st->cover * (1 - fall);       // leaning back on the cover
+	float lean = ride ? RIDE_LEAN : st->sky == 1 ? -0.38f : st->sky == 2 ? -0.1f : amp * (0.02f + 0.07f * gait_ease((speed - 2.0f) / 3.0f)) + fall * 1.5f - 0.26f * st->cover * (1 - fall);       // leaning back on the cover
 	V3 L = mul(R, -1), u = norm(add(mul(up, cosf(lean)), mul(f, sinf(lean)))), fw = norm(cross(L, u));
 	float breathe = 0.004f * sinf(time * 2.2f) * (1 - amp);
 	float pelvis = ride ? RIDE_PELVIS : lerpf(lerpf(0.93f, height, amp) + breathe - gp->bend * wLeg - 0.40f * wCr, 0.22f, fall);     // knees bend a little in the stance
-	BonePose world = { add(add(P, mul(up, pelvis)), mul(f, -0.12f * st->cover * (1 - fall) * (1 - amp))), L, u, fw };      // hips back against the cover
+	V3 rootPos = add(add(P, mul(up, pelvis)), mul(f, -0.12f * st->cover * (1 - fall) * (1 - amp)));
+	if (st->sky == 1) rootPos = add(P, v3(0, 0.95f, 0));                      // lying flat, his middle where his feet would be plus a metre
+	BonePose world = { rootPos, L, u, fw };      // hips back against the cover
 	for (int i = 0; i < OTTO_NB; i++) {
 		HQuat q = qblend(qblend(hq(a->q[i]), hq(a1->q[i]), t), qblend(hq(b->q[i]), hq(b1->q[i]), t), blend), idle = { 1, 0, 0, 0 };
 		q = qblend(idle, q, amp);
@@ -714,9 +738,9 @@ static void pose_skeleton(V3 P, float face, float speed, float phase, float fall
 		bones[i] = (BonePose){ add(parent->p, bone_rot(parent, offset)), bone_rot(parent, local.x), bone_rot(parent, local.y), bone_rot(parent, local.z) };
 	}
 	// legs: a staggered stance (the left foot forward and the feet apart; wider and more forward for a boxer) when Otto stands still
-	if ((wLeg > 0.02f || wCr > 0.02f) && fall < 0.3f) {
+	if ((wLeg > 0.02f || wCr > 0.02f || st->sky) && fall < 0.3f) {
 		bool cr = wCr > wLeg;
-		float w = ride ? 1.0f : gait_ease(cr ? wCr : wLeg);
+		float w = ride || st->sky ? 1.0f : gait_ease(cr ? wCr : wLeg);
 		float fwd = cr ? 0.12f : st->gun ? gp->fwd : 0.32f, back = cr ? 0.1f : st->gun ? gp->back : 0.24f, wide = cr ? 0.15f : st->gun ? gp->wide : 0.2f;
 			if (st->cover > 0.5f && wUp < 0.3f && !cr) { fwd = 0.22f; back = 0.1f; wide = 0.17f; }          // feet out in front, hips on the wall
 		for (int sd = 0; sd < 2; sd++) {                                    // 0 = left leg, 1 = right leg
@@ -724,6 +748,8 @@ static void pose_skeleton(V3 P, float face, float speed, float phase, float fall
 			float side = sd ? -1.0f : 1.0f;
 			V3 A = ride ? RIDE_FOOT[sd] : add(P, add(mul(L, side * wide), add(mul(f, sd ? -back : fwd), v3(0, 0.13f, 0))));
 			V3 H = bones[th].p, Kfk = bones[sh].p, Afk = bones[ft].p, Tfk = bones[tt].p, Tip = add(bones[tt].p, bone_rot(&bones[tt], sub(arr3(otto_bones[tt].tail), arr3(otto_bones[tt].head))));
+			if (st->sky == 1) A = add(H, add(mul(up, -0.84f), add(mul(L, side * 0.55f), mul(f, -0.28f))));          // legs trailing, wide apart, heels up
+			else if (st->sky == 2) A = add(H, add(mul(up, -0.92f), add(mul(L, side * 0.15f), mul(f, 0.14f))));       // legs dangling a little forward
 			V3 reach;
 			V3 K = ik_joint(H, A, seg_len(th), seg_len(sh), add(mul(f, 1.0f), mul(L, side * 0.15f)), &reach);
 			V3 toe0 = add(A, add(mul(f, 0.17f), v3(0, -0.07f, 0))), tip0 = add(toe0, add(mul(f, 0.13f), v3(0, -0.015f, 0)));
@@ -732,7 +758,7 @@ static void pose_skeleton(V3 P, float face, float speed, float phase, float fall
 			bone_between(th, H, K2, L, f); bone_between(sh, K2, A2, L, f); bone_between(ft, A2, T2, L, f); bone_between(tt, T2, P2, L, f);
 		}
 	}
-	if (fall < 0.5f && !ride) {                                             // keep the soles out of the floor (clip blends can sink a foot a little)
+	if (fall < 0.5f && !ride && !st->sky) {                                 // keep the soles out of the floor (clip blends can sink a foot a little)
 		float low = 1e9f;
 		for (int s = 0; s < 2; s++) {
 			int i = s ? OB_R_FOOT : OB_L_FOOT;
@@ -751,6 +777,12 @@ static void pose_skeleton(V3 P, float face, float speed, float phase, float fall
 		bool arm[2] = { true, true };
 		if (ride) {                                                         // both hands on the handlebar grips
 			for (int sd = 0; sd < 2; sd++) { Wt[sd] = RIDE_HAND[sd]; hint[sd] = add(mul(up, -1.0f), mul(L, sd ? -0.9f : 0.9f)); }
+		} else if (st->sky) {                                               // free fall: arms out and bent up like wings; parachute: both hands up on the risers
+			for (int sd = 0; sd < 2; sd++) {
+				float sg = sd ? -1.0f : 1.0f;
+				if (st->sky == 1) { Wt[sd] = add(S[sd], add(mul(L, sg * 0.62f), add(mul(up, 0.44f), mul(f, 0.05f)))); hint[sd] = add(mul(L, sg * 0.7f), mul(f, 0.4f)); }
+				else { Wt[sd] = add(S[sd], add(mul(L, sg * 0.1f), add(mul(up, 0.58f), mul(f, 0.06f)))); hint[sd] = add(mul(L, sg * 1.0f), mul(f, -0.1f)); }
+			}
 		} else if (st->gun) {
 			// right hand holds the grip with the arm almost straight out, the left hand supports the front of the gun
 			Wt[1] = add(add(S[1], mul(dir, (l1 + l2) * gp->reach)), v3(0, gp->rise, 0)); hint[1] = add(mul(up, -1.0f), mul(L, 0.35f));
@@ -823,7 +855,7 @@ static void draw_gun(int weapon, V3 *muzzleOut)
 	static const V3 steel = { 0.55f, 0.56f, 0.6f }, dark = { 0.2f, 0.2f, 0.22f }, wood = { 0.55f, 0.36f, 0.2f };
 	V3 d = GUN_DIR, L = GUN_LEFT, up = norm(cross(L, d));                    // up from the hand's left and the barrel direction
 	if (up.y < 0) up = mul(up, -1);
-	float gs = FPS_GUN ? 1.05f : 1.3f;                                         // the weapon is drawn a little oversized so its detail reads on the small screen
+	float gs = 1.3f;                                         // the weapon is drawn a little oversized so its detail reads on the small screen
 	d = mul(d, gs); L = mul(L, gs); up = mul(up, gs);
 	V3 p = GUN_POS;
 	Mesh *m = &dm[D_OPAQUE];
@@ -931,16 +963,9 @@ static void draw_otto(const Game *g)
 	bool dead = p->ps == PS_WASTED;
 	float fall = dead ? sat(p->psT / 0.35f) : 0;
 	bool armed = !weapon_melee(p->weapon);
-	Stance st = { dead ? 0 : (p->weapon == W_BAT && p->punchT > 0 ? 1.0f : p->aimT), armed && p->punchT <= 0, p->weapon, p->punchT > 0 ? 1.0f - p->punchT / melee_time(p->weapon) : 0.0f, p->punchSide, p->crouch, false, p->cover ? p->lean : 0.0f };
-	if (!armed || p->punchT > 0) st.gun = false;
-	if (g->fpsAim && !dead && st.gun) {                                      // first person: only the weapon, held in front of the camera
-		float cy = cosf(g->cam.yaw), sy = sinf(g->cam.yaw), cp = cosf(g->cam.pitch), sp = sinf(g->cam.pitch);
-		V3 fw = v3(sy * cp, sp, -cy * cp), rt = v3(cy, 0, sy), eye = v3(g->cam.eye[0], g->cam.eye[1], g->cam.eye[2]);
-		GUN_POS = add(eye, add(mul(fw, 0.9f), add(mul(rt, 0.2f), v3(0, -0.2f, 0)))); GUN_DIR = fw; GUN_LEFT = mul(rt, -1);
-		FPS_GUN = true; V3 mz; draw_gun(p->weapon, &mz); FPS_GUN = false; if (p->flashT > 0) muzzle_flash(mz);
-		return;
-	}
-	if (p->airT > 0.05f && !dead) st.crouch = p->chute > 0.3f ? 0.3f : 0.55f;           // legs tucked while he falls, dangling under the canopy
+	Stance st = { dead ? 0 : (p->weapon == W_BAT && p->punchT > 0 ? 1.0f : p->aimT), armed && p->punchT <= 0, p->weapon, p->punchT > 0 ? 1.0f - p->punchT / melee_time(p->weapon) : 0.0f, p->punchSide, p->crouch, false, p->cover ? p->lean : 0.0f, !dead && p->airT > 0.05f ? (p->chute > 0.3f ? 2 : 1) : 0 };
+	if (!armed || p->punchT > 0 || st.sky) st.gun = false;
+	if (st.sky) { st.aim = 0; st.punchU = 0; st.crouch = 0; }
 	pose_skeleton(P, p->face, p->speed, p->phase, fall, g->time, &st);
 	skin_mesh(otto_verts, OTTO_NV, otto_tris, OTTO_NT, otto_colors, P, 1.0f, false);
 	if (p->chute > 0.05f && !dead) {                                        // the parachute: an eight-sided dome on four lines
@@ -958,7 +983,7 @@ static void draw_otto(const Game *g)
 	}
 	if (!dead && st.gun && p->aimT > 0.25f) { V3 mz; draw_gun(p->weapon, &mz); if (p->flashT > 0) muzzle_flash(mz); }
 	if (!dead && p->weapon == W_BAT) draw_bat(p);
-	blob_shadow(p->p[0], p->p[1] + 0.07f, p->p[2], 0.62f, 0.5f);
+	{ float gy = p->airT > 0.05f ? city_roof_h(&g->w, p->p[0], p->p[2], 0.3f) : p->p[1], hgt = p->p[1] - gy; blob_shadow(p->p[0], gy + 0.07f, p->p[2], 0.62f + 0.012f * fminf(hgt, 60.0f), 0.5f * clampf(1.0f - hgt / 90.0f, 0.2f, 1.0f)); }      // the shadow stays on the ground (or the roof) below him
 }
 
 // ---- pedestrians: the low-poly model in an outfit made from the person's random choices ----------------------------------------------------
@@ -1160,6 +1185,10 @@ static CFrame car_frame(const Car *c)
 	fr.z = add(mul(F, cp), mul(U, sp));
 	fr.y = norm(cross(fr.z, fr.x));
 	fr.o = v3(c->x, c->y, c->z);
+	if (c->kind == CAR_BIKE && c->pitch > 0.01f) {                           // a wheelie pivots about the rear axle, so the bike moves up and back as the nose rises
+		float th = c->pitch, dz = 0.85f * (cosf(th) - 1.0f) + 0.35f * sinf(th), dy = 0.85f * sinf(th) + 0.35f * (cosf(th) - 1.0f);
+		fr.o = add(fr.o, add(mul(F, dz), mul(U, dy)));
+	}
 	return fr;
 }
 static V3 lp(const CFrame *f, float x, float y, float z) { return add(f->o, add(mul(f->x, x), add(mul(f->y, y), mul(f->z, z)))); }
@@ -1321,7 +1350,7 @@ static void draw_scenery_dynamic(const Game *g, const Scene *s)
 {
 	float t = g->time;
 	// Ferris wheel facing along the pier: a rim of 12 beams, 6 spokes, 12 cabins that stay upright, and two A-frames holding the hub
-	{
+	if (g->region == REG_CITY) {
 		V3 c = v3(PIER_X + 22.0f, 18.0f, 256.0f);
 		float dx = c.x - s->eye[0], dz = c.z - s->eye[2];
 		if (dx * dx + dz * dz < 380.0f * 380.0f && dx * s->fwd[0] + dz * s->fwd[2] > -30.0f) {
@@ -1619,6 +1648,7 @@ static void draw_plane(const Game *g, const Car *c)
 // Two airliners that use the runways: one takes off from runway 1, one lands on runway 2 and taxis off, on a 120 s loop.
 static void draw_airport_planes(const Game *g, const Scene *s)
 {
+	if (g->region != REG_AIRPORT) return;
 	if (hypotf(s->eye[0] - 300.0f, s->eye[2] - (CITY + 300.0f)) > 900.0f) return;
 	Mesh *m = &dm[D_OPAQUE];
 	float t = fmodf(g->time + 8.0f, 120.0f);
@@ -1646,7 +1676,7 @@ static void draw_airport_planes(const Game *g, const Scene *s)
 void scene_build(const Game *g, Scene *s)
 {
 	const Cam *cam = &g->cam;
-	float vyaw = cam->yaw + cam->look, cy = cosf(vyaw), sy = sinf(vyaw), cp = cosf(cam->pitch), sp = sinf(cam->pitch);
+	float vyaw = cam->yaw + cam->look, vpit = cam->pitch + (cam->framePitch - cam->pitch) * cam->aimFrame, cy = cosf(vyaw), sy = sinf(vyaw), cp = cosf(vpit), sp = sinf(vpit);
 	float f[3] = { sy * cp, sp, -cy * cp };
 	float R[3] = { cy, 0, sy };
 	float U[3] = { R[1] * f[2] - R[2] * f[1], R[2] * f[0] - R[0] * f[2], R[0] * f[1] - R[1] * f[0] };
@@ -1662,7 +1692,7 @@ void scene_build(const Game *g, Scene *s)
 	s->view[11] = (f[0] * s->eye[0] + f[1] * s->eye[1] + f[2] * s->eye[2]);
 	s->view[12] = s->view[13] = s->view[14] = 0; s->view[15] = 1;
 	s->skyview[3] = s->skyview[7] = s->skyview[11] = 0; s->skyview[12] = s->skyview[13] = s->skyview[14] = 0; s->skyview[15] = 1;
-	s->fov = cam->fov;
+	s->fov = cam->fov - 14.0f * cam->aimFrame * cam->zoomK;
 	for (int c = 0; c <= NCH; c++) {
 		s->vis[c] = scene_chunk_visible(s, c);
 		float cx = 0, cz = 0, cy, rv, rh = 0;

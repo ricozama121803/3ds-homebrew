@@ -62,8 +62,9 @@ int main(void)
 
 	printf("3. the police come (2 stars, Otto stands still for 150 s)\n");
 	clear_world(); game_start(&G); clear_world();
-	G.p.p[0] = SX + 3; G.p.p[2] = SZ; G.heat = 100; run(0.1f, idle());
-	CHECK(G.stars == 2, "100 heat should be 2 stars, got %d", G.stars);
+	G.p.p[0] = SX + 3; G.p.p[2] = SZ; G.heat = 250; run(0.1f, idle());
+	CHECK(G.stars == 1, "the first star comes at once, got %d", G.stars);
+	run(15.0f, idle()); CHECK(G.stars >= 2, "and the next one within 15 s, got %d", G.stars);
 	float firstNear = -1, busted = -1, wastedAt = -1; int prevBusted = 0;
 	int maxFoot = 0, maxCars = 0;
 	for (float t = 0; t < 150.0f; t += 1.0f / 60) {
@@ -124,12 +125,12 @@ int main(void)
 	clear_world(); game_start(&G); clear_world();
 	{
 		int sc = game_add_car(&G, CAR_SPORTS, SX + 3.6f, SZ, 0); G.p.car = sc; G.car[sc].driven = true; G.p.p[0] = G.car[sc].x; G.p.p[2] = G.car[sc].z;
-		G.heat = 160; G.stars = 3;
+		G.heat = 250; G.stars = 3;
 		float closest = 1e9f, stuckMax = 0; static float stuck[MAX_CAR]; int rammed = 0; float hp0 = G.car[sc].hp;
 		unsigned rs2 = 99; Input d = idle(); d.gas = true;
 		for (float tt = 0; tt < 180.0f; tt += 1.0f / 60) {
 			if (((int)(tt * 60)) % 90 == 0) { d.lx = rndf(&rs2) * 1.6f - 0.8f; d.brake = rndf(&rs2) < 0.1f; }
-			G.heat = fmaxf(G.heat, 150);                                             // keep the wanted level up so the test measures the chase
+			G.heat = fmaxf(G.heat, 250);                                             // keep the wanted level up so the test measures the chase
 			if (G.p.ps != PS_ALIVE) { G.p.ps = PS_ALIVE; G.p.hp = PLAYER_MAX_HP; G.timeScale = 1; }
 			if (G.p.car < 0) { G.p.car = sc; G.car[sc].driven = true; }
 			G.car[sc].hp = 100;
@@ -161,7 +162,7 @@ int main(void)
 			in.cx = rndf(&rs) < 0.2f ? rndf(&rs) * 2 - 1 : 0; in.x_p = rndf(&rs) < 0.1f;
 		}
 		in.enter_p = (frame % 400 == 0);
-		if (frame % 7200 == 3600) G.heat = fmaxf(G.heat, 150.0f);                 // keep the police busy
+		if (frame % 7200 == 3600) G.heat = fmaxf(G.heat, 250.0f);                 // keep the police busy
 		int ps = G.p.ps;
 		game_update(&G, &in, 1.0f / 60); in.x_p = false; in.enter_p = false;
 		if (G.p.ps != ps) { if (G.p.ps == PS_WASTED) wasted++; if (G.p.ps == PS_BUSTED) busts++; }
@@ -169,7 +170,7 @@ int main(void)
 		float vals[] = { G.p.p[0], G.p.p[2], G.p.hp, G.p.armor, G.cam.eye[0], G.cam.eye[1], G.cam.eye[2], G.heat };
 		for (int i = 0; i < 8; i++) if (!isfinite(vals[i])) { printf("  FAIL: frame %d: NaN in player/camera/heat\n", frame); return 1; }
 		CHECK(G.p.hp >= 0 && G.p.hp <= PLAYER_MAX_HP + 0.01f && G.p.armor >= 0, "hp %.1f armor %.1f out of range at frame %d", G.p.hp, G.p.armor, frame);
-		CHECK(G.heat >= 0 && G.heat <= 500.01f, "heat %.1f out of range", G.heat);
+		CHECK(G.heat >= 0 && G.heat <= 900.01f, "heat %.1f out of range", G.heat);
 		{ static float hist[600][MAX_PED][6]; static int hn, shown;
 		  for (int i = 0; i < MAX_PED; i++) { const Ped *w = &G.ped[i]; float *h = hist[hn % 600][i]; h[0] = w->x; h[1] = w->z; h[2] = (float)w->state; h[3] = (float)G.stars; h[4] = w->on ? (float)w->cop : -1; h[5] = w->speed; }
 		  hn++;

@@ -20,6 +20,7 @@ enum { MAT_WHITE, MAT_ROAD, MAT_GLASS, MAT_CREAM, MAT_RED, MAT_TAN, MAT_COPPER, 
 #define MAX_BOX   900
 #define MAX_CAR   56
 #define MAX_PED   56
+#define MAX_PAD   4
 #define MAX_BULLET 48
 #define MAX_PART  120
 #define MAX_DECAL 28
@@ -35,8 +36,8 @@ enum { MAT_WHITE, MAT_ROAD, MAT_GLASS, MAT_CREAM, MAT_RED, MAT_TAN, MAT_COPPER, 
 #define PIER_Z1   262.0f
 #define FLOOR_H   3.4f                       // metres per storey (the facade textures repeat every two storeys)
 
-enum { BK_BLDG, BK_TOWER, BK_DOME };
-enum { RF_FLAT, RF_PYRAMID, RF_SPIRE };
+enum { BK_BLDG, BK_TOWER, BK_DOME, BK_MAST };                           // BK_MAST: a lattice radio mast
+enum { RF_FLAT, RF_PYRAMID, RF_SPIRE, RF_TILE };                         // RF_TILE: a hip roof of red tiles
 typedef struct {
 	float x0, y0, z0, x1, y1, z1;
 	float yb;                                // where the visible wall starts (top of the tier below; the collision box always starts lower)
@@ -45,6 +46,23 @@ typedef struct {
 	short bld;                               // boxes of one building are consecutive and share this id
 } Box;
 
+// ---- regions: separate towns of the same size (8 x 8 blocks), one resident at a time; you cross between them on a gate road (or by air) with a fade ----
+enum { REG_CITY, REG_AIRPORT, REG_HILLS, REG_COUNT };
+typedef struct { const char *name; unsigned seed; float haze[3], skyHor[3], skyMid[3], skyTop[3], road[3], dry[3]; int ai, peds, parked; } RegionDef;
+static const RegionDef REGIONS[REG_COUNT] = {
+	{ "LOS OTTO",     0x20C0FFEEu, { 0.80f, 0.88f, 0.97f }, { 0.80f, 0.88f, 0.97f }, { 0.46f, 0.67f, 0.94f }, { 0.18f, 0.40f, 0.82f }, { 0.92f, 0.92f, 0.92f }, { 1.00f, 0.80f, 0.44f }, 14, 32, 17 },
+	{ "OTTO AIRPORT", 0x41495250u, { 0.80f, 0.86f, 0.93f }, { 0.82f, 0.87f, 0.93f }, { 0.52f, 0.68f, 0.90f }, { 0.22f, 0.42f, 0.78f }, { 0.80f, 0.83f, 0.88f }, { 0.52f, 0.62f, 0.42f }, 9, 20, 12 },
+	{ "SUNSET HILLS", 0x48494C4Cu, { 0.98f, 0.83f, 0.64f }, { 0.99f, 0.80f, 0.58f }, { 0.86f, 0.66f, 0.66f }, { 0.34f, 0.40f, 0.74f }, { 1.00f, 0.86f, 0.70f }, { 1.00f, 0.74f, 0.52f }, 7, 16, 10 } };
+// the world map on the touch screen: where each town's tile is, and the two buttons (pixels on the 320 x 240 bottom screen)
+static inline void world_tile(int r, float *x, float *y, float *w, float *h) { static const float T[REG_COUNT][4] = { { 84, 24, 70, 70 }, { 84, 118, 70, 70 }, { 176, 24, 56, 70 } }; *x = T[r][0]; *y = T[r][1]; *w = T[r][2]; *h = T[r][3]; }
+static inline bool in_box(float px, float py, float x, float y, float w, float h) { return px >= x && px < x + w && py >= y && py < y + h; }
+#define MAP_BTN_X 246.0f
+#define MAP_BTN_W 68.0f
+#define MAP_BTN_H 22.0f
+#define MAP_TOGGLE_Y 138.0f
+#define MAP_TRAVEL_Y 163.0f
+typedef struct { float x0, z0, x1, z1; int dir, dest; } Gate;             // a road out of the town: dir = the way out (0 +x, 1 -x, 2 +z, 3 -z); at its far end the next region loads
+
 // street furniture on the pavements: trash bins, newspaper boxes and dumpsters. Low cover (they do not stop a standing shot, a crouched Otto hides behind them); only people and bullets see them.
 #define MAX_PROP 320
 typedef struct { float x, z, hx, hz, h; unsigned char type, face; } Prop;      // type 0 bin, 1 newspaper box, 2 dumpster; face 0 +x, 1 -x, 2 +z, 3 -z: the way it faces (the street)
@@ -52,6 +70,11 @@ typedef struct { float x, z, hx, hz, h; unsigned char type, face; } Prop;      /
 typedef struct {
 	Box box[MAX_BOX]; int nbox, nbld;
 	Prop prop[MAX_PROP]; int nprop; short pfirst[NB][NB], pcount[NB][NB];
+	int region;
+	bool field[NB][NB], lot[NB][NB];         // desert ground / tarmac car park instead of a built-up block
+	Gate gate[2]; int ngate;
+	int nbr[4];                              // the region you reach by flying out of the +x, -x, +z, -z side (or -1)
+	float rectF[6][4], rectC[6][4]; int nrectF, nrectC;     // where Otto may walk / a car may drive: x0, z0, x1, z1
 	int bfirst[NB][NB], bcount[NB][NB];      // boxes per block (all boxes of a block are consecutive)
 	bool park[NB][NB];
 	int downtown0, downtown1;                // downtown blocks are i >= downtown0 and j < downtown1 (north-east corner)
@@ -59,7 +82,7 @@ typedef struct {
 
 typedef struct { bool hitx, hitz, head, landed; float nx, nz; } Contact;
 
-void  city_generate(World *w, unsigned seed);
+void  city_generate(World *w, int region);
 float city_ray(const World *w, const float o[3], const float d[3], float tmax, float n[3]);   // distance to the first box hit, or -1
 void  city_move(const World *w, float p[3], const float d[3], Contact *c);                     // move the on-foot body with collision (axis by axis)
 bool  city_push_circle(const World *w, float *x, float *z, float r, float n[2]);               // push a ground circle out of the buildings; true (and the push direction) if it hit
@@ -89,16 +112,12 @@ static const AirBox AIRBOX[N_AIRBOX] = {
 	{ 188.6f, CITY + 62.6f, 189.4f, CITY + 63.4f, 8 } };   // a lamp tower on the plaza
 static const float AIR_PLANE_X[4] = { 290.0f, 340.0f, 390.0f, 440.0f };
 #define AIR_PLANE_Z (CITY + 168.0f)
-static inline bool world_walkable(float x, float z)       // on foot: the city, the beach, the pier and the airport
-{
-	if (z >= 1.0f && z <= CITY - 1.0f && x >= BEACH_X && x <= CITY - 1.0f) return true;
-	if (z > CITY - 1.0f && z <= AIR_Z1 && x >= AIR_X0 - 20.0f && x <= AIR_X1) return true;
-	return x >= PIER_X && x <= BEACH_X && z >= PIER_Z0 && z <= PIER_Z1;
-}
+bool  world_walkable(const World *w, float x, float z);                    // on foot: the town, its gate roads, and the beach and pier in the city / the airfield at the airport
+void  world_keep_car(const World *w, float *x, float *z);                // pull a car back inside where cars may drive
 unsigned rnd_next(unsigned *s);
 float rndf(unsigned *s);
 
-#define PLAYER_MAX_HP 150.0f
+#define PLAYER_MAX_HP 280.0f
 #define BODY_HW 0.4f
 #define BODY_H  1.8f
 
@@ -144,6 +163,7 @@ typedef struct {
 	float peekT, peekDx, peekDz, coverRef;   // 0..1 how far out he is, how far he goes at 1, and the heading he aims at when nobody is in sight
 	float chute, airT;                       // parachute 0..1 (open), seconds since he left the ground (v[1] is his vertical speed)
 	float crouch, lean;                      // 0..1: how crouched he is, how far he leans against the cover
+	float wrapT;                             // time left of the move round a corner onto the next wall
 	int coverView;                           // which way along the cover the camera looks (-1 / +1)
 	bool sprint;                             // running flat out (two quick taps of B)
 	float sprintBoost, bTapT, sprintT;       // 0..1: more taps of B, a faster sprint; time since the last B tap; how long the stick has been let go
@@ -215,7 +235,7 @@ enum { PK_CASH, PK_HEALTH, PK_ARMOR, PK_PISTOL, PK_SMG, PK_SHOTGUN, PK_BAT, PK_R
 typedef struct { bool on; int type, amount; float x, z, t, respawn; bool fixed; } Pickup;
 typedef struct { bool on; float x, y, z, t; } Blast;
 
-typedef struct { float eye[3], yaw, pitch, dist, fov, manualT, look, shoulder; } Cam;      // shoulder: how far the camera has slid to Otto's right while he aims (0..1)      // look: extra yaw while the D-pad glances left / right / back
+typedef struct { float eye[3], yaw, pitch, dist, fov, manualT, look, shoulder, aimFrame, framePitch, zoomK, ctrlYaw; } Cam;      // shoulder: how far the camera has slid to Otto's right while he aims (0..1)      // look: extra yaw while the D-pad glances left / right / back
 
 typedef struct {
 	World w;
@@ -234,8 +254,12 @@ typedef struct {
 	float respawnT, pnsT, pickT, stillT;
 	bool paused;
 	float time, hintT;
-	bool fpsAim;                             // first-person aiming (D-pad up while aiming with L)
-	bool wheel; int wheelSel; float wheelT;  // the weapon wheel (SELECT): open, the weapon under the stick, how long it has been open
+	float starCd;                            // seconds before the wanted level may rise another star
+	int region, regionGo; float fade, fadeDir; bool regionDirty; float bannerT;      // the town Otto is in, the one he is leaving for (-1 none), the black fade (1 = black) and its direction, the scene needs rebuilding, name banner time
+	float goX, goZ, goYaw; int goFrom;     // where he arrives in the new region (goYaw < -50: keep his heading)
+	int npad; float pad[MAX_PAD][3];        // the helipads of this region
+	bool wheel, wheelHold; int wheelSel; float wheelT;     // wheelHold: D-pad up opened it and is still held (do not read it as 'fists' yet)
+	int mapMode, mapSel;                     // bottom screen: 0 = this town, 1 = the world map; the town picked on it (-1 none)  // the weapon wheel (SELECT): open, the weapon under the stick, how long it has been open
 	float hitT, killT;                       // crosshair hit marker and kill marker time left
 	float dpT[3]; bool dpPrev[3], dpSup[3];  // D-pad right / left / down: time since the last press, held last frame, glance suppressed (a double tap turns Otto instead)
 	float turnT, turnAmt;                    // a double tap turns Otto and the camera by turnAmt over turnT seconds
@@ -254,7 +278,9 @@ static inline float car_radius(int kind) { return kind == CAR_BIKE ? 0.62f : kin
 static inline float car_spacing(int kind) { return kind == CAR_BIKE ? 0.55f : kind == CAR_HELI ? 1.0f : kind == CAR_PLANE ? 3.2f : 1.45f; }
 
 void  game_init(Game *g, bool lowq);
-void  game_start(Game *g);                                  // new game: Otto on the street, a few cars parked around
+void  game_start(Game *g);
+void  region_enter(Game *g, int region);                    // build a region's world, traffic and pickups (Otto and the wanted level are kept by the caller)
+void  region_go(Game *g, int dest, float x, float z, float yaw);       // start the fade to another region, arriving at x, z                                  // new game: Otto on the street, a few cars parked around
 void  game_update(Game *g, const Input *in, float dt);
 int   game_nearest_car(const Game *g, float x, float z, float maxd);   // closest unoccupied car within maxd of the point, or -1
 int   game_add_car(Game *g, int kind, float x, float z, float yaw);
@@ -279,12 +305,13 @@ extern const WeaponDef WPN[W_COUNT];
 #define SPRAY_X    (5 * PITCH)
 #define SPRAY_Z    (3 * PITCH + 26.0f)
 #define SPRAY_R    5.5f
-#define N_PADS     3                         // helipads: in the park south-east of downtown and two on the beach
-static const float PADS[N_PADS][3] = { { 5.5f * PITCH, 6.5f * PITCH, 0.0f }, { -38.0f, 140.0f, 1.57f }, { -38.0f, 390.0f, 1.57f } };    // x, z, heading of the parked helicopter
+static const float PADS_CITY[3][3] = { { 5.5f * PITCH, 6.5f * PITCH, 0.0f }, { -38.0f, 140.0f, 1.57f }, { -38.0f, 390.0f, 1.57f } };
+static const float PADS_AIRPORT[1][3] = { { 5.5f * PITCH, CITY + 62.0f, 0.0f } }, PADS_HILLS[1][3] = { { 1.5f * PITCH, 5.5f * PITCH, 0.0f } };    // x, z, heading of the parked helicopter
 
 // ---- combat.c: weapons, bullets, blood, damage, cash and pickups, explosions, WASTED / BUSTED ----------------------------------------------------------
 void  combat_init(Game *g);
 void  combat_update(Game *g, const Input *in, float dt);
+void  combat_world_init(Game *g);                           // pickups and effects for a newly built region
 void  damage_player(Game *g, float amount);
 void  player_respawn(Game *g);                              // the pause menu's respawn: back on his feet at the hospital, cash kept
 void  damage_ped(Game *g, int idx, float amount, int byPlayer);

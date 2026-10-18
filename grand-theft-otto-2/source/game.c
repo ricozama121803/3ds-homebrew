@@ -1,6 +1,7 @@
 // Grand Theft Otto II - game logic: Otto on foot, cars with arcade drift physics, enter / exit, chase camera.
 #include "game.h"
 #include "otto_gait.h"
+#include <stdio.h>
 
 #define WALK_MIN   1.0f
 #define WALK_MAX   3.3f
@@ -51,22 +52,27 @@ int game_add_car(Game *g, int kind, float x, float z, float yaw)
 	return -1;
 }
 
-void game_start(Game *g)
+// ---- regions ------------------------------------------------------------------------------------------------------------------------
+bool world_walkable(const World *w, float x, float z)
 {
-	int keepCash = g->p.cash;
-	g->wheel = false; g->fpsAim = false; g->hitT = g->killT = 0;
-	memset(g->car, 0, sizeof g->car);
-	memset(g->ped, 0, sizeof g->ped);
-	g->trng = 0x7A11C0DEu ^ g->rng;
-	Player *p = &g->p;
-	memset(p, 0, sizeof *p);
-	p->p[0] = START_X; p->p[2] = START_Z; p->face = DEG(180); p->car = -1; p->cash = keepCash; p->target = -1; p->bTapT = 9.0f;
-	g->cam.yaw = DEG(180); g->cam.pitch = -0.2f; g->cam.dist = 5.0f; g->cam.fov = 62; g->cam.manualT = 0;
-	// a few cars right at the start, then parked cars scattered along the streets
-	game_add_car(g, CAR_SPORTS, 4 * PITCH + 6.4f, START_Z + 16.0f, 0.0f);
-	game_add_car(g, CAR_SEDAN, 4 * PITCH - 6.4f, START_Z + 12.0f, DEG(180));
-	game_add_car(g, CAR_TAXI, 4 * PITCH + 6.4f, START_Z + 30.0f, 0.0f);
-	for (int tries = 0; tries < 400; tries++) {
+	for (int k = 0; k < w->nrectF; k++) { const float *r = w->rectF[k]; if (x >= r[0] && x <= r[2] && z >= r[1] && z <= r[3]) return true; }
+	return false;
+}
+
+void world_keep_car(const World *w, float *x, float *z)
+{
+	float bd = 1e18f, bx = *x, bz = *z;
+	for (int k = 0; k < w->nrectC; k++) {
+		const float *r = w->rectC[k];
+		float cx = clampf(*x, r[0], r[2]), cz = clampf(*z, r[1], r[3]), d = (cx - *x) * (cx - *x) + (cz - *z) * (cz - *z);
+		if (d < bd) { bd = d; bx = cx; bz = cz; }
+	}
+	*x = bx; *z = bz;
+}
+
+static void park_cars(Game *g, int count, int bikes)
+{
+	for (int tries = 0; tries < 500; tries++) {
 		int line = 1 + (int)(rnd_next(&g->rng) % (NB - 1)), side = (rnd_next(&g->rng) & 1) ? 1 : -1;
 		float u = 14.0f + rndf(&g->rng) * (CITY - 28.0f), off = side * 6.4f;
 		float m = fmodf(u, PITCH);
@@ -75,15 +81,15 @@ void game_start(Game *g)
 		float x = alongX ? u : line * PITCH + off, z = alongX ? line * PITCH + off : u;
 		float yaw = alongX ? (side > 0 ? DEG(90) : DEG(-90)) : (side > 0 ? 0.0f : DEG(180));
 		if (!car_free(g, x, z, -1)) continue;
-		int k = rnd_next(&g->rng) % 12; int kind = k < 3 ? CAR_SEDAN : k < 8 ? CAR_SPORTS : k < 9 ? CAR_VAN : k < 11 ? CAR_TAXI : CAR_POLICE;
+		int k = rnd_next(&g->rng) % 12, kind;
+		if (g->region == REG_HILLS) kind = k < 4 ? CAR_SEDAN : k < 7 ? CAR_SPORTS : k < 10 ? CAR_VAN : CAR_TAXI;       // the suburbs: family cars
+		else if (g->region == REG_AIRPORT) kind = k < 3 ? CAR_SEDAN : k < 5 ? CAR_SPORTS : k < 8 ? CAR_VAN : k < 11 ? CAR_TAXI : CAR_POLICE;      // taxis and vans
+		else kind = k < 3 ? CAR_SEDAN : k < 8 ? CAR_SPORTS : k < 9 ? CAR_VAN : k < 11 ? CAR_TAXI : CAR_POLICE;
 		game_add_car(g, kind, x, z, yaw);
-		int n = 0; for (int i = 0; i < MAX_CAR; i++) n += g->car[i].on;
-		if (n >= 17) break;
+		int n = 0; for (int i = 0; i < MAX_CAR; i++) n += g->car[i].on && g->car[i].kind < CAR_BIKE;
+		if (n >= count) break;
 	}
-	// two motorcycles by the start, more parked along the streets; the helicopters wait on their pads
-	game_add_car(g, CAR_BIKE, 4 * PITCH - 6.6f, START_Z - 3.0f, DEG(180));
-	game_add_car(g, CAR_BIKE, 4 * PITCH + 6.6f, START_Z + 44.0f, 0.0f);
-	for (int tries = 0, bikes = 0; tries < 300 && bikes < 5; tries++) {
+	for (int tries = 0, b = 0; tries < 300 && b < bikes; tries++) {
 		int line = 1 + (int)(rnd_next(&g->rng) % (NB - 1)), side = (rnd_next(&g->rng) & 1) ? 1 : -1;
 		float u = 14.0f + rndf(&g->rng) * (CITY - 28.0f), m = fmodf(u, PITCH);
 		if (m < 15.0f || m > PITCH - 15.0f) continue;
@@ -91,12 +97,116 @@ void game_start(Game *g)
 		float x = alongX ? u : line * PITCH + side * 8.2f, z = alongX ? line * PITCH + side * 8.2f : u;
 		if (!car_free(g, x, z, -1)) continue;
 		game_add_car(g, CAR_BIKE, x, z, alongX ? (side > 0 ? DEG(90) : DEG(-90)) : (side > 0 ? 0.0f : DEG(180)));
-		bikes++;
+		b++;
 	}
-	for (int i = 0; i < N_PADS; i++) game_add_car(g, CAR_HELI, PADS[i][0], PADS[i][1], PADS[i][2]);
-	game_add_car(g, CAR_PLANE, 90.0f, RWY2_Z, PI_F / 2);                                       // two airliners waiting at the west end of runway 2
-	game_add_car(g, CAR_PLANE, 190.0f, RWY2_Z, PI_F / 2);
+}
+
+// Build a region: its blocks, its parked cars, traffic, pavement crowds, helipads and pickups. Otto and the wanted level are the caller's business.
+void region_enter(Game *g, int region)
+{
+	g->region = region;
+	city_generate(&g->w, region);
+	memset(g->car, 0, sizeof g->car);
+	memset(g->ped, 0, sizeof g->ped);
+	g->rng ^= REGIONS[region].seed;
+	g->trng = 0x7A11C0DEu ^ g->rng;
+	g->npad = 0;
+	if (region == REG_CITY) { for (int i = 0; i < 3; i++) memcpy(g->pad[g->npad++], PADS_CITY[i], sizeof g->pad[0]); }
+	else if (region == REG_AIRPORT) memcpy(g->pad[g->npad++], PADS_AIRPORT[0], sizeof g->pad[0]);
+	else memcpy(g->pad[g->npad++], PADS_HILLS[0], sizeof g->pad[0]);
+	park_cars(g, REGIONS[region].parked, region == REG_CITY ? 5 : 3);
+	for (int i = 0; i < g->npad; i++) game_add_car(g, CAR_HELI, g->pad[i][0], g->pad[i][1], g->pad[i][2]);
+	if (region == REG_AIRPORT) {                                                                 // two airliners waiting at the west end of runway 2
+		game_add_car(g, CAR_PLANE, 90.0f, RWY2_Z, PI_F / 2);
+		game_add_car(g, CAR_PLANE, 190.0f, RWY2_Z, PI_F / 2);
+	}
 	traffic_init(g);
+	combat_world_init(g);
+	police_reset(g);
+	g->regionDirty = true;
+	g->bannerT = 3.2f;
+}
+
+void region_go(Game *g, int dest, float x, float z, float yaw)
+{
+	if (g->regionGo >= 0 || dest == g->region) return;
+	g->regionGo = dest; g->fadeDir = 1.0f; g->goX = x; g->goZ = z; g->goYaw = yaw;
+}
+
+// the fade to black, the swap behind it, the fade back in
+static void region_update(Game *g, float dt)
+{
+	if (g->bannerT > 0) g->bannerT -= dt;
+	if (g->regionGo >= 0) {
+		g->fade = fminf(1.0f, g->fade + dt / 0.45f);
+		if (g->fade < 1.0f) return;
+		Player *p = &g->p;
+		int dest = g->regionGo; g->regionGo = -1;
+		Car saved; bool inCar = p->car >= 0;
+		if (inCar) saved = g->car[p->car];
+		region_enter(g, dest);
+		p->p[0] = g->goX; p->p[2] = g->goZ;
+		if (g->goYaw > -50.0f) p->face = g->goYaw;
+		for (int i = 0; i < MAX_CAR; i++) if (g->car[i].on && hypotf(g->car[i].x - g->goX, g->car[i].z - g->goZ) < 9.0f && g->car[i].kind < CAR_HELI) g->car[i].on = false;
+		p->car = -1;
+		if (inCar) {                                                       // the vehicle he is driving comes along
+			int ni = game_add_car(g, saved.kind, g->goX, g->goZ, saved.yaw);
+			if (ni >= 0) { g->car[ni] = saved; g->car[ni].x = g->goX; g->car[ni].z = g->goZ; g->car[ni].on = true; g->car[ni].ai.on = false; g->car[ni].bot = false; p->car = ni; }
+		}
+		p->lock = -1; p->cover = 0; p->peek = 0; p->peekT = 0; p->crouch = 0;
+		g->cam.manualT = 0; g->fadeDir = -1.0f;
+		return;
+	}
+	if (g->fadeDir < 0) { g->fade -= dt / 0.6f; if (g->fade <= 0) { g->fade = 0; g->fadeDir = 0; } }
+}
+
+// has Otto (or the vehicle he is in) reached the end of a gate road, or flown out of the region?
+static void region_check(Game *g)
+{
+	Player *p = &g->p;
+	if (g->regionGo >= 0 || g->fade > 0.05f || p->ps != PS_ALIVE) return;
+	const World *w = &g->w;
+	float x = p->p[0], z = p->p[2];
+	bool air = (p->car >= 0 && car_flying(&g->car[p->car])) || (p->car < 0 && p->airT > 0.5f);
+	for (int k = 0; k < w->ngate && !air; k++) {                           // gate roads are for people and vehicles on the ground; aircraft cross the border in the air
+		const Gate *gt = &w->gate[k];
+		if (x < gt->x0 || x > gt->x1 || z < gt->z0 || z > gt->z1) continue;
+		bool out = gt->dir == 0 ? x > gt->x1 - 4.0f : gt->dir == 1 ? x < gt->x0 + 4.0f : gt->dir == 2 ? z > gt->z1 - 4.0f : z < gt->z0 + 4.0f;
+		if (!out) continue;
+		float lat = clampf(gt->dir < 2 ? z : x, 226.0f, 294.0f);
+		static const float AX[4] = { -48.0f, CITY + 48.0f, 0, 0 }, AZ[4] = { 0, 0, -48.0f, CITY + 48.0f };
+		region_go(g, gt->dest, gt->dir < 2 ? AX[gt->dir] : lat, gt->dir < 2 ? lat : AZ[gt->dir], -100.0f);
+		return;
+	}
+	if (air) {                                                              // flying out over the border
+		static const float OUT[4] = { CITY + 150.0f, -150.0f, 0, -150.0f };
+		int dir = x > CITY + 150.0f ? 0 : x < -150.0f ? 1 : z > (w->region == REG_AIRPORT ? AIR_Z1 : CITY) + 150.0f ? 2 : z < -150.0f ? 3 : -1;
+		(void)OUT;
+		if (dir >= 0 && w->nbr[dir] >= 0) {
+			float ax = dir == 0 ? -140.0f : dir == 1 ? CITY + 140.0f : clampf(x, 20.0f, CITY - 20.0f), az = dir == 2 ? -140.0f : dir == 3 ? CITY + 140.0f : clampf(z, 20.0f, CITY - 20.0f);
+			float py = p->p[1];
+			region_go(g, w->nbr[dir], ax, az, -100.0f);
+			(void)py;
+		}
+	}
+}
+
+void game_start(Game *g)
+{
+	int keepCash = g->p.cash;
+	g->wheel = false; g->hitT = g->killT = 0; g->starCd = 0;
+	g->regionGo = -1; g->fade = 0; g->fadeDir = 0;
+	Player *p = &g->p;
+	memset(p, 0, sizeof *p);
+	p->p[0] = START_X; p->p[2] = START_Z; p->face = DEG(180); p->car = -1; p->cash = keepCash; p->target = -1; p->bTapT = 9.0f;
+	g->cam.yaw = DEG(180); g->cam.pitch = -0.2f; g->cam.dist = 5.0f; g->cam.fov = 62; g->cam.manualT = 0;
+	region_enter(g, REG_CITY);
+	// a few cars and two motorcycles right at the start
+	game_add_car(g, CAR_SPORTS, 4 * PITCH + 6.4f, START_Z + 16.0f, 0.0f);
+	game_add_car(g, CAR_SEDAN, 4 * PITCH - 6.4f, START_Z + 12.0f, DEG(180));
+	game_add_car(g, CAR_TAXI, 4 * PITCH + 6.4f, START_Z + 30.0f, 0.0f);
+	game_add_car(g, CAR_BIKE, 4 * PITCH - 6.6f, START_Z - 3.0f, DEG(180));
+	game_add_car(g, CAR_BIKE, 4 * PITCH + 6.6f, START_Z + 44.0f, 0.0f);
 	combat_init(g);
 	police_init(g);
 }
@@ -107,7 +217,7 @@ void game_init(Game *g, bool lowq)
 	g->rng = 0x6F770002u;
 	for (int i = 0; i < 3; i++) g->dTapAt[i] = -10.0f;
 	g->lowq = lowq; g->sens = 1.0f;
-	city_generate(&g->w, 0x20C0FFEEu);
+	g->regionGo = -1;
 	game_start(g);
 	g->hintT = 9.0f;
 }
@@ -172,7 +282,11 @@ static void car_step(Game *g, int idx, const Input *in, float dt)
 	float latAcc = yawRate * fs, lonAcc = thr > 0 ? accel * 0.3f : c->braking ? -9.0f : 0;
 	if (bike) c->lean += (-clampf(latAcc * 0.028f, -0.55f, 0.55f) - c->lean) * fminf(1.0f, dt * 6.0f);          // a motorcycle leans into the turn
 	else c->lean += (clampf(latAcc * 0.012f, -0.09f, 0.09f) - c->lean) * fminf(1.0f, dt * 7.0f);
-	c->pitch += (clampf(lonAcc * 0.004f, -0.05f, 0.05f) - c->pitch) * fminf(1.0f, dt * 6.0f);
+	{
+		bool wheelie = bike && c->driven && in && in->gas && in->ly < -0.5f && fs > 4.0f && fs < 36.0f;       // pull the pad back with the throttle on: the front wheel comes up
+		float pt = wheelie ? 0.62f : clampf(lonAcc * 0.004f, -0.05f, 0.05f);
+		c->pitch += (pt - c->pitch) * fminf(1.0f, dt * (wheelie ? 4.5f : 6.0f));
+	}
 	(void)rx; (void)rz; (void)spd;
 
 	// buildings: three circles along the car
@@ -193,7 +307,7 @@ static void car_step(Game *g, int idx, const Input *in, float dt)
 			if (vn < 0) { c->vx -= 1.3f * vn * nx; c->vz -= 1.3f * vn * nz; c->vx *= 0.93f; c->vz *= 0.93f; if (-vn > 6) damage_car(g, idx, (-vn - 6) * 1.3f, c->driven); }
 		}
 	}
-	c->x = clampf(c->x, BEACH_X + 3.0f, CITY - 1.5f); c->z = clampf(c->z, 1.5f, c->x >= AIR_X0 && c->x <= AIR_X1 ? AIR_Z1 - 3.0f : CITY - 1.5f);       // the airport is open to cars too
+	world_keep_car(&g->w, &c->x, &c->z);                                       // the town, its gate roads, and (airport) the airfield
 }
 
 // A helicopter: the circle pad pushes it forward / back and turns it, R climbs, B or A / L descends, and it hovers when nothing is pressed.
@@ -243,7 +357,7 @@ static void heli_step(Game *g, int idx, const Input *in, float dt)
 			if (vn < 0) { c->vx -= 1.4f * vn * nx; c->vz -= 1.4f * vn * nz; if (-vn > 9) damage_car(g, idx, (-vn - 9) * 3.0f, c->driven); }
 		}
 	}
-	c->x = clampf(c->x, BEACH_X - 260.0f, CITY + 110.0f); c->z = clampf(c->z, -120.0f, CITY + 520.0f);
+	c->x = clampf(c->x, -420.0f, CITY + 420.0f); c->z = clampf(c->z, -420.0f, (g->w.region == REG_AIRPORT ? AIR_Z1 : CITY) + 420.0f);
 }
 
 // An airliner: R = throttle, B / A / L = brake, the circle pad banks left / right and pitches (pull back = nose up). It needs about 150 km/h to lift off and stalls below that.
@@ -309,7 +423,7 @@ static void plane_step(Game *g, int idx, const Input *in, float dt)
 			if (vn < 0) { c->vx -= 1.2f * vn * nx; c->vz -= 1.2f * vn * nz; if (-vn > 6) damage_car(g, idx, (-vn - 6.0f) * 6.0f, c->driven); }
 		}
 	}
-	c->x = clampf(c->x, -2200.0f, 2400.0f); c->z = clampf(c->z, -1800.0f, 2200.0f);
+	c->x = clampf(c->x, -1800.0f, 2400.0f); c->z = clampf(c->z, -1800.0f, 2400.0f);
 }
 
 static void cars_collide(Game *g)
@@ -447,7 +561,7 @@ bool cover_peek_offset(const Game *g, int side, float out[2])
 	return true;
 }
 
-static void cover_leave(Player *p) { p->cover = 0; p->peek = 0; p->peekT = 0; p->coverCar = -1; p->lean = 0; }
+static void cover_leave(Player *p) { p->cover = 0; p->peek = 0; p->peekT = 0; p->coverCar = -1; p->lean = 0; p->wrapT = 0; }
 
 static void cover_toggle(Game *g, Input *in)
 {
@@ -466,6 +580,29 @@ static void cover_toggle(Game *g, Input *in)
 	g->cam.manualT = 0;
 }
 
+// Keep pushing the stick at the end of a wall and he goes round the corner onto the next wall (an outside corner), or onto the wall in front of him (an inside corner).
+static bool cover_wrap(Game *g, int s)
+{
+	Player *p = &g->p;
+	float nx = p->coverNx, nz = p->coverNz, tx = nz * s, tz = -nx * s;      // the way he is sliding
+	float bx = p->coverX, bz = p->coverZ, sx, sz, nnx, nnz;
+	if (cover_probe(g, bx + tx * 0.35f, bz + tz * 0.35f, 0.3f, NULL)) {      // a wall ahead of him: an inside corner, he turns to the new wall
+		float e = 0;
+		while (e < 1.5f && !cover_probe(g, bx + tx * e, bz + tz * e, 0.05f, NULL)) e += 0.05f;
+		if (e >= 1.5f) return false;
+		sx = bx + tx * (e - COVER_WALL); sz = bz + tz * (e - COVER_WALL); nnx = -tx; nnz = -tz;
+	} else {                                                               // the wall ends: round the corner onto the side of the building
+		float d = 0;
+		while (d < 1.0f && cover_valid(g, bx + tx * d, bz + tz * d, nx, nz)) d += 0.05f;
+		if (d >= 1.0f) return false;
+		float c = fmaxf(d - 0.15f, 0);
+		sx = bx + tx * (c + COVER_WALL) - nx * (COVER_WALL + 0.4f); sz = bz + tz * (c + COVER_WALL) - nz * (COVER_WALL + 0.4f); nnx = tx; nnz = tz;
+	}
+	if (!cover_valid(g, sx, sz, nnx, nnz) || cover_probe(g, sx, sz, 0.3f, NULL) || cover_probe(g, sx - nnx * 0.8f, sz - nnz * 0.8f, 0.15f, NULL) == 2) return false;
+	p->coverX = sx; p->coverZ = sz; p->coverNx = nnx; p->coverNz = nnz; p->coverView = s; p->wrapT = 0.3f;
+	return true;
+}
+
 static void cover_step(Game *g, const Input *in, float dt)
 {
 	Player *p = &g->p;
@@ -477,16 +614,20 @@ static void cover_step(Game *g, const Input *in, float dt)
 	}
 	if (gone) { cover_leave(p); return; }
 	float m = in->lx;                                                      // the stick slides him along the cover: right = toward the screen's right, which is always the +tangent side (see the camera below)
-	if (p->peek == 0 && p->peekT < 0.05f && fabsf(m) > 0.15f) {          // slide along the cover
+	if (p->wrapT > 0) p->wrapT -= dt;
+	if (p->peek == 0 && p->peekT < 0.05f && fabsf(m) > 0.15f && p->wrapT <= 0) {          // slide along the cover
 		p->coverView = m > 0 ? 1 : -1;
 		float step = m * 2.3f * dt, lead = m > 0 ? 0.35f : -0.35f;
 		float x = p->coverX + tx * step, z = p->coverZ + tz * step, hx = tx * lead, hz = tz * lead;
 		if (cover_valid(g, x + hx, z + hz, nx, nz) && !cover_probe(g, x, z, 0.3f, NULL)) { p->coverX = x; p->coverZ = z; }
+		else if (fabsf(m) > 0.6f && p->coverCar < 0) cover_wrap(g, m > 0 ? 1 : -1);
 	}
 	p->peekT += ((p->peek ? 1.0f : 0.0f) - p->peekT) * fminf(1.0f, dt * (p->peek ? 9.0f : 7.0f));
 	if (!p->peek && p->peekT < 0.02f) p->peekT = 0;
 	float e = p->peekT * p->peekT * (3 - 2 * p->peekT);
-	p->p[0] = p->coverX + p->peekDx * e; p->p[2] = p->coverZ + p->peekDz * e;
+	float gx = p->coverX + p->peekDx * e, gz = p->coverZ + p->peekDz * e;
+	if (p->wrapT > 0) { float k = fminf(1.0f, dt * 12.0f); p->p[0] += (gx - p->p[0]) * k; p->p[2] += (gz - p->p[2]) * k; }       // glide round the corner
+	else { p->p[0] = gx; p->p[2] = gz; }
 	p->v[0] = p->v[2] = 0; p->speed = 0;
 	float want = atan2f(nx, -nz);                                          // back to the cover, facing the street
 	if (p->aimT < 0.3f) p->face = wrapang(p->face + wrapang(want - p->face) * fminf(1.0f, dt * 10.0f));
@@ -499,7 +640,9 @@ static void cover_step(Game *g, const Input *in, float dt)
 static void foot_step(Game *g, const Input *in, float dt)
 {
 	Player *p = &g->p;
-	float sy = sinf(g->cam.yaw), cy = cosf(g->cam.yaw);
+	// the stick's frame of reference is the camera's heading, but it stays put while the camera swings round after Otto (below) and catches up when the stick is let go
+	if (hypotf(in->lx, in->ly) < 0.12f || p->speed < 1.0f || g->cam.manualT > 0 || p->aimT > 0.3f || g->turnT > 0) g->cam.ctrlYaw = g->cam.yaw;
+	float sy = sinf(g->cam.ctrlYaw), cy = cosf(g->cam.ctrlYaw);
 	// sprint: two quick taps of B; keep tapping and it gets faster (let go of the stick or start aiming and it stops)
 	p->bTapT += dt;
 	p->sprintBoost = fmaxf(0.0f, p->sprintBoost - dt * 0.18f);
@@ -529,10 +672,10 @@ static void foot_step(Game *g, const Input *in, float dt)
 	if (p->p[1] > fl + 0.03f) {
 		p->airT += dt;
 		p->v[1] = fmaxf(-42.0f, p->v[1] - 22.0f * dt);
-		if (p->chute <= 0 && p->airT > 1.0f && p->p[1] - fl > 16.0f) p->chute = 0.02f;
-		if (p->chute > 0) { p->chute = fminf(1.0f, p->chute + dt * 2.5f); p->v[1] += (-5.2f - p->v[1]) * fminf(1.0f, dt * 4.0f * p->chute); }
+		if (in->enter_p && p->chute <= 0 && p->airT > 0.2f && p->p[1] - fl > 6.0f) p->chute = 0.02f;      // X opens the parachute (it is never automatic)
+		if (p->chute > 0) { p->chute = fminf(1.0f, p->chute + dt * 3.0f); p->v[1] += (-5.2f - p->v[1]) * fminf(1.0f, dt * 6.0f * p->chute); }
 		p->p[1] += p->v[1] * dt;
-		if (p->p[1] <= fl) { float imp = -p->v[1]; p->p[1] = fl; p->v[1] = 0; if (imp > 11.0f) damage_player(g, (imp - 11.0f) * 6.0f); p->chute = 0; p->airT = 0; }
+		if (p->p[1] <= fl) { float imp = -p->v[1]; p->p[1] = fl; p->v[1] = 0; if (imp > (p->chute > 0.5f ? 18.0f : 11.0f)) damage_player(g, (imp - (p->chute > 0.5f ? 18.0f : 11.0f)) * 20.0f); p->chute = 0; p->airT = 0; }       // only an unopened (or too late) parachute hurts
 	} else { p->v[1] = 0; p->chute = 0; p->airT = 0; }
 }
 	// cars are solid
@@ -550,9 +693,10 @@ static void foot_step(Game *g, const Input *in, float dt)
 		float ex = p->p[0] - q->x, ez = p->p[2] - q->z, dd = ex * ex + ez * ez;
 		if (dd < 0.7f * 0.7f && dd > 1e-8f) { float l = sqrtf(dd); p->p[0] = q->x + ex / l * 0.7f; p->p[2] = q->z + ez / l * 0.7f; }
 	}
-	if (!world_walkable(p->p[0], p->p[2])) {                         // the edge of the world (sea, pier rails): slide along it
+	{ float pn[2]; city_push_circle_y(&g->w, &p->p[0], &p->p[2], 0.4f, p->p[1] + 0.1f, p->p[1] + 1.8f, pn); }          // being shoved by cars and people must not push him into a wall
+	if (!world_walkable(&g->w, p->p[0], p->p[2])) {                         // the edge of the world (sea, pier rails): slide along it
 		float nx = p->p[0], nz = p->p[2];
-		if (world_walkable(nx, oz)) p->p[2] = oz; else if (world_walkable(ox, nz)) p->p[0] = ox; else { p->p[0] = ox; p->p[2] = oz; }
+		if (world_walkable(&g->w, nx, oz)) p->p[2] = oz; else if (world_walkable(&g->w, ox, nz)) p->p[0] = ox; else { p->p[0] = ox; p->p[2] = oz; }
 	}
 	float sp = sqrtf(p->v[0] * p->v[0] + p->v[2] * p->v[2]);
 	p->speed = sp;
@@ -561,8 +705,11 @@ static void foot_step(Game *g, const Input *in, float dt)
 		if (p->aimT < 0.3f) p->face = wrapang(p->face + wrapang(want - p->face) * fminf(1.0f, dt * 12.0f));
 		p->phase += dt * sp / gait_stride(sp);                        // cycles: the feet keep up with the ground
 	}
-	// the camera swings round behind Otto when he runs sideways
-	if (g->cam.manualT <= 0 && in->ly > -0.3f && fabsf(in->lx) > 0.2f && mag > 0.1f) g->cam.yaw = wrapang(g->cam.yaw + in->lx * 1.1f * dt);
+	// the camera drifts round to get behind Otto whichever way he runs (gently: the faster he goes the quicker)
+	if (g->cam.manualT <= 0 && p->aimT < 0.3f && g->cam.look == 0 && g->turnT <= 0 && p->speed > 1.8f) {
+		float heading = atan2f(p->v[0], -p->v[2]), rate = 1.25f * clampf((p->speed - 1.8f) / 3.0f, 0.0f, 1.0f);
+		g->cam.yaw = wrapang(g->cam.yaw + wrapang(heading - g->cam.yaw) * fminf(1.0f, dt * rate));
+	}
 }
 
 static void enter_exit(Game *g, const Input *in)
@@ -570,10 +717,11 @@ static void enter_exit(Game *g, const Input *in)
 	Player *p = &g->p;
 	if (!in->enter_p) return;
 	if (p->car < 0) {
+		if (p->p[1] > 1.0f) return;                                                  // in the air X is the parachute, not a door
 		int i = game_nearest_car(g, p->p[0], p->p[2], ENTER_DIST);
 		if (i >= 0) {
-			if (g->car[i].ai.on) { traffic_eject_driver(g, i); g->car[i].ai.on = false; g->car[i].vx = g->car[i].vz = 0; add_heat(g, 18.0f); }
-			if (g->car[i].kind == CAR_POLICE || g->car[i].kind == CAR_SWAT) { add_heat(g, 45.0f); g->car[i].bot = false; g->car[i].owner = 0; }
+			if (g->car[i].ai.on) { traffic_eject_driver(g, i); g->car[i].ai.on = false; g->car[i].vx = g->car[i].vz = 0; add_heat(g, 14.0f); }
+			if (g->car[i].kind == CAR_POLICE || g->car[i].kind == CAR_SWAT) { add_heat(g, 30.0f); g->car[i].bot = false; g->car[i].owner = 0; }
 			p->car = i; g->car[i].driven = true; p->v[0] = p->v[2] = 0; g->hintT = 0;
 		}
 	} else {
@@ -597,7 +745,7 @@ static void camera_step(Game *g, const Input *in, float dt)
 	float inv = g->invertY ? -1.0f : 1.0f;
 	float cx = in->cx, cy2 = in->cy;
 	if (fabsf(cx) > 0.1f || fabsf(in->tdx) > 0) { c->yaw = wrapang(c->yaw + cx * 2.4f * g->sens * dt + in->tdx * 0.010f * g->sens); c->manualT = 1.6f; }
-	if (fabsf(cy2) > 0.1f || fabsf(in->tdy) > 0) { c->pitch = clampf(c->pitch + inv * (cy2 * 1.4f * g->sens * dt - in->tdy * 0.006f * g->sens), -0.95f, g->fpsAim ? 0.95f : 0.4f); c->manualT = 1.6f; }
+	if (fabsf(cy2) > 0.1f || fabsf(in->tdy) > 0) { c->pitch = clampf(c->pitch + inv * (cy2 * 1.4f * g->sens * dt - in->tdy * 0.006f * g->sens), -0.95f, 0.4f); c->manualT = 1.6f; }
 	if (c->manualT > 0) c->manualT -= dt;
 	if (p->car < 0 && p->aimT > 0.5f && p->ps == PS_ALIVE && !(in->aim && p->lock < 0)) {      // shooting or locked on: the camera swings round to where Otto is aiming
 		c->yaw = wrapang(c->yaw + wrapang(p->face - c->yaw) * fminf(1.0f, dt * 11.0f));
@@ -650,13 +798,25 @@ static void camera_step(Game *g, const Input *in, float dt)
 	}
 	c->fov += (fov - c->fov) * fminf(1.0f, dt * 3.0f);
 	c->dist += (dist - c->dist) * fminf(1.0f, dt * 4.0f);
-	float cp = cosf(c->pitch), sp = sinf(c->pitch);
-	if (g->fpsAim && p->car < 0 && p->ps == PS_ALIVE) {                      // first person: the camera is Otto's head, looking where he aims
-		c->fov += ((p->weapon == W_SNIPER ? 24.0f : 66.0f) - c->fov) * fminf(1.0f, dt * 10.0f);
-		c->dist = 0; c->shoulder = 1.0f;
-		c->eye[0] = p->p[0] + sinf(p->face) * 0.1f; c->eye[1] = p->p[1] + 1.62f; c->eye[2] = p->p[2] - cosf(p->face) * 0.1f;
-		return;
+	// aiming at somebody far off: the camera tips to frame them (it goes back to the player's own angle when he stops aiming)
+	{
+		float want = 0;
+		if (p->car < 0 && p->ps == PS_ALIVE && p->aimT > 0.4f) {
+			int tg = p->lock >= 0 ? p->lock : p->target;
+			if (tg >= 0 && g->ped[tg].on) {
+				const Ped *q = &g->ped[tg];
+				float d = hypotf(q->x - p->p[0], q->z - p->p[2]);
+				float fp = clampf(atan2f(1.4f - (p->p[1] + 2.2f), d + 3.0f), -0.45f, 0.1f);
+				c->framePitch += (fp - c->framePitch) * fminf(1.0f, dt * 8.0f);
+				c->zoomK += (clampf((d - 14.0f) / 40.0f, 0, 1) - c->zoomK) * fminf(1.0f, dt * 6.0f);       // the further away, the more the view closes in
+				want = 1;
+			}
+		}
+		c->aimFrame += (want - c->aimFrame) * fminf(1.0f, dt * (want > c->aimFrame ? 7.0f : 2.5f));
+		if (want == 0 && c->aimFrame < 0.02f) { c->aimFrame = 0; c->framePitch = c->pitch; }
 	}
+	float vpitch = c->pitch + (c->framePitch - c->pitch) * c->aimFrame;
+	float cp = cosf(vpitch), sp = sinf(vpitch);
 	float vyaw = c->yaw + c->look;                                          // the view: the camera's heading plus the D-pad glance
 	float f[3] = { sinf(vyaw) * cp, sp, -cosf(vyaw) * cp };
 	float o[3] = { tx, ty, tz }, n[3];
@@ -674,7 +834,7 @@ static void camera_step(Game *g, const Input *in, float dt)
 	if (c->eye[1] < 0.5f) c->eye[1] = 0.5f;
 }
 
-// The weapon wheel: SELECT opens it, the circle pad or D-pad picks a slice (the weapons in order, clockwise from the top) and equips it at once;
+// The weapon wheel: D-pad up opens it, the circle pad or D-pad picks a slice (the weapons in order, clockwise from the top) and equips it at once;
 // SELECT, A or B closes it. The world runs in slow motion while it is open.
 // D-pad right / left / down: hold to glance that way (down = look back), double-tap to turn Otto and the camera that way. Up still tilts the camera.
 static void dpad_look(Game *g, const Input *in, float dt)
@@ -694,7 +854,7 @@ static void dpad_look(Game *g, const Input *in, float dt)
 	}
 	if (g->turnT > 0) {                                                   // the double-tap turn, eased
 		float k = fminf(dt, g->turnT) / 0.22f, d = g->turnAmt * k;
-		g->turnT -= dt; c->yaw = wrapang(c->yaw + d); p->face = wrapang(p->face + d);
+		g->turnT -= dt; c->yaw = wrapang(c->yaw + d); c->ctrlYaw = c->yaw; p->face = wrapang(p->face + d);
 	}
 	float x = (held[0] && !g->dpSup[0] ? 1.0f : 0.0f) - (held[1] && !g->dpSup[1] ? 1.0f : 0.0f), y = held[2] && !g->dpSup[2] ? -1.0f : 0.0f, goal = 0;
 	if (!g->wheel && (x != 0 || y != 0)) goal = atan2f(x, y);
@@ -707,12 +867,35 @@ static void wheel_update(Game *g, const Input *in, float dt)
 	Player *p = &g->p;
 	g->wheelT += dt;
 	float x = in->dpx, y = in->dpy;
+	if (g->wheelHold) { if (in->dpy <= 0) g->wheelHold = false; else y = 0; }                  // the press that opened the wheel is not a choice
 	if (x == 0 && y == 0 && hypotf(in->lx, in->ly) > 0.5f) { x = in->lx; y = in->ly; }
 	if (x == 0 && y == 0) return;
 	int sector = ((int)floorf((atan2f(x, y) + PI_F / W_COUNT) / (2 * PI_F / W_COUNT)) + W_COUNT) % W_COUNT;
 	int w = sector;
 	g->wheelSel = w;
 	if (weapon_usable(p, w)) p->weapon = w;
+}
+
+// ---- the world map (bottom screen): tap the WORLD button, tap a town, tap TRAVEL --------------------------------------------------------------------------
+static void fast_travel(Game *g, int dest)
+{
+	Player *p = &g->p;
+	if (g->regionGo >= 0 || dest == g->region || p->ps != PS_ALIVE) return;
+	if (g->stars > 0) { toast(g, "Lose the cops first"); return; }
+	if (p->car >= 0 && (g->car[p->car].kind == CAR_HELI || g->car[p->car].kind == CAR_PLANE) && g->car[p->car].y > 0.6f) { toast(g, "Land first"); return; }
+	if (p->car < 0 && p->airT > 0.05f) { toast(g, "Not while falling"); return; }
+	char b[28]; snprintf(b, sizeof b, "To %s", REGIONS[dest].name); toast(g, b);
+	region_go(g, dest, 4 * PITCH + 3.0f, 4 * PITCH + 24.0f, -100.0f);
+	g->mapMode = 0; g->mapSel = -1;
+}
+static void map_touch(Game *g, const Input *in)
+{
+	if (!in->touch_p || g->wheel) return;
+	float tx = in->tx, ty = in->ty;
+	if (in_box(tx, ty, MAP_BTN_X, MAP_TOGGLE_Y, MAP_BTN_W, MAP_BTN_H)) { g->mapMode ^= 1; g->mapSel = -1; return; }
+	if (g->mapMode != 1) return;
+	for (int r = 0; r < REG_COUNT; r++) { float x, y, w, h; world_tile(r, &x, &y, &w, &h); if (in_box(tx, ty, x, y, w, h)) { g->mapSel = r == g->region ? -1 : r; return; } }
+	if (g->mapSel >= 0 && in_box(tx, ty, MAP_BTN_X, MAP_TRAVEL_Y, MAP_BTN_W, MAP_BTN_H)) fast_travel(g, g->mapSel);
 }
 
 void game_update(Game *g, const Input *in, float dt)
@@ -727,16 +910,13 @@ void game_update(Game *g, const Input *in, float dt)
 	}
 	g->time += dt;
 	if (g->hintT > 0) g->hintT -= dt;
-	if (in->select_p && g->p.ps == PS_ALIVE) { g->wheel = !g->wheel; g->wheelT = 0; g->wheelSel = g->p.weapon; }
-	else if (g->wheel && (in->a_p || in->b_p)) g->wheel = false;
+	region_update(g, dt);
+	if (in->up_p && !g->wheel && g->p.ps == PS_ALIVE) { g->wheel = true; g->wheelT = 0; g->wheelSel = g->p.weapon; g->wheelHold = in->dpy > 0; }      // D-pad up opens the weapon wheel 
+	else if (g->wheel && (in->a_p || in->b_p || in->select_p)) g->wheel = false;
+	map_touch(g, in);
 	if (g->p.ps != PS_ALIVE) g->wheel = false;
 	if (g->wheel) wheel_update(g, in, dt);
 	dpad_look(g, in, dt);
-	{                                                                       // D-pad up while aiming (L): first-person aim; letting go of L goes back
-		Player *p0 = &g->p;
-		if (in->up_p && in->aim && !g->wheel && p0->car < 0 && !p0->cover && p0->ps == PS_ALIVE && !weapon_melee(p0->weapon)) g->fpsAim = !g->fpsAim;
-		if (!in->aim || g->wheel || p0->car >= 0 || p0->cover || p0->ps != PS_ALIVE) g->fpsAim = false;
-	}
 	Input once = *in;                                   // button presses are used once, in the first physics step
 	if (g->p.ps != PS_ALIVE) { once.gas = once.brake = once.hand = once.aim = once.enter_p = once.x_p = false; once.lx = once.ly = 0; }
 	if (g->wheel) { once.gas = once.brake = once.hand = once.aim = once.enter_p = once.x_p = once.a_p = once.b_p = false; once.lx = once.ly = 0; }
@@ -745,6 +925,7 @@ void game_update(Game *g, const Input *in, float dt)
 	for (float t = 0; t < sdt - 1e-6f;) {
 		float h = fminf(hs, sdt - t); t += h;
 		Player *p = &g->p;
+		if (p->car >= 0 || p->cover) g->cam.ctrlYaw = g->cam.yaw;
 		cover_toggle(g, &once);
 		if (p->car < 0) { if (p->cover) cover_step(g, &once, h); else foot_step(g, &once, h); }
 		if (!p->cover) p->crouch = fmaxf(0.0f, p->crouch - h * 6.0f);
@@ -769,6 +950,7 @@ void game_update(Game *g, const Input *in, float dt)
 		police_update(g, h);
 		once.enter_p = once.select_p = once.start_p = once.up_p = once.down_p = once.x_p = false; once.weap = 0;
 	}
+	region_check(g);
 	if (sdt < dt && g->p.ps != PS_ALIVE) { /* keep the respawn timers honest while time is slowed: combat_update scales its own dt */ }
 	Input cin = *in;                                    // the D-pad picks weapons while the wheel is open, it does not turn the camera
 	if (g->wheel) cin.cx = cin.cy = cin.tdx = cin.tdy = 0;
