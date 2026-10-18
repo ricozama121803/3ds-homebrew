@@ -29,7 +29,16 @@ static void T(const char *s, float x, float y, float sc, u32 col, int al)
 }
 static void ammo_text(char *buf, size_t n, int ammo) { if (TEST_LOADOUT) snprintf(buf, n, "inf"); else snprintf(buf, n, "%d", ammo); }
 static u32 with_alpha(u32 c, float a) { return (c & 0x00FFFFFFu) | ((u32)(a < 0 ? 0 : a > 255 ? 255 : a) << 24); }
-static void panel(float x, float y, float w, float h, u32 col) { C2D_DrawRectSolid(x, y, 0, w, h, col); }
+static float CLIP[4]; static bool clipOn;                                   // the map is drawn inside a box: whatever lies outside it is cut off
+static void panel(float x, float y, float w, float h, u32 col)
+{
+	if (clipOn) {
+		float x1 = fminf(x + w, CLIP[2]), y1 = fminf(y + h, CLIP[3]);
+		x = fmaxf(x, CLIP[0]); y = fmaxf(y, CLIP[1]); w = x1 - x; h = y1 - y;
+		if (w <= 0 || h <= 0) return;
+	}
+	C2D_DrawRectSolid(x, y, 0, w, h, col);
+}
 static void tri_dir(float cx, float cy, float r, float ang, u32 col)         // arrow triangle pointing along ang (0 = up)
 {
 	float s = sinf(ang), c = cosf(ang);
@@ -54,11 +63,11 @@ static void help_page(void)
 	T("CONTROLS", 160, 2, 0.5f, ORANGE, AL_C);
 	static const char *rows[][2] = {
 		{ "On foot", "" }, { "Circle Pad", "walk / run" }, { "B B B ...", "sprint; keep tapping for faster" }, { "R", "shoot (auto-aims) / punch" }, { "L  (hold)", "aim; lock on. Circle Pad: switch target" },
-		{ "Y", "take / leave cover (by a wall or car)" }, { "D-pad up", "weapon wheel (pick with Circle Pad / D-pad)" }, { "X", "get into the nearest vehicle" },
+		{ "Y", "take / leave cover (by a wall or car), else roll" }, { "D-pad up", "hold: weapon wheel; 2x tap: next weapon" }, { "X", "get into the nearest vehicle" },
 		{ "Car / motorcycle", "" }, { "Circle Pad", "steer (bike: pad back + R = wheelie)" }, { "R  /  B", "gas  /  brake, reverse" }, { "A  or  L", "handbrake (drift)" }, { "X", "get out (any speed)" },
 		{ "Helicopter", "" }, { "Circle Pad", "forward / back, turn" }, { "R", "climb" }, { "B  or  A  or  L", "descend (X to get out on the ground)" },
 		{ "Plane (airport)", "R throttle, B brake, pad: bank / pitch; X jump out, X again = parachute" },
-		{ "Camera", "" }, { "C-stick / drag", "turn / tilt the camera" }, { "D-pad L / R / down", "hold: look; 2x tap: turn. Up: weapon wheel" }, { "START", "pause: A respawn, SELECT restart" } };
+		{ "Camera", "" }, { "C-stick / drag", "turn / tilt the camera" }, { "D-pad L / R / down", "hold: look; 2x tap: turn" }, { "START", "pause: A respawn, SELECT restart" } };
 	for (int i = 0; i < 22; i++) {
 		bool head = rows[i][1][0] == 0;
 		float y = 15 + i * 9.9f;
@@ -291,9 +300,10 @@ void hud_top(const Game *g, const Scene *s)
 // ---- bottom screen: the city map and weapon buttons -------------------------------------------------------------------------------------------
 #define MAP_X 6.0f
 #define MAP_Y 6.0f
-static float MAP_X0 = BEACH_X, MAP_S = 232.0f / (CITY - BEACH_X);        // the city's map shows the beach strip too; the other regions' maps are the grid only
+static float MAP_X0 = BEACH_X, MAP_Z0 = 0, MAP_S = 232.0f / (CITY - BEACH_X);        // the world point at the map's top left, and pixels per metre (TOWN: the whole town, with the beach strip in the city; NEAR: a close view round Otto)
+#define NEAR_S 1.9f                                                         // NEAR shows about 120 x 108 m
 
-static void map_pt(float wx, float wz, float *x, float *y) { *x = MAP_X + clampf(wx - MAP_X0, 0, CITY - MAP_X0) * MAP_S; *y = MAP_Y + wz * MAP_S; }
+static void map_pt(float wx, float wz, float *x, float *y) { *x = MAP_X + (wx - MAP_X0) * MAP_S; *y = MAP_Y + (wz - MAP_Z0) * MAP_S; }
 
 // the world map: the towns as tiles joined by their roads; the one you are in is outlined, the picked one is yellow
 static void world_map(const Game *g)
@@ -326,26 +336,39 @@ static void world_map(const Game *g)
 static void city_map(const Game *g)
 {
 	if (g->mapMode == 1) { world_map(g); return; }
-	MAP_X0 = g->region == REG_CITY ? BEACH_X : 0.0f; MAP_S = (g->region == REG_CITY ? 232.0f : 205.0f) / (CITY - MAP_X0);
-	float side = CITY * MAP_S, wide = (CITY - MAP_X0) * MAP_S;
+	bool near = g->mapMode == 0;
+	float wide, side;
+	if (near) {
+		MAP_S = NEAR_S; wide = 232.0f; side = 205.0f;
+		MAP_X0 = g->p.p[0] - wide * 0.5f / MAP_S; MAP_Z0 = g->p.p[2] - side * 0.5f / MAP_S;
+	} else {
+		MAP_X0 = g->region == REG_CITY ? BEACH_X : 0.0f; MAP_Z0 = 0; MAP_S = (g->region == REG_CITY ? 232.0f : 205.0f) / (CITY - MAP_X0);
+		side = CITY * MAP_S; wide = (CITY - MAP_X0) * MAP_S;
+	}
+	float S = MAP_S, ds = near ? 1.7f : 1.0f;                               // ds: how much bigger the dots are on the close map
 	panel(MAP_X - 3, MAP_Y - 3, wide + 6, side + 6, RGBA(8, 20, 40, 255));
-	panel(MAP_X, MAP_Y, wide, side, RGBA(70, 72, 80, 255));
+	clipOn = true; CLIP[0] = MAP_X; CLIP[1] = MAP_Y; CLIP[2] = MAP_X + wide; CLIP[3] = MAP_Y + side;
+	if (near) panel(MAP_X, MAP_Y, wide, side, RGBA(14, 30, 56, 255));         // beyond the edge of the world
+	{ float x0, y0, x1, y1; map_pt(g->region == REG_CITY ? BEACH_X : 0.0f, 0, &x0, &y0); map_pt(CITY, CITY, &x1, &y1); panel(x0, y0, x1 - x0, y1 - y0, RGBA(70, 72, 80, 255)); }
 	if (g->region == REG_CITY) {
-	{ float sx0, sy0; map_pt(MAP_X0, 0, &sx0, &sy0); float ex, ey; map_pt(-14.0f, 0, &ex, &ey); panel(sx0, sy0, ex - sx0, side, RGBA(214, 192, 142, 255)); }                // sand
-	{ float ex, ey, px, py; map_pt(-14.0f, 0, &ex, &ey); map_pt(0, 0, &px, &py); panel(ex, ey, px - ex, side, RGBA(150, 146, 140, 255)); }                                        // boardwalk
-	{ float px, py; map_pt(MAP_X0, PIER_Z0, &px, &py); panel(MAP_X, py, 6, (PIER_Z1 - PIER_Z0) * MAP_S, RGBA(150, 110, 70, 255)); }                                          // the pier heads off to the west
+		float sx, sy, ex, ey, px, py;
+		map_pt(BEACH_X, 0, &sx, &sy); map_pt(-14.0f, 0, &ex, &ey); map_pt(0, 0, &px, &py);
+		panel(sx, sy, ex - sx, CITY * S, RGBA(214, 192, 142, 255));                                                          // sand
+		panel(ex, ey, px - ex, CITY * S, RGBA(150, 146, 140, 255));                                                          // boardwalk
+		map_pt(BEACH_X, PIER_Z0, &px, &py); panel(px, py, 8.0f * S, (PIER_Z1 - PIER_Z0) * S, RGBA(150, 110, 70, 255));      // the pier heads off to the west
 	}
 	const World *w = &g->w;
 	for (int j = 0; j < NB; j++) for (int i = 0; i < NB; i++) {
 		float x0 = (i + 0.15f) * PITCH, z0 = (j + 0.15f) * PITCH, sz = 0.7f * PITCH;
 		float mx, my; map_pt(x0, z0, &mx, &my);
-		if (w->park[j][i]) { panel(mx, my, sz * MAP_S, sz * MAP_S, RGBA(52, 120, 76, 255)); continue; }
-		if (w->lot[j][i]) { panel(mx, my, sz * MAP_S, sz * MAP_S, RGBA(96, 98, 108, 255)); continue; }
-		if (w->field[j][i]) { panel(mx, my, sz * MAP_S, sz * MAP_S, RGBA(212, 160, 108, 255)); continue; }
+		if (mx > MAP_X + wide || my > MAP_Y + side || mx + sz * S < MAP_X || my + sz * S < MAP_Y) continue;
+		if (w->park[j][i]) { panel(mx, my, sz * S, sz * S, RGBA(52, 120, 76, 255)); continue; }
+		if (w->lot[j][i]) { panel(mx, my, sz * S, sz * S, RGBA(96, 98, 108, 255)); continue; }
+		if (w->field[j][i]) { panel(mx, my, sz * S, sz * S, RGBA(212, 160, 108, 255)); continue; }
 		float top = 0;
 		for (int k = w->bfirst[j][i]; k < w->bfirst[j][i] + w->bcount[j][i]; k++) if (w->box[k].y1 > top) top = w->box[k].y1;
 		float t = clampf(top / 100.0f, 0, 1);
-		panel(mx, my, sz * MAP_S, sz * MAP_S, RGBA((int)(150 + 40 * t), (int)(140 + 60 * t), (int)(125 + 100 * t), 255));
+		panel(mx, my, sz * S, sz * S, RGBA((int)(150 + 40 * t), (int)(140 + 60 * t), (int)(125 + 100 * t), 255));
 	}
 	// places: hospital (red cross), police station (blue), Pay 'n' Spray (purple)
 	{
@@ -360,25 +383,29 @@ static void city_map(const Game *g)
 		if (!k->on) continue;
 		static const unsigned char col[PK_COUNT][3] = { { 90, 230, 110 }, { 240, 70, 70 }, { 90, 130, 240 }, { 255, 215, 90 }, { 255, 215, 90 }, { 255, 215, 90 } };
 		float x, y; map_pt(k->x, k->z, &x, &y);
-		panel(x - 1, y - 1, 2, 2, RGBA(col[k->type][0], col[k->type][1], col[k->type][2], 255));
+		panel(x - ds, y - ds, 2 * ds, 2 * ds, RGBA(col[k->type][0], col[k->type][1], col[k->type][2], 255));
 	}
 	for (int i = 0; i < MAX_CAR; i++) {
 		if (!g->car[i].on || g->car[i].driven || g->car[i].wreck) continue;
 		float cx, cy; map_pt(g->car[i].x, g->car[i].z, &cx, &cy);
 		bool cop = g->car[i].bot;
 		if (g->car[i].kind == CAR_HELI || g->car[i].kind == CAR_PLANE) { panel(cx - 2.5f, cy - 2.5f, 5, 5, RGBA(120, 220, 255, 255)); continue; }
-		panel(cx - 1.5f, cy - 1.5f, 3, 3, cop ? (((int)(g->time * 4) & 1) ? RGBA(255, 60, 60, 255) : RGBA(70, 110, 255, 255)) : g->car[i].ai.on ? RGBA(230, 240, 255, 255) : RGBA(255, 220, 90, 255));
+		float r = 1.5f * ds;
+		panel(cx - r, cy - r, 2 * r, 2 * r, cop ? (((int)(g->time * 4) & 1) ? RGBA(255, 60, 60, 255) : RGBA(70, 110, 255, 255)) : g->car[i].ai.on ? RGBA(230, 240, 255, 255) : RGBA(255, 220, 90, 255));
 	}
 	for (int i = 0; i < MAX_PED; i++) {
 		const Ped *q = &g->ped[i];
 		if (!q->on || !q->cop || q->dead || g->stars == 0) continue;
 		float x, y; map_pt(q->x, q->z, &x, &y);
-		panel(x - 1.5f, y - 1.5f, 3, 3, ((int)(g->time * 4) & 1) ? RGBA(255, 60, 60, 255) : RGBA(70, 110, 255, 255));
+		float r = 1.5f * ds;
+		panel(x - r, y - r, 2 * r, 2 * r, ((int)(g->time * 4) & 1) ? RGBA(255, 60, 60, 255) : RGBA(70, 110, 255, 255));
 	}
 	float px, py; map_pt(g->p.p[0], g->p.p[2], &px, &py);
 	tri_dir(px, py, 6.5f, g->cam.yaw, RGBA(240, 100, 20, 255));
 	tri_dir(px, py, 3.5f, g->cam.yaw, RGBA(255, 255, 255, 255));
+	clipOn = false;
 	T("N", MAP_X + wide * 0.5f, MAP_Y + 1, 0.4f, RGBA(255, 255, 255, 200), AL_C);
+	if (near) T("NEAR", MAP_X + wide - 4, MAP_Y + 1, 0.3f, RGBA(255, 255, 255, 150), AL_R);
 }
 
 static void weapon_buttons(const Game *g)
@@ -404,7 +431,7 @@ void hud_bottom(const Game *g)
 	{                                                                       // the map buttons: WORLD / TOWN, and TRAVEL once a town is picked
 		bool world = g->mapMode == 1;
 		panel(MAP_BTN_X, MAP_TOGGLE_Y, MAP_BTN_W, MAP_BTN_H, RGBA(46, 54, 78, 255)); panel(MAP_BTN_X, MAP_TOGGLE_Y, MAP_BTN_W, 1, RGBA(255, 255, 255, 90));
-		T(world ? "TOWN" : "WORLD", MAP_BTN_X + MAP_BTN_W / 2, MAP_TOGGLE_Y + 3, 0.4f, WHITE, AL_C);
+		T(g->mapMode == 0 ? "TOWN" : world ? "NEAR" : "WORLD", MAP_BTN_X + MAP_BTN_W / 2, MAP_TOGGLE_Y + 3, 0.4f, WHITE, AL_C);      // the button names the map it switches to: NEAR -> TOWN -> WORLD -> NEAR
 		if (world && g->mapSel >= 0) {
 			bool ok = g->stars == 0;
 			panel(MAP_BTN_X, MAP_TRAVEL_Y, MAP_BTN_W, MAP_BTN_H, ok ? RGBA(200, 90, 20, 255) : RGBA(70, 40, 40, 255));

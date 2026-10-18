@@ -56,6 +56,7 @@ static const RegionDef REGIONS[REG_COUNT] = {
 // the world map on the touch screen: where each town's tile is, and the two buttons (pixels on the 320 x 240 bottom screen)
 static inline void world_tile(int r, float *x, float *y, float *w, float *h) { static const float T[REG_COUNT][4] = { { 84, 24, 70, 70 }, { 84, 118, 70, 70 }, { 176, 24, 56, 70 } }; *x = T[r][0]; *y = T[r][1]; *w = T[r][2]; *h = T[r][3]; }
 static inline bool in_box(float px, float py, float x, float y, float w, float h) { return px >= x && px < x + w && py >= y && py < y + h; }
+#define ROLL_TIME  0.55f                     // a roll (Y) takes this long, and Otto cannot be hurt for most of it
 #define MAP_BTN_X 246.0f
 #define MAP_BTN_W 68.0f
 #define MAP_BTN_H 22.0f
@@ -165,6 +166,7 @@ typedef struct {
 	float crouch, lean;                      // 0..1: how crouched he is, how far he leans against the cover
 	float wrapT;                             // time left of the move round a corner onto the next wall
 	int coverView;                           // which way along the cover the camera looks (-1 / +1)
+	float rollT, rollDx, rollDz, rollCd;     // roll (Y): time left, the way he is rolling, time until he may roll again
 	bool sprint;                             // running flat out (two quick taps of B)
 	float sprintBoost, bTapT, sprintT;       // 0..1: more taps of B, a faster sprint; time since the last B tap; how long the stick has been let go
 	float face;                              // body heading (yaw)
@@ -235,7 +237,7 @@ enum { PK_CASH, PK_HEALTH, PK_ARMOR, PK_PISTOL, PK_SMG, PK_SHOTGUN, PK_BAT, PK_R
 typedef struct { bool on; int type, amount; float x, z, t, respawn; bool fixed; } Pickup;
 typedef struct { bool on; float x, y, z, t; } Blast;
 
-typedef struct { float eye[3], yaw, pitch, dist, fov, manualT, look, shoulder, aimFrame, framePitch, zoomK, ctrlYaw; } Cam;      // shoulder: how far the camera has slid to Otto's right while he aims (0..1)      // look: extra yaw while the D-pad glances left / right / back
+typedef struct { float eye[3], yaw, pitch, dist, fov, manualT, look, shoulder, aimFrame, framePitch, zoomK, cornerK, cornerDx, cornerDz; } Cam;      // shoulder: how far the camera has slid to Otto's right while he aims (0..1)      // look: extra yaw while the D-pad glances left / right / back      // cornerK, cornerDx / Dz: at the end of a cover the camera is moved toward the spot where he would lean out (0..1, and the step)
 
 typedef struct {
 	World w;
@@ -259,8 +261,10 @@ typedef struct {
 	float goX, goZ, goYaw; int goFrom;     // where he arrives in the new region (goYaw < -50: keep his heading)
 	int npad; float pad[MAX_PAD][3];        // the helipads of this region
 	bool wheel, wheelHold; int wheelSel; float wheelT;     // wheelHold: D-pad up opened it and is still held (do not read it as 'fists' yet)
-	int mapMode, mapSel;                     // bottom screen: 0 = this town, 1 = the world map; the town picked on it (-1 none)  // the weapon wheel (SELECT): open, the weapon under the stick, how long it has been open
+	float threat[3];                         // in cover with the police after him: the direction they come from (x, z, unit) and how long that stays (police.c); the camera looks that way
+	int mapMode, mapSel;                     // bottom screen: 0 = near (round Otto), 2 = this whole town, 1 = the world map; the town picked on it (-1 none)  // the weapon wheel (SELECT): open, the weapon under the stick, how long it has been open
 	float hitT, killT;                       // crosshair hit marker and kill marker time left
+	float upDownT, upSince; bool upSup;      // D-pad up: how long it has been held, time since the last press, a double tap was just made (do not open the wheel for this hold)
 	float dpT[3]; bool dpPrev[3], dpSup[3];  // D-pad right / left / down: time since the last press, held last frame, glance suppressed (a double tap turns Otto instead)
 	float turnT, turnAmt;                    // a double tap turns Otto and the camera by turnAmt over turnT seconds
 	float lookOff, yawSwing;                 // D-pad down / left / right held: how far the camera has swung away from behind Otto; a double-tap's turn still to do
@@ -286,6 +290,7 @@ int   game_nearest_car(const Game *g, float x, float z, float maxd);   // closes
 int   game_add_car(Game *g, int kind, float x, float z, float yaw);
 bool  car_flying(const Car *c);                             // a helicopter well above the ground
 bool  cover_find(const Game *g, float x, float z, float refYaw, float out[6]);   // cover within reach of the point: out = Otto's spot x, z, direction from the cover to him x, z, the car index or -1, 1 if the cover is low (a car or street furniture)
+bool  cover_preview(Game *g, float *yaw, int *side);                                       // in cover: the heading toward the first enemy he would see by leaning out, if any
 bool  cover_peek_offset(const Game *g, int side, float out[2]);                  // how far Otto must step to clear the end of his cover on one side (-1 left, +1 right); false if it is not close or not free
 void  car_circles(const Car *c, float cx[3], float cz[3]); // world positions of the car's 3 collision circles
 
@@ -313,6 +318,7 @@ void  combat_init(Game *g);
 void  combat_update(Game *g, const Input *in, float dt);
 void  combat_world_init(Game *g);                           // pickups and effects for a newly built region
 void  damage_player(Game *g, float amount);
+void  next_weapon(Player *p, int dir);                                                         // the next (or previous) weapon Otto can use
 void  player_respawn(Game *g);                              // the pause menu's respawn: back on his feet at the hospital, cash kept
 void  damage_ped(Game *g, int idx, float amount, int byPlayer);
 void  damage_car(Game *g, int idx, float amount, int byPlayer);

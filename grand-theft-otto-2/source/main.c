@@ -126,7 +126,7 @@ int main(void)
 		if (cstick) irrstCstickRead(&cs);
 		stick(cp.dx / 150.0f, cp.dy / 150.0f, &in.lx, &in.ly);                  // circle pad: move / steer
 		stick(cs.dx / 150.0f, cs.dy / 150.0f, &in.cx, &in.cy);                  // C-stick: camera
-		// the D-pad does not move the camera: left / right / down glance and turn, up opens the weapon wheel (game.c)
+		// the D-pad does not move the camera: left / right / down glance and turn, up (held) opens the weapon wheel, up twice switches weapon (game.c)
 		in.cx = in.cx > 1 ? 1 : in.cx < -1 ? -1 : in.cx; in.cy = in.cy > 1 ? 1 : in.cy < -1 ? -1 : in.cy;
 		in.gas = (held & (KEY_R | KEY_ZR)) != 0;                               // R: shoot on foot, gas in a car
 		in.hand = (held & (KEY_A | KEY_L | KEY_ZL)) != 0;                      // A or L: handbrake in a car
@@ -136,7 +136,7 @@ int main(void)
 		in.brake = (held & KEY_B) != 0;                                        // B: brake / reverse; two quick taps on foot = sprint
 		in.a_p = (down & KEY_A) != 0;
 		in.b_p = (down & KEY_B) != 0;
-		in.x_p = (down & KEY_Y) != 0;                                          // Y: take / leave cover (next to a wall or car), otherwise the next weapon
+		in.x_p = (down & KEY_Y) != 0;                                          // Y: take / leave cover (next to a wall or car), otherwise roll
 		in.enter_p = (down & KEY_X) != 0;                                      // X: get in / out of a car
 		in.start_p = (down & KEY_START) != 0;
 		in.select_p = (down & KEY_SELECT) != 0;                                // SELECT: closes the weapon wheel (D-pad up opens it); restart is on the pause screen

@@ -152,6 +152,44 @@ int main(void)
 		(void)rammed; (void)hp0;
 	}
 
+	printf("7b. behind cover the police come from the front, fanned out, and one works round the side\n");
+	{
+		game_start(&G); clear_world();
+		const Box *wb = NULL;
+		for (int i = 0; i < G.w.nbox && !wb; i++) {
+			const Box *b = &G.w.box[i];
+			if (b->z1 - b->z0 < 14 || b->x1 - b->x0 < 14 || b->y1 < 8 || b->x0 < 40) continue;
+			bool clear = true;
+			for (int j = 0; j < G.w.nbox; j++) { if (j == i) continue; const Box *o = &G.w.box[j]; if (o->x1 > b->x0 - 12 && o->x0 < b->x0 + 14 && o->z1 > b->z0 - 4 && o->z0 < b->z1 + 14) clear = false; }
+			if (clear) wb = b;
+		}
+		CHECK(wb != NULL, "found a free wall");
+		if (wb) {
+			G.p.p[0] = wb->x0 - 1.0f; G.p.p[2] = 0.5f * (wb->z0 + wb->z1); G.p.face = PI_F / 2; G.cam.yaw = PI_F / 2; G.cam.manualT = 0;
+			Input y = idle(); y.x_p = true; run(0.1f, y);
+			CHECK(G.p.cover == 1, "in cover");
+			G.heat = 100.0f; G.stars = 2; G.p.hp = 1000;
+			int n = 0, front = 0, planted = 0, rearShots = 0; float ox = G.p.p[0], oz = G.p.p[2];
+			float hp0 = G.p.hp; (void)hp0;
+			for (int t = 0; t < 40 * 60; t++) {
+				Input in = idle(); G.heat = 100.0f; G.p.hp = PLAYER_MAX_HP; game_update(&G, &in, 1.0f / 60);
+				for (int i = 0; i < MAX_PED; i++) { const Ped *p = &G.ped[i]; if (p->on && p->cop && !p->dead && p->aimT > 0.5f && (p->x - ox) * G.p.coverNx + (p->z - oz) * G.p.coverNz < -2.0f) rearShots++; }      // an officer on the wall's side of Otto taking aim at him
+				if (t == 40 * 60 - 1 || t == 20 * 60) {
+					n = front = planted = 0;
+					for (int i = 0; i < MAX_PED; i++) { const Ped *p = &G.ped[i]; if (!p->on || !p->cop || p->dead) continue; n++;
+						float dx = p->x - ox, dz = p->z - oz, d = hypotf(dx, dz);
+						if (dx * G.p.coverNx + dz * G.p.coverNz > 0) front++;
+						if (d < 30 && p->speed < 0.5f) planted++; }
+					printf("   t=%ds: %d officers, %d on the street side, %d planted within 30 m\n", t / 60, n, front, planted);
+				}
+			}
+			CHECK(G.p.cover == 1 && n >= 3, "a force is out (%d)", n);
+			CHECK(front >= n - 1, "the force is on the street side of the cover (%d of %d)", front, n);
+			printf("   officer-frames aiming at him from behind the cover line: %d\n", rearShots);
+			CHECK(rearShots < 30, "nobody takes aim at him from behind (%d officer-frames)", rearShots);
+		}
+	}
+
 	printf("8. random play for 20 minutes (walking, driving, shooting, the police)\n");
 	game_start(&G);
 	unsigned rs = 777; int wasted = 0, busts = 0, maxStars = 0, kills = 0;

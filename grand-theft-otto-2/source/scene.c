@@ -915,6 +915,8 @@ static void draw_gun(int weapon, V3 *muzzleOut)
 }
 
 // Skin a mesh with the current pose and emit it flat-shaded; colours[role] gives each role's colour
+static float ROLL_A;                                                        // a roll: the whole body turns this far (radians) about ROLL_AX through ROLL_PV
+static V3 ROLL_AX, ROLL_PV;
 static void skin_mesh(const OttoVert *verts, int nv, const OttoTri *tris, int nt, const float (*colors)[3], V3 P, float scale, bool hideBag)
 {
 	Mesh *m = &dm[D_OPAQUE];
@@ -926,6 +928,11 @@ static void skin_mesh(const OttoVert *verts, int nv, const OttoTri *tris, int nt
 			q = add(q, mul(add(bones[bi].p, bone_rot(&bones[bi], sub(arr3(v->p), arr3(otto_bones[bi].head)))), v->w[j]));
 		}
 		skin_pos[i] = scale == 1.0f ? q : add(P, mul(sub(q, P), scale));
+		if (ROLL_A != 0) {                                                  // Rodrigues rotation about the roll axis; the body never goes under the floor
+			V3 r = sub(skin_pos[i], ROLL_PV); float c = cosf(ROLL_A), sn = sinf(ROLL_A);
+			r = add(add(mul(r, c), mul(cross(ROLL_AX, r), sn)), mul(ROLL_AX, dot(ROLL_AX, r) * (1 - c)));
+			skin_pos[i] = add(ROLL_PV, r); if (skin_pos[i].y < P.y + 0.03f) skin_pos[i].y = P.y + 0.03f;
+		}
 	}
 	for (int i = 0; i < nt; i++) {
 		const OttoTri *tr = &tris[i];
@@ -964,10 +971,14 @@ static void draw_otto(const Game *g)
 	float fall = dead ? sat(p->psT / 0.35f) : 0;
 	bool armed = !weapon_melee(p->weapon);
 	Stance st = { dead ? 0 : (p->weapon == W_BAT && p->punchT > 0 ? 1.0f : p->aimT), armed && p->punchT <= 0, p->weapon, p->punchT > 0 ? 1.0f - p->punchT / melee_time(p->weapon) : 0.0f, p->punchSide, p->crouch, false, p->cover ? p->lean : 0.0f, !dead && p->airT > 0.05f ? (p->chute > 0.3f ? 2 : 1) : 0 };
-	if (!armed || p->punchT > 0 || st.sky) st.gun = false;
+	bool rolling = !dead && p->rollT > 0;
+	if (!armed || p->punchT > 0 || st.sky || rolling) st.gun = false;
 	if (st.sky) { st.aim = 0; st.punchU = 0; st.crouch = 0; }
-	pose_skeleton(P, p->face, p->speed, p->phase, fall, g->time, &st);
+	if (rolling) { st.aim = 0; st.punchU = 0; st.crouch = 1.0f; }                  // tucked up, turning over
+	pose_skeleton(P, p->face, rolling ? 0.0f : p->speed, p->phase, fall, g->time, &st);
+	if (rolling) { float u = 1.0f - p->rollT / ROLL_TIME; ROLL_A = clampf(u * 1.12f, 0, 1) * 2.0f * PI_F; ROLL_AX = v3(p->rollDz, 0, -p->rollDx); ROLL_PV = add(P, v3(0, 0.62f, 0)); }
 	skin_mesh(otto_verts, OTTO_NV, otto_tris, OTTO_NT, otto_colors, P, 1.0f, false);
+	ROLL_A = 0;
 	if (p->chute > 0.05f && !dead) {                                        // the parachute: an eight-sided dome on four lines
 		float k = p->chute, h0 = 3.0f * k;
 		static const V3 ax = { 1, 0, 0 }, az = { 0, 0, 1 }, ax45 = { 0.7071f, 0, 0.7071f }, az45 = { -0.7071f, 0, 0.7071f };
@@ -982,7 +993,7 @@ static void draw_otto(const Game *g)
 		for (int i = 0; i < 4; i++) { float sx = (i & 1) ? 1.0f : -1.0f, sz = (i & 2) ? 1.0f : -1.0f; V3 lo = add(c, v3(sx * 0.18f, 1.5f, sz * 0.1f)), hi = add(c, v3(sx * 1.9f * k, 1.9f + h0, sz * 1.9f * k)); prism(&dm[D_OPAQUE], lo, hi, ax, az, 0.012f, 0.012f, 0.012f, 0.012f, v3(1.0f, 1.0f, 1.0f), false); }
 	}
 	if (!dead && st.gun && p->aimT > 0.25f) { V3 mz; draw_gun(p->weapon, &mz); if (p->flashT > 0) muzzle_flash(mz); }
-	if (!dead && p->weapon == W_BAT) draw_bat(p);
+	if (!dead && !rolling && p->weapon == W_BAT) draw_bat(p);
 	{ float gy = p->airT > 0.05f ? city_roof_h(&g->w, p->p[0], p->p[2], 0.3f) : p->p[1], hgt = p->p[1] - gy; blob_shadow(p->p[0], gy + 0.07f, p->p[2], 0.62f + 0.012f * fminf(hgt, 60.0f), 0.5f * clampf(1.0f - hgt / 90.0f, 0.2f, 1.0f)); }      // the shadow stays on the ground (or the roof) below him
 }
 

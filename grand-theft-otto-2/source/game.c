@@ -497,7 +497,7 @@ static int cover_probe(const Game *g, float x, float z, float r, int *car)
 	if (city_prop_push(&g->w, &px, &pz, r, n)) return 3;
 	for (int i = 0; i < MAX_CAR; i++) {
 		const Car *c = &g->car[i];
-		if (!c->on || c->kind >= CAR_KINDS || c->wreck || c->driven || car_is_moving_traffic(c)) continue;
+		if (!c->on || c->kind >= CAR_KINDS || c->driven || car_is_moving_traffic(c)) continue;                  // a wreck is as good cover as a car
 		float cx[3], cz[3]; car_circles(c, cx, cz);
 		for (int k = 0; k < 3; k++) if ((cx[k] - x) * (cx[k] - x) + (cz[k] - z) * (cz[k] - z) < (car_radius(c->kind) * 0.95f + r) * (car_radius(c->kind) * 0.95f + r)) { if (car) *car = i; return 2; }
 	}
@@ -607,13 +607,18 @@ static void cover_step(Game *g, const Input *in, float dt)
 {
 	Player *p = &g->p;
 	float nx = p->coverNx, nz = p->coverNz, tx = nz, tz = -nx;           // along the cover (the +tangent)
-	bool gone = p->ps != PS_ALIVE || !cover_valid(g, p->coverX, p->coverZ, nx, nz);
+	bool gone = p->ps != PS_ALIVE;                                           // he stays in cover until he presses Y (or dies), whatever happens to it
 	if (p->coverCar >= 0) {
 		const Car *c = &g->car[p->coverCar];
-		if (!c->on || c->wreck || c->driven || hypotf(c->x - p->coverCarX, c->z - p->coverCarZ) > 0.3f) gone = true;
+		if (!c->on) gone = true;                                              // (the wreck was cleared away)
+		else {                                                                // a car that is pushed (an explosion, a crash) takes Otto's place with it
+			float mx = c->x - p->coverCarX, mz = c->z - p->coverCarZ;
+			p->coverX += mx; p->coverZ += mz; p->p[0] += mx; p->p[2] += mz; p->coverCarX = c->x; p->coverCarZ = c->z;
+		}
 	}
 	if (gone) { cover_leave(p); return; }
-	float m = in->lx;                                                      // the stick slides him along the cover: right = toward the screen's right, which is always the +tangent side (see the camera below)
+	// the stick is relative to the screen, like everywhere else: the camera looks square on to the cover, so the screen's right is the +tangent side
+	float m = in->lx;
 	if (p->wrapT > 0) p->wrapT -= dt;
 	if (p->peek == 0 && p->peekT < 0.05f && fabsf(m) > 0.15f && p->wrapT <= 0) {          // slide along the cover
 		p->coverView = m > 0 ? 1 : -1;
@@ -640,9 +645,7 @@ static void cover_step(Game *g, const Input *in, float dt)
 static void foot_step(Game *g, const Input *in, float dt)
 {
 	Player *p = &g->p;
-	// the stick's frame of reference is the camera's heading, but it stays put while the camera swings round after Otto (below) and catches up when the stick is let go
-	if (hypotf(in->lx, in->ly) < 0.12f || p->speed < 1.0f || g->cam.manualT > 0 || p->aimT > 0.3f || g->turnT > 0) g->cam.ctrlYaw = g->cam.yaw;
-	float sy = sinf(g->cam.ctrlYaw), cy = cosf(g->cam.ctrlYaw);
+	float sy = sinf(g->cam.yaw), cy = cosf(g->cam.yaw);                       // the stick is always relative to the screen
 	// sprint: two quick taps of B; keep tapping and it gets faster (let go of the stick or start aiming and it stops)
 	p->bTapT += dt;
 	p->sprintBoost = fmaxf(0.0f, p->sprintBoost - dt * 0.18f);
@@ -652,6 +655,14 @@ static void foot_step(Game *g, const Input *in, float dt)
 	}
 	float wx = sy * in->ly + cy * in->lx, wz = -cy * in->ly + sy * in->lx;
 	float mag = fminf(1.0f, sqrtf(in->lx * in->lx + in->ly * in->ly));
+	// roll (Y when there is no cover to take): a quick tumble the way the stick points (or the way he faces), too fast to be shot or held
+	p->rollCd -= dt;
+	if (p->rollT > 0) p->rollT -= dt;
+	if (in->x_p && p->rollT <= 0 && p->rollCd <= 0 && p->airT <= 0.05f && p->car < 0) {
+		float l = sqrtf(wx * wx + wz * wz);
+		if (mag > 0.3f && l > 1e-4f) { p->rollDx = wx / l; p->rollDz = wz / l; } else { p->rollDx = sinf(p->face); p->rollDz = -cosf(p->face); }
+		p->rollT = ROLL_TIME; p->rollCd = ROLL_TIME + 0.35f; p->sprint = false; p->aimT = 0;
+	}
 	if (mag < 0.1f) p->sprintT += dt; else p->sprintT = 0;
 	if (p->sprintT > 0.3f || p->aimT > 0.3f) p->sprint = false;
 	if (!p->sprint) p->sprintBoost = 0;
@@ -662,6 +673,11 @@ static void foot_step(Game *g, const Input *in, float dt)
 	float tx = 0, tz = 0;
 	if (wl > 1e-4f) { tx = wx / wl * top; tz = wz / wl * top; }
 	float k = fminf(1.0f, dt * 12.0f);
+	if (p->rollT > 0) {                                                  // fast out of the blocks, slowing as he comes up
+		float u = 1.0f - p->rollT / ROLL_TIME, rs = 8.5f * (1.0f - 0.55f * u);
+		tx = p->rollDx * rs; tz = p->rollDz * rs; k = 1.0f;
+		p->face = wrapang(p->face + wrapang(atan2f(p->rollDx, -p->rollDz) - p->face) * fminf(1.0f, dt * 20.0f));
+	}
 	p->v[0] += (tx - p->v[0]) * k; p->v[2] += (tz - p->v[2]) * k;
 	float d[3] = { p->v[0] * dt, 0, p->v[2] * dt };
 	float ox = p->p[0], oz = p->p[2];
@@ -705,11 +721,8 @@ static void foot_step(Game *g, const Input *in, float dt)
 		if (p->aimT < 0.3f) p->face = wrapang(p->face + wrapang(want - p->face) * fminf(1.0f, dt * 12.0f));
 		p->phase += dt * sp / gait_stride(sp);                        // cycles: the feet keep up with the ground
 	}
-	// the camera drifts round to get behind Otto whichever way he runs (gently: the faster he goes the quicker)
-	if (g->cam.manualT <= 0 && p->aimT < 0.3f && g->cam.look == 0 && g->turnT <= 0 && p->speed > 1.8f) {
-		float heading = atan2f(p->v[0], -p->v[2]), rate = 1.25f * clampf((p->speed - 1.8f) / 3.0f, 0.0f, 1.0f);
-		g->cam.yaw = wrapang(g->cam.yaw + wrapang(heading - g->cam.yaw) * fminf(1.0f, dt * rate));
-	}
+	// the camera swings round after Otto as the stick is pushed to a side: left / right, forwards or back, it ends up behind the way he is going (pushing straight at the camera leaves it alone)
+	if (g->cam.manualT <= 0 && g->cam.look == 0 && g->turnT <= 0 && fabsf(in->lx) > 0.2f && mag > 0.1f) g->cam.yaw = wrapang(g->cam.yaw + in->lx * (in->ly > -0.3f ? 1.1f : 0.8f) * dt);
 }
 
 static void enter_exit(Game *g, const Input *in)
@@ -739,6 +752,12 @@ static void enter_exit(Game *g, const Input *in)
 }
 
 // ---- camera ----------------------------------------------------------------------------------------------------------------------------
+// In cover the camera always looks square on to the cover, from the street side, and is shifted along the cover toward the corner he would lean out of (the nearer end, or the way the police come
+// from), so the area round that corner is in front of the camera. The shift is at most 3 m, so Otto stays on the screen. Screen right is therefore always the +tangent side.
+static float cover_heading(const Player *p, int v)
+{
+	return atan2f(-0.97f * p->coverNx + 0.25f * v * p->coverNz, -(-0.97f * p->coverNz - 0.25f * v * p->coverNx));      // across the cover, a little toward that end
+}
 static void camera_step(Game *g, const Input *in, float dt)
 {
 	Cam *c = &g->cam; Player *p = &g->p;
@@ -751,12 +770,26 @@ static void camera_step(Game *g, const Input *in, float dt)
 		c->yaw = wrapang(c->yaw + wrapang(p->face - c->yaw) * fminf(1.0f, dt * 11.0f));
 		c->manualT = 0;
 	}
+	int cv = 1;                                                              // which end of the cover the camera looks toward
+	if (p->car < 0 && p->cover && p->ps == PS_ALIVE) {
+		float o1[2], o0[2]; bool e1 = cover_peek_offset(g, 1, o1), e0 = cover_peek_offset(g, -1, o0);
+		cv = p->peek == 1 || p->peek == -1 ? p->peek : e1 != e0 ? (e1 ? 1 : -1)             // at an end: the side beyond that corner, what he would see leaning out
+		   : g->threat[2] > 0 ? (g->threat[0] * p->coverNz - g->threat[1] * p->coverNx >= 0 ? 1 : -1) : p->coverView;   // else toward where the police come from, or the way he last moved
+		float tx_ = p->coverNz * cv, tz_ = -p->coverNx * cv, d = 0;
+		while (d < 3.0f && cover_valid(g, p->coverX + tx_ * d, p->coverZ + tz_ * d, p->coverNx, p->coverNz)) d += 0.1f;       // how far to that end
+		float L = fminf(d + 1.2f, 3.0f), k4 = fminf(1.0f, dt * 4.0f);                         // look a little past it, but never more than 3 m off Otto
+		c->cornerDx += (tx_ * L - c->cornerDx) * k4; c->cornerDz += (tz_ * L - c->cornerDz) * k4; c->cornerK = 1;
+	} else { c->cornerK = 0; c->cornerDx = c->cornerDz = 0; }
 	if (p->car < 0 && p->cover && p->ps == PS_ALIVE && p->aimT < 0.5f && c->manualT <= 0) {      // in cover the camera sits behind Otto and looks along the cover, toward the end he leans out of
 		float k = fminf(1.0f, dt * 4.0f);
-		int v = p->peek == 1 || p->peek == -1 ? p->peek : p->coverView;
-		float hx = -0.5f * p->coverNx + 0.87f * v * p->coverNz, hz = -0.5f * p->coverNz - 0.87f * v * p->coverNx;      // along the cover the way he last moved, turned a little toward it so the corner and the street are both in view
-		c->yaw = wrapang(c->yaw + wrapang(atan2f(hx, -hz) - c->yaw) * k);
-		c->pitch += (-0.3f - c->pitch) * k;
+		float want, py; int ps;
+		if (cover_preview(g, &py, &ps)) {                                      // somebody he could see by leaning out: the view is already on them, as when he aims (but kept near square on, so Otto stays on the screen)
+			float hd = ps == 0 ? atan2f(-p->coverNx, p->coverNz) : cover_heading(p, ps);
+			want = hd + clampf(wrapang(py - hd), -DEG(35), DEG(35));
+		}
+		else want = cover_heading(p, cv);
+		c->yaw = wrapang(c->yaw + wrapang(want - c->yaw) * k);
+		c->pitch += ((p->cover == 2 ? -0.36f : -0.24f) - c->pitch) * k;
 	}
 	float tx, ty, tz, dist, fov;
 	if (p->car >= 0) {
@@ -781,10 +814,9 @@ static void camera_step(Game *g, const Input *in, float dt)
 	} else {
 		tx = p->p[0]; ty = p->p[1] + 1.45f; tz = p->p[2]; dist = 4.6f + p->speed * 0.12f; fov = 60 + p->speed * 0.5f;
 		if (p->airT > 0.05f) { dist = 7.5f; fov = 66; }                      // falling / under the parachute: a wider view
-		if (p->cover) {                                                      // behind Otto and above, so a car does not hide the view; shifted so the street he leans out to is in the picture
-			ty = p->p[1] + 1.6f - 0.5f * p->crouch; dist = 3.9f; fov = 58;
-			tx += p->coverNx * 0.7f; tz += p->coverNz * 0.7f;                  // a little toward the street, so the cover is not in the way
-		}
+		if (p->cover == 2) { ty = p->p[1] + 2.3f; dist = 4.2f; fov = 66; }        // behind a car: well above it, so the view is over the roof toward the enemy
+		else if (p->cover) { ty = p->p[1] + 1.6f - 0.5f * p->crouch; dist = 4.2f; fov = 70; }      // against a wall: a wide view, the camera out in the street looking back at it
+		if (p->cover) { float kk = c->cornerK * (1.0f - p->peekT); tx += c->cornerDx * kk; tz += c->cornerDz * kk; }       // toward the corner; once he has stepped out he is there himself
 		float sh = p->ps == PS_ALIVE && !p->cover && !weapon_melee(p->weapon) && p->aimT > 0.35f ? 1.0f : 0.0f;       // aiming a gun: the camera comes in close and slides over Otto's right shoulder, so the weapon fills the view
 		c->shoulder += (sh - c->shoulder) * fminf(1.0f, dt * 6.0f);
 		if (c->shoulder > 0.01f) {
@@ -854,7 +886,7 @@ static void dpad_look(Game *g, const Input *in, float dt)
 	}
 	if (g->turnT > 0) {                                                   // the double-tap turn, eased
 		float k = fminf(dt, g->turnT) / 0.22f, d = g->turnAmt * k;
-		g->turnT -= dt; c->yaw = wrapang(c->yaw + d); c->ctrlYaw = c->yaw; p->face = wrapang(p->face + d);
+		g->turnT -= dt; c->yaw = wrapang(c->yaw + d); p->face = wrapang(p->face + d);
 	}
 	float x = (held[0] && !g->dpSup[0] ? 1.0f : 0.0f) - (held[1] && !g->dpSup[1] ? 1.0f : 0.0f), y = held[2] && !g->dpSup[2] ? -1.0f : 0.0f, goal = 0;
 	if (!g->wheel && (x != 0 || y != 0)) goal = atan2f(x, y);
@@ -892,7 +924,7 @@ static void map_touch(Game *g, const Input *in)
 {
 	if (!in->touch_p || g->wheel) return;
 	float tx = in->tx, ty = in->ty;
-	if (in_box(tx, ty, MAP_BTN_X, MAP_TOGGLE_Y, MAP_BTN_W, MAP_BTN_H)) { g->mapMode ^= 1; g->mapSel = -1; return; }
+	if (in_box(tx, ty, MAP_BTN_X, MAP_TOGGLE_Y, MAP_BTN_W, MAP_BTN_H)) { g->mapMode = g->mapMode == 0 ? 2 : g->mapMode == 2 ? 1 : 0; g->mapSel = -1; return; }      // NEAR (0, the default) -> TOWN (2) -> WORLD (1) -> NEAR
 	if (g->mapMode != 1) return;
 	for (int r = 0; r < REG_COUNT; r++) { float x, y, w, h; world_tile(r, &x, &y, &w, &h); if (in_box(tx, ty, x, y, w, h)) { g->mapSel = r == g->region ? -1 : r; return; } }
 	if (g->mapSel >= 0 && in_box(tx, ty, MAP_BTN_X, MAP_TRAVEL_Y, MAP_BTN_W, MAP_BTN_H)) fast_travel(g, g->mapSel);
@@ -911,8 +943,20 @@ void game_update(Game *g, const Input *in, float dt)
 	g->time += dt;
 	if (g->hintT > 0) g->hintT -= dt;
 	region_update(g, dt);
-	if (in->up_p && !g->wheel && g->p.ps == PS_ALIVE) { g->wheel = true; g->wheelT = 0; g->wheelSel = g->p.weapon; g->wheelHold = in->dpy > 0; }      // D-pad up opens the weapon wheel 
-	else if (g->wheel && (in->a_p || in->b_p || in->select_p)) g->wheel = false;
+	// D-pad up: hold it to open the weapon wheel, double-tap it to switch to the next weapon without the wheel
+	{
+		bool held = in->dpy > 0;
+		g->upSince += dt;
+		if (held) g->upDownT += dt;
+		if (in->up_p) {
+			g->upDownT = 0;
+			if (g->upSince < 0.32f && !g->wheel) { if (g->p.ps == PS_ALIVE) next_weapon(&g->p, 1); g->upSup = true; g->upSince = 9.0f; }
+			else { g->upSince = 0; g->upSup = false; }
+		}
+		if (!held) g->upSup = false;
+		if (held && !g->upSup && g->upDownT > 0.22f && !g->wheel && g->p.ps == PS_ALIVE) { g->wheel = true; g->wheelT = 0; g->wheelSel = g->p.weapon; g->wheelHold = true; }
+	}
+	if (g->wheel && (in->a_p || in->b_p || in->select_p)) g->wheel = false;
 	map_touch(g, in);
 	if (g->p.ps != PS_ALIVE) g->wheel = false;
 	if (g->wheel) wheel_update(g, in, dt);
@@ -925,7 +969,6 @@ void game_update(Game *g, const Input *in, float dt)
 	for (float t = 0; t < sdt - 1e-6f;) {
 		float h = fminf(hs, sdt - t); t += h;
 		Player *p = &g->p;
-		if (p->car >= 0 || p->cover) g->cam.ctrlYaw = g->cam.yaw;
 		cover_toggle(g, &once);
 		if (p->car < 0) { if (p->cover) cover_step(g, &once, h); else foot_step(g, &once, h); }
 		if (!p->cover) p->crouch = fmaxf(0.0f, p->crouch - h * 6.0f);

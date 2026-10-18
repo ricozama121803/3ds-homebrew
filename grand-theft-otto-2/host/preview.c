@@ -385,6 +385,13 @@ int main(int argc, char **argv)
 		G.p.weapon = W_BAT;
 		G.p.aimT = 1; run(0.001f, idle); snaplook(out, "w4_ready", (float[3]){ G.p.p[0], 1.0f, G.p.p[2] }, G.p.face + PI_F * 0.5f, 3.2f, 0.3f, 42);
 		for (int k = 0; k < 6; k++) { float u = 0.05f + 0.17f * k, T = melee_time(W_BAT); G.p.punchSide = 0; G.p.punchT = T * (1 - u); G.p.aimT = 1; run(0.001f, idle); G.p.aimT = 1; G.p.punchT = T * (1 - u); char nm[32]; snprintf(nm, sizeof nm, "w4_swing%d", k); snaplook(out, nm, (float[3]){ G.p.p[0], 1.0f, G.p.p[2] }, G.p.face + PI_F * 0.5f, 3.2f, 0.3f, 42); }
+		// a roll (Y): four moments of the tumble
+		{
+			G.p.weapon = W_PISTOL; G.p.cover = 0; G.p.aimT = 0; G.p.face = 0; G.cam.yaw = 0; G.p.rollT = 0; G.p.rollCd = 0;
+			Input yr = idle; yr.x_p = true; run(0.001f, yr);
+			for (int k = 0; k < 4; k++) { G.p.rollT = ROLL_TIME * (1.0f - (0.12f + 0.25f * k)); run(0.0001f, idle); G.p.rollT = ROLL_TIME * (1.0f - (0.12f + 0.25f * k)); char nm[32]; snprintf(nm, sizeof nm, "w5_roll%d", k); snaplook(out, nm, (float[3]){ G.p.p[0], 0.8f, G.p.p[2] }, G.p.face + PI_F * 0.5f, 3.4f, 0.3f, 42); }
+			G.p.rollT = 0;
+		}
 		// cover: a wall corner, then a car
 		{
 			game_start(&G); for (int i = 0; i < MAX_PED; i++) G.ped[i].on = false; for (int i = 0; i < MAX_CAR; i++) G.car[i].on = false; G.hintT = 0;
@@ -400,7 +407,7 @@ int main(int argc, char **argv)
 				G.p.p[0] = wb->x0 - 1.0f; G.p.p[2] = wb->z1 - 5.0f; G.p.face = PI_F / 2; G.cam.yaw = PI_F / 2; G.cam.manualT = 0;
 				{ Input y = idle; y.x_p = true; run(0.05f, y); }
 				run(1.0f, idle); snap(out, "c1_wall_take");
-				Input sl = idle; sl.lx = 1; run(3.0f, sl); run(0.6f, idle); snap(out, "c2_wall_corner");
+				Input sl = idle; sl.lx = 1; run(2.0f, sl); run(1.0f, idle); snap(out, "c2_wall_corner");
 				Ped *q = &G.ped[0]; memset(q, 0, sizeof *q); q->on = true; q->hp = 60; q->x = wb->x0 + 8.0f; q->z = wb->z1 + 3.0f; q->state = PED_IDLE; q->timer = 100; q->scale = 1; q->node = q->prev = traffic_nearest_node(&G, q->x, q->z); q->shirt = 1;
 				Input aim = idle; aim.aim = true; run(0.5f, aim); snap(out, "c3_wall_peek");
 				Input fire = aim; fire.gas = true; run(0.5f, fire); snap(out, "c4_wall_shoot");

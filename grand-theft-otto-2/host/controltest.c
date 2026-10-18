@@ -81,7 +81,9 @@ int main(void)
 	Input sel = idle(); sel.select_p = true; run(0.1f, sel);
 	CHECK(!G.wheel, "SELECT no longer opens the wheel");
 	Input upw = idle(); upw.up_p = true; upw.dpy = 1; run(0.1f, upw);
-	CHECK(G.wheel && G.p.weapon == W_PISTOL, "D-pad up opens the wheel (and the same press does not pick fists: weapon %d)", G.p.weapon);
+	CHECK(!G.wheel, "a quick press of D-pad up does not open the wheel");
+	upw.up_p = false; run(0.3f, upw);
+	CHECK(G.wheel && G.p.weapon == W_PISTOL, "holding D-pad up opens the wheel (and the same press does not pick fists: weapon %d)", G.p.weapon);
 	Input dp = idle(); dp.dpx = 1; run(0.1f, dp); CHECK(G.p.weapon == W_SMG, "D-pad right = SMG (%d)", G.p.weapon);
 	dp = idle(); dp.dpx = 1; dp.dpy = 1; run(0.1f, dp); CHECK(G.p.weapon == W_PISTOL, "D-pad up-right = pistol (%d)", G.p.weapon);
 	dp = idle(); dp.dpx = 1; dp.dpy = -1; run(0.1f, dp); CHECK(G.p.weapon == W_SHOTGUN, "D-pad down-right = shotgun (%d)", G.p.weapon);
@@ -96,6 +98,13 @@ int main(void)
 	CHECK(!G.paused, "SELECT on the pause screen restarts and unpauses");
 	G.p.weapon = W_SMG; G.p.ammo[W_SMG] = 5; for (int i = 0; i < 40; i++) { Input rr = idle(); rr.gas = true; run(1.0f / 30, rr); }
 	CHECK(G.p.ammo[W_SMG] == 5, "ammo is infinite in the test build (%d)", G.p.ammo[W_SMG]);
+
+	printf("D-pad up: two quick taps switch weapon without the wheel\n");
+	game_start(&G); clear_world(); G.p.p[0] = SX + 3; G.p.p[2] = SZ; G.p.weapon = W_PISTOL;
+	{ Input u = idle(); u.up_p = true; u.dpy = 1; run(0.03f, u); u.up_p = false; u.dpy = 0; run(0.12f, u);
+	  CHECK(G.p.weapon == W_PISTOL && !G.wheel, "one tap does nothing (weapon %d, wheel %d)", G.p.weapon, G.wheel);
+	  u.up_p = true; u.dpy = 1; run(0.03f, u); u.up_p = false; run(0.5f, u);
+	  CHECK(G.p.weapon == W_SMG && !G.wheel, "the second tap switches to the next weapon and the wheel stays shut even when held (weapon %d, wheel %d)", G.p.weapon, G.wheel); }
 
 	printf("cars: X gets in and out, R accelerates, A is the handbrake\n");
 	game_start(&G); clear_world();
@@ -213,6 +222,7 @@ int main(void)
 			CHECK(G.p.cover == 1 && G.p.coverNx < -0.9f, "Y next to a wall takes cover with the wall behind the cover normal");
 			CHECK(fabsf(G.p.p[0] - (wx - COVER_WALL)) < 0.08f, "Otto stands half a metre off the wall (%.2f)", wx - G.p.p[0]);
 			run(0.6f, idle()); CHECK(G.p.lean > 0.9f, "he leans back on the wall (%.2f)", G.p.lean);
+			{ float fn = sinf(G.cam.yaw) * G.p.coverNx - cosf(G.cam.yaw) * G.p.coverNz; CHECK(fn < -0.85f, "in cover the camera looks square on to the wall, from the street (%.2f)", fn); }
 			CHECK(fabsf(wrapang(G.p.face - atan2f(G.p.coverNx, -G.p.coverNz))) < 0.15f, "his back is to the wall, facing the street");
 			float z0 = G.p.p[2]; Input sl = idle(); sl.lx = 1; run(1.0f, sl);
 			CHECK(G.p.p[2] > z0 + 1.5f && fabsf(G.p.p[0] - (wx - COVER_WALL)) < 0.08f, "the stick slides him along the wall (moved %.2f)", G.p.p[2] - z0);
@@ -220,6 +230,7 @@ int main(void)
 			run(0.4f, idle());
 			printf("   end of the wall z1 %.2f, Otto stopped at z %.2f\n", wb->z1, G.p.p[2]);
 			CHECK(G.p.cover == 1 && G.p.p[2] < wb->z1 && G.p.p[2] > wb->z1 - 1.0f, "he stops at the corner and stays in cover");
+			{ float fn = sinf(G.cam.yaw) * G.p.coverNx - cosf(G.cam.yaw) * G.p.coverNz; CHECK(fn < -0.75f, "at the corner the camera is square on to the wall, looking toward it (along the normal %.2f)", fn); }
 			// somebody on the other side of the corner: hidden from here, visible once he leans out
 			Ped *q = &G.ped[0]; memset(q, 0, sizeof *q); q->on = true; q->hp = 20; q->x = wx + 8.0f; q->z = wb->z1 + 3.0f; q->state = PED_IDLE; q->timer = 100; q->node = q->prev = traffic_nearest_node(&G, q->x, q->z);
 			CHECK(!los_clear(&G, G.p.p[0], 1.3f, G.p.p[2], q->x, 1.2f, q->z), "the wall hides him from the target");
@@ -243,11 +254,12 @@ int main(void)
 			// the camera looks along the wall's normal, behind Otto, and Otto is in view
 			float fx = sinf(G.cam.yaw), fz = -cosf(G.cam.yaw), dx = G.p.p[0] - G.cam.eye[0], dz = G.p.p[2] - G.cam.eye[2], dl = hypotf(dx, dz);
 			printf("   camera %.1f m from Otto, angle off centre %.0f deg\n", hypotf(dl, G.p.p[1] + 1.5f - G.cam.eye[1]), acosf((fx * dx + fz * dz) / dl) * 57.3f);
-			CHECK(dl < 6.0f && (fx * dx + fz * dz) / dl > cosf(DEG(28)), "the camera keeps Otto in view");
+			CHECK(dl < 6.0f && (fx * dx + fz * dz) / dl > cosf(DEG(46)), "the camera keeps Otto in view (he sits toward the edge, the street fills the screen)");
 			Input leave = idle(); leave.x_p = true; run(0.1f, leave);
 			CHECK(G.p.cover == 0, "Y again leaves the cover");
 			// keep pushing at the end of the wall: round the corner onto the next wall, and along it
 			G.p.p[0] = wx - 1.0f; G.p.p[2] = wb->z1 - 3.0f; G.p.face = PI_F / 2; G.cam.yaw = PI_F / 2; G.cam.manualT = 0; memset(G.ped, 0, sizeof G.ped);
+			for (int i = 0; i < MAX_CAR; i++) G.car[i].on = false;                  // shooting the person earlier sent the police: no patrol car parked at the corner
 			{ Input y2 = idle(); y2.x_p = true; run(0.1f, y2); }
 			CHECK(G.p.cover == 1 && G.p.coverNx < -0.9f, "cover again on the west face");
 			Input push = idle(); push.lx = 1; run(3.0f, push);
@@ -275,7 +287,7 @@ int main(void)
 		  CHECK(G.p.lock == 0, "and locks onto the person across the car");
 		  Input fi = ai; fi.gas = true; float car1 = G.car[ci2].hp; run(1.5f, fi);
 		  CHECK(G.ped[0].dead && G.car[ci2].hp >= car1 - 0.5f, "he shoots over it without hitting his own cover (dead %d, car %.0f -> %.0f)", G.ped[0].dead, car1, G.car[ci2].hp);
-		  G.ped[0].on = false; memset(G.bullet, 0, sizeof G.bullet); G.heat = 0; G.stars = 0; police_reset(&G); run(0.8f, idle()); CHECK(G.p.peek == 0 && G.p.crouch > 0.8f, "he ducks back down"); }
+		  G.ped[0].on = false; memset(G.bullet, 0, sizeof G.bullet); G.heat = 0; G.stars = 0; police_reset(&G); for (int i = 0; i < MAX_PED; i++) if (G.ped[i].cop) G.ped[i].on = false; run(0.8f, idle()); CHECK(G.p.peek == 0 && G.p.crouch > 0.8f, "he ducks back down"); }
 		{ Input sl = idle(); sl.lx = 1; run(2.5f, sl); Input ai = idle(); ai.aim = true; run(0.6f, ai);
 		  printf("   at the car's front: peek %d, peekT %.2f, Otto z %.2f (car z %.2f, its front at %.2f)\n", G.p.peek, G.p.peekT, G.p.p[2], czp, czp - 2.3f);
 		  CHECK(G.p.peek == 1 && G.p.peekT > 0.9f, "L at the end of the car leans him out round it");
@@ -290,10 +302,16 @@ int main(void)
 		Input leave = idle(); leave.x_p = true; run(0.1f, leave); CHECK(G.p.cover == 0, "Y leaves the car's cover");
 		// the car drives off or burns: the cover is gone
 		G.p.p[0] = cxp + 2.2f; run(0.05f, y); CHECK(G.p.cover == 2, "taking cover again");
-		G.car[ci2].x += 3.0f; run(0.1f, idle()); CHECK(G.p.cover == 0, "cover ends when the car moves away");
-		// in the open Y still cycles the weapon
-		game_start(&G); clear_world(); G.p.p[0] = SX + 3; G.p.p[2] = SZ - 30; w0 = G.p.weapon; run(0.1f, y);
-		CHECK(G.p.cover == 0 && G.p.weapon != w0, "Y with nothing to hide behind still changes weapon (%d -> %d)", w0, G.p.weapon);
+		{ float ox = G.p.p[0]; G.car[ci2].x += 3.0f; run(0.1f, idle()); CHECK(G.p.cover == 2 && G.p.p[0] > ox + 2.5f, "a car that is pushed takes him with it and he stays in cover (x %.1f -> %.1f)", ox, G.p.p[0]); }
+		G.car[ci2].wreck = true; G.car[ci2].hp = 0; run(0.5f, idle()); CHECK(G.p.cover == 2, "a wrecked car is still his cover");
+		{ Input lt = idle(); lt.lx = 1; run(0.5f, lt); CHECK(G.p.cover == 2, "and he stays there until Y"); }
+		{ Input lv = idle(); lv.x_p = true; run(0.1f, lv); CHECK(G.p.cover == 0, "Y leaves it"); }
+		{ G.p.p[0] = G.car[ci2].x + 2.2f; G.p.p[2] = G.car[ci2].z; Input tk = idle(); tk.x_p = true; run(0.1f, tk); CHECK(G.p.cover == 2, "he can take cover behind a wreck"); }
+		// in the open Y rolls
+		game_start(&G); clear_world(); G.p.p[0] = SX + 3; G.p.p[2] = SZ - 30; G.p.face = 0; G.cam.yaw = 0; w0 = G.p.weapon; { float z1 = G.p.p[2], hp0 = G.p.hp; Input yr = y; run(0.1f, yr);
+		CHECK(G.p.cover == 0 && G.p.weapon == w0 && G.p.rollT > 0, "Y with nothing to hide behind rolls and does not change weapon (%d -> %d, rollT %.2f)", w0, G.p.weapon, G.p.rollT);
+		run(0.6f, idle()); CHECK(G.p.rollT <= 0 && z1 - G.p.p[2] > 3.0f, "the roll carries him forward (%.1f m) and ends", z1 - G.p.p[2]);
+		Input yr2 = idle(); yr2.x_p = true; run(0.05f, yr2); CHECK(G.p.rollT <= 0, "he cannot roll again at once"); (void)hp0; }
 	}
 
 	printf("street furniture as cover\n");
@@ -353,8 +371,12 @@ int main(void)
 	printf("world map: toggle, pick a town, fast travel\n");
 	{
 		game_start(&G); clear_world(); G.p.p[0] = SX + 3; G.p.p[2] = SZ; G.p.cash = 321;
+		CHECK(G.mapMode == 0, "the map starts on NEAR");
 		Input t = idle(); t.touch_p = true; t.tx = MAP_BTN_X + 10; t.ty = MAP_TOGGLE_Y + 5; run(0.05f, t);
-		CHECK(G.mapMode == 1, "the WORLD MAP button switches the map to the world view");
+		CHECK(G.mapMode == 2, "the map button goes NEAR -> TOWN");
+		run(0.05f, t);
+		CHECK(G.mapMode == 1, "the map button goes TOWN -> WORLD");
+		run(0.05f, t); CHECK(G.mapMode == 0, "and WORLD -> NEAR"); run(0.05f, t); run(0.05f, t);
 		float x, y, w, h; world_tile(REG_HILLS, &x, &y, &w, &h);
 		t = idle(); t.touch_p = true; t.tx = x + w / 2; t.ty = y + h / 2; run(0.05f, t); CHECK(G.mapSel == REG_HILLS, "tapping a town picks it (%d)", G.mapSel);
 		world_tile(REG_CITY, &x, &y, &w, &h); t.tx = x + w / 2; t.ty = y + h / 2; run(0.05f, t); CHECK(G.mapSel == -1, "tapping the town you are in picks nothing");
@@ -368,11 +390,11 @@ int main(void)
 		// with a car: it comes along; in a helicopter in the air it refuses
 		int cc = game_add_car(&G, CAR_SEDAN, SX + 6.4f, SZ - 10, 0); G.p.p[0] = SX + 3.5f; G.p.p[2] = SZ - 10; { Input ex = idle(); ex.enter_p = true; run(0.1f, ex); }
 		CHECK(G.p.car == cc, "in a car"); (void)cc;
-		t = idle(); t.touch_p = true; t.tx = MAP_BTN_X + 10; t.ty = MAP_TOGGLE_Y + 5; run(0.05f, t);
+		t = idle(); t.touch_p = true; t.tx = MAP_BTN_X + 10; t.ty = MAP_TOGGLE_Y + 5; run(0.05f, t); run(0.05f, t);
 		world_tile(REG_AIRPORT, &x, &y, &w, &h); t.tx = x + w / 2; t.ty = y + h / 2; run(0.05f, t); run(0.05f, tr); run(2.5f, idle());
 		CHECK(G.region == REG_AIRPORT && G.p.car >= 0 && G.car[G.p.car].kind == CAR_SEDAN, "the car travels with him");
 		int hh = game_add_car(&G, CAR_HELI, 300.0f, 100.0f, 0); G.p.car = hh; G.car[hh].driven = true; G.car[hh].y = 50.0f; G.car[hh].rpm = 1;
-		t = idle(); t.touch_p = true; t.tx = MAP_BTN_X + 10; t.ty = MAP_TOGGLE_Y + 5; run(0.05f, t);
+		t = idle(); t.touch_p = true; t.tx = MAP_BTN_X + 10; t.ty = MAP_TOGGLE_Y + 5; run(0.05f, t); run(0.05f, t);
 		world_tile(REG_CITY, &x, &y, &w, &h); t.tx = x + w / 2; t.ty = y + h / 2; run(0.05f, t); run(0.05f, tr); run(2.0f, idle());
 		CHECK(G.region == REG_AIRPORT, "no fast travel from a helicopter in the air (region %d)", G.region);
 	}
@@ -579,22 +601,20 @@ int main(void)
 		CHECK(fabsf(wrapang(G.cam.yaw - y0)) < 0.05f, "two slow taps only glance");
 	}
 
-	printf("camera follows Otto round when he changes direction (and the stick keeps its direction meanwhile)\n");
+	printf("camera follows Otto round when the stick is pushed to a side (the stick stays relative to the screen)\n");
 	{
 		game_start(&G); clear_world(); G.p.p[0] = 100.0f; G.p.p[2] = 256.0f; G.p.face = 0; G.cam.yaw = 0; G.cam.manualT = 0;           // along the main east-west street
-		Input rt = idle(); rt.lx = 1; float x0 = G.p.p[0], z0 = G.p.p[2];
-		run(0.5f, rt); float yaw05 = G.cam.yaw; run(2.5f, rt);
-		printf("   ran right for 3 s: camera yaw %.2f (after 0.5 s %.2f), moved %.1f m east, %.1f m sideways\n", G.cam.yaw, yaw05, G.p.p[0] - x0, G.p.p[2] - z0);
-		CHECK(G.cam.yaw > 1.0f, "the camera swings round behind him (%.2f rad)", G.cam.yaw);
-		CHECK(yaw05 < 0.5f, "gently, not a snap (%.2f after half a second)", yaw05);
-		CHECK(G.p.p[0] - x0 > 8.0f && fabsf(G.p.p[2] - z0) < 4.0f, "and he keeps running the way the stick was pushed");
-		run(0.3f, idle()); Input up = idle(); up.ly = 1; x0 = G.p.p[0]; run(1.5f, up);
-		CHECK(G.p.p[0] - x0 > 4.0f, "after letting go, forward is where the camera looks (moved %.1f m east)", G.p.p[0] - x0);
+		Input lt = idle(); lt.lx = -1; float yaw0 = G.cam.yaw;
+		run(0.5f, lt); float yaw05 = G.cam.yaw; run(1.5f, lt);
+		printf("   held the stick left for 2 s: camera yaw %.2f (after 0.5 s %.2f), Otto's heading %.2f\n", G.cam.yaw, yaw05, G.p.face);
+		CHECK(yaw05 < -0.3f && yaw05 > -1.0f, "the camera starts to swing round smoothly (%.2f rad after half a second)", yaw05);
+		CHECK(G.cam.yaw < -1.5f, "and keeps going while the stick is held (%.2f rad)", G.cam.yaw);
+		CHECK(fabsf(wrapang(G.p.face - yaw0)) > 1.5f, "so he turns in a curve, not a straight line (heading %.2f)", G.p.face);
 		game_start(&G); clear_world(); G.p.p[0] = SX + 3; G.p.p[2] = SZ - 80; G.p.face = 0; G.cam.yaw = 0; G.cam.manualT = 0;
-		Input dn = idle(); dn.ly = -1; z0 = G.p.p[2]; run(3.0f, dn);
-		printf("   ran toward the camera: yaw %.2f, moved %.1f m south\n", G.cam.yaw, G.p.p[2] - z0);
-		CHECK(fabsf(G.cam.yaw) > 1.8f && G.p.p[2] - z0 > 8.0f, "running toward the camera: it swings round behind him and he does not reverse (yaw %.2f)", G.cam.yaw);
-		G.cam.manualT = 1.0f; { float yy = G.cam.yaw; Input cs = idle(); cs.ly = 1; G.cam.manualT = 1.5f; run(0.5f, cs); CHECK(fabsf(wrapang(G.cam.yaw - yy)) < 0.05f, "while the player turns the camera himself it is left alone"); }
+		Input dn = idle(); dn.ly = -1; float z0 = G.p.p[2]; run(3.0f, dn);
+		CHECK(fabsf(G.cam.yaw) < 0.05f && G.p.p[2] - z0 > 8.0f, "running straight at the camera leaves it alone and he does not reverse (yaw %.2f)", G.cam.yaw);
+		Input dr = idle(); dr.ly = -0.8f; dr.lx = 0.8f; run(0.5f, dr); CHECK(G.cam.yaw > 0.2f, "down-right swings it round clockwise toward behind him (%.2f)", G.cam.yaw);
+		{ float yy = G.cam.yaw; Input cs = idle(); cs.lx = 1; G.cam.manualT = 1.5f; run(0.5f, cs); CHECK(fabsf(wrapang(G.cam.yaw - yy)) < 0.05f, "while the player turns the camera himself it is left alone"); }
 	}
 
 	printf("motorcycle wheelies\n");

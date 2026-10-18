@@ -69,6 +69,7 @@ void damage_player(Game *g, float amount)
 {
 	Player *p = &g->p;
 	if (p->ps != PS_ALIVE || amount <= 0) return;
+	if (p->rollT > 0.08f && p->rollT < ROLL_TIME - 0.04f) return;           // rolling: the shots miss
 	p->hurtT = 0.45f;
 	amount *= 0.6f;                                                        // Otto is a lot tougher than a pedestrian
 	if (p->armor > 0) { float take = fminf(p->armor, amount); p->armor -= take; amount -= take; }
@@ -325,7 +326,7 @@ static void cars_damage_update(Game *g, float dt)
 }
 
 // ---- the player's weapons ---------------------------------------------------------------------------------------------------------------------
-static void next_weapon(Player *p, int dir)
+void next_weapon(Player *p, int dir)
 {
 	for (int k = 1; k <= W_COUNT; k++) {
 		int w = ((p->weapon + dir * k) % W_COUNT + W_COUNT) % W_COUNT;
@@ -445,7 +446,7 @@ static float auto_range(int weapon, const WeaponDef *w)
 static void choose_peek(Game *g, float range)
 {
 	Player *p = &g->p;
-	float fx = sinf(g->cam.yaw), fz = -cosf(g->cam.yaw), best = -1;
+	float best = -1;
 	for (int i = 0; i < 2; i++) {
 		int s = i ? 1 : -1;
 		float off[2];
@@ -453,7 +454,7 @@ static void choose_peek(Game *g, float range)
 		float tx = p->coverNz * s, tz = -p->coverNx * s;
 		float ref = atan2f(tx, -tz), y;                                  // the heading along the cover toward that end: what is ahead of him when he leans out, not what is behind
 		
-		float score = (fx * tx + fz * tz > 0 ? 0.5f : 0.0f) + (find_target_at(g, p->coverX + off[0], p->coverZ + off[1], range, ref, COVER_CONE, &y) >= 0 ? 2.0f : 0.0f);
+		float score = (s == p->coverView ? 0.5f : 0.0f) + (find_target_at(g, p->coverX + off[0], p->coverZ + off[1], range, ref, COVER_CONE, &y) >= 0 ? 2.0f : 0.0f);
 		if (score > best) { best = score; p->peek = s; p->peekDx = off[0]; p->peekDz = off[1]; p->coverRef = ref; }
 	}
 	if (p->cover == 2) {                                                      // behind a car he can also stand up and aim over the roof, from where he is
@@ -466,10 +467,35 @@ static void choose_peek(Game *g, float range)
 	}
 }
 
+// The camera's preview while he is hidden: where he would be aiming if he leant out now (the nearest enemy he could see from the end of the cover, or over the roof of a car)
+bool cover_preview(Game *g, float *yaw, int *side)
+{
+	Player *p = &g->p;
+	if (!p->cover) return false;
+	const WeaponDef *w = &WPN[p->weapon];
+	float range = weapon_melee(p->weapon) ? 30.0f : fminf(w->range * 0.8f, 45.0f), bd = 1e9f, y, by = 0; int bs = 0;
+	for (int i = 0; i < 2; i++) {
+		int s = i ? 1 : -1;
+		float off[2];
+		if (!cover_peek_offset(g, s, off)) continue;
+		float tx = p->coverNz * s, tz = -p->coverNx * s, ref = atan2f(tx, -tz), ox = p->coverX + off[0], oz = p->coverZ + off[1];
+		int n = find_target_at(g, ox, oz, range, ref, COVER_CONE, &y);
+		if (n >= 0) { float d = hypotf(g->ped[n].x - ox, g->ped[n].z - oz); if (d < bd) { bd = d; by = y; bs = s; } }
+	}
+	if (p->cover == 2) {
+		probeSkip = p->coverCar;
+		int n = find_target_at(g, p->coverX, p->coverZ, range, atan2f(-p->coverNx, p->coverNz), COVER_CONE, &y);
+		probeSkip = -1;
+		if (n >= 0) { float d = hypotf(g->ped[n].x - p->coverX, g->ped[n].z - p->coverZ); if (d < bd) { bd = d; by = y; bs = 0; } }
+	}
+	if (bd > 1e8f) return false;
+	*yaw = by; *side = bs;
+	return true;
+}
+
 static void player_weapons(Game *g, const Input *in, float dt)
 {
 	Player *p = &g->p;
-	if (in->x_p) next_weapon(p, 1);
 	if (in->weap > 0 && in->weap <= W_COUNT && weapon_usable(p, in->weap - 1)) p->weapon = in->weap - 1;
 	if (!weapon_usable(p, p->weapon)) next_weapon(p, 1);
 	p->fireCd -= dt; p->flashT -= dt; p->punchT -= dt; p->hurtT -= dt;
@@ -482,7 +508,8 @@ static void player_weapons(Game *g, const Input *in, float dt)
 		else if (p->peek == 0 && p->peekT < 0.3f) choose_peek(g, lockRange);
 	}
 	bool covered = inCover && p->peekT < 0.6f;                                 // still behind the cover: not aiming yet
-	bool shoot = in->gas && onFoot && !covered, aimHeld = (in->aim || (inCover && in->gas)) && onFoot && !covered;
+	bool rolling = onFoot && p->rollT > 0;                                       // no shooting or aiming in the middle of a roll
+	bool shoot = in->gas && onFoot && !covered && !rolling, aimHeld = (in->aim || (inCover && in->gas)) && onFoot && !covered && !rolling;
 	if (aimHeld) lock_update(g, in, dt, lockRange);
 	else { p->lock = -1; p->lockMag = 0; p->lockCd = 0; }
 	p->target = -1;
