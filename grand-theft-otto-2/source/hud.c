@@ -54,13 +54,14 @@ static void help_page(void)
 	T("CONTROLS", 160, 2, 0.5f, ORANGE, AL_C);
 	static const char *rows[][2] = {
 		{ "On foot", "" }, { "Circle Pad", "walk / run" }, { "B B B ...", "sprint; keep tapping for faster" }, { "R", "shoot (auto-aims) / punch" }, { "L  (hold)", "aim; lock on. Circle Pad: switch target" },
-		{ "Y", "next weapon" }, { "SELECT", "weapon wheel (Circle Pad / D-pad)" }, { "X", "get into the nearest vehicle" },
-		{ "Car / motorcycle", "" }, { "Circle Pad", "steer" }, { "R  /  B", "gas  /  brake, reverse" }, { "A  or  L", "handbrake (drift)" }, { "X  (when slow)", "get out" },
+		{ "Y", "take / leave cover (by a wall or car)" }, { "SELECT", "weapon wheel (Circle Pad / D-pad)" }, { "X", "get into the nearest vehicle" },
+		{ "Car / motorcycle", "" }, { "Circle Pad", "steer" }, { "R  /  B", "gas  /  brake, reverse" }, { "A  or  L", "handbrake (drift)" }, { "X", "get out (any speed)" },
 		{ "Helicopter", "" }, { "Circle Pad", "forward / back, turn" }, { "R", "climb" }, { "B  or  A  or  L", "descend (X to get out on the ground)" },
-		{ "Camera", "" }, { "C-stick / D-pad / drag", "turn the camera" }, { "START", "pause; SELECT there = back to start" } };
-	for (int i = 0; i < 20; i++) {
+		{ "Plane (airport)", "R throttle, B brake, pad: bank / pitch; X jump out = parachute" },
+		{ "Camera", "" }, { "C-stick / drag", "turn / tilt the camera" }, { "D-pad L / R / down", "hold: look; 2x tap: turn. Up (aiming): first person" }, { "START", "pause: A respawn, SELECT restart" } };
+	for (int i = 0; i < 22; i++) {
 		bool head = rows[i][1][0] == 0;
-		float y = 17 + i * 10.7f;
+		float y = 15 + i * 9.9f;
 		if (head) T(rows[i][0], 6, y, 0.3f, GOLD, AL_L);
 		else { T(rows[i][0], 12, y, 0.28f, WHITE, AL_L); T(rows[i][1], 112, y, 0.28f, RGBA(255, 255, 255, 200), AL_L); }
 	}
@@ -110,20 +111,40 @@ static void crosshair(const Game *g, float cx, float cy, bool locked)
 	}
 }
 
-// the weapon wheel: one slice per weapon (up, right, down, left), the chosen one lit
+// the weapon wheel: one slice per weapon, clockwise from the top, the chosen one lit
 static void weapon_wheel(const Game *g)
 {
 	panel(0, 0, 400, 240, RGBA(0, 0, 0, 120));
-	static const float ox[4] = { 0, 96, 0, -96 }, oy[4] = { -70, 0, 70, 0 };
 	for (int i = 0; i < W_COUNT; i++) {
-		float x = 200 + ox[i % 4] - 42, y = 120 + oy[i % 4] - 22;
-		bool has = g->p.has[i] && (i == W_FISTS || g->p.ammo[i] > 0), sel = g->p.weapon == i, hot = g->wheelSel == i;
-		panel(x - 2, y - 2, 88, 48, hot ? RGBA(255, 220, 120, 255) : RGBA(0, 0, 0, 160));
-		panel(x, y, 84, 44, sel ? RGBA(210, 100, 24, 255) : has ? RGBA(40, 48, 72, 255) : RGBA(26, 30, 40, 255));
-		T(WPN[i].name, x + 42, y + 5, 0.55f, has ? WHITE : RGBA(255, 255, 255, 90), AL_C);
-		if (i != W_FISTS) T(TEST_LOADOUT ? "inf" : "", x + 42, y + 25, 0.45f, GOLD, AL_C);
+		float a = i * 2 * PI_F / W_COUNT, x = 200 + 124.0f * sinf(a) - 36, y = 120 - 84.0f * cosf(a) - 17;
+		bool has = weapon_usable(&g->p, i), sel = g->p.weapon == i, hot = g->wheelSel == i;
+		panel(x - 2, y - 2, 76, 38, hot ? RGBA(255, 220, 120, 255) : RGBA(0, 0, 0, 160));
+		panel(x, y, 72, 34, sel ? RGBA(210, 100, 24, 255) : has ? RGBA(40, 48, 72, 255) : RGBA(26, 30, 40, 255));
+		T(WPN[i].name, x + 36, y + 2, 0.5f, has ? WHITE : RGBA(255, 255, 255, 90), AL_C);
+		if (!weapon_melee(i)) T(TEST_LOADOUT ? "inf" : "", x + 36, y + 18, 0.4f, GOLD, AL_C);
 	}
-	T("Circle Pad / D-pad: choose    SELECT: close", 200, 214, 0.38f, RGBA(255, 255, 255, 200), AL_C);
+	T("Circle Pad / D-pad", 200, 106, 0.32f, RGBA(255, 255, 255, 170), AL_C);
+	T("SELECT: close", 200, 118, 0.32f, RGBA(255, 255, 255, 170), AL_C);
+}
+
+// a discreet compass strip under the stars: the heading the view points along (north = up the map)
+static void compass(const Game *g)
+{
+	float heading = g->cam.yaw + g->cam.look;
+	const float cx = 200.0f, y = 29.0f, span = DEG(55), px = 78.0f;
+	static const char *names[8] = { "N", "NE", "E", "SE", "S", "SW", "W", "NW" };
+	panel(cx - px - 4, y - 1, 2 * px + 8, 14, RGBA(0, 0, 0, 55));
+	for (int k = 0; k < 24; k++) {
+		float d = wrapang(k * DEG(15) - heading);
+		if (fabsf(d) > span) continue;
+		float x = cx + d / span * px, a = 1.0f - fabsf(d) / span;
+		bool major = k % 3 == 0;
+		panel(x - 0.5f, y + (major ? 0 : 3), 1, major ? 4 : 2, RGBA(255, 255, 255, (int)(150 * a)));
+		if (major) T(names[k / 3], x, y + 3.5f, k == 0 ? 0.4f : 0.32f, k == 0 ? RGBA(255, 90, 70, (int)(255 * a)) : RGBA(255, 255, 255, (int)(210 * a)), AL_C);
+	}
+	panel(cx - 1, y - 1, 2, 3, RGBA(255, 210, 90, 230));
+	int deg = ((int)(heading * 57.2958f + 360.5f)) % 360;
+	char b[8]; snprintf(b, sizeof b, "%03d", deg); T(b, cx, y + 13.5f, 0.28f, RGBA(255, 255, 255, 120), AL_C);
 }
 
 // ---- top screen ----------------------------------------------------------------------------------------------------------------------
@@ -151,7 +172,7 @@ void hud_top(const Game *g, const Scene *s)
 				shown = true;
 			}
 		}
-		if (!shown && p->weapon != W_FISTS && (p->aimT > 0.35f || g->hitT > 0 || g->killT > 0)) crosshair(g, 200, 120, false);
+		if (!shown && !weapon_melee(p->weapon) && (p->aimT > 0.35f || g->hitT > 0 || g->killT > 0)) crosshair(g, 200, 120, false);
 	}
 	// health, armour
 	panel(0, 0, 150, 38, RGBA(0, 0, 0, 90));
@@ -169,26 +190,40 @@ void hud_top(const Game *g, const Scene *s)
 		u32 col = on ? (blink ? RGBA(255, 255, 255, 255) : RGBA(255, 210, 40, 255)) : RGBA(255, 255, 255, 60);
 		star(200 + (i - 2) * 22, 14, on ? 9.0f : 7.0f, col);
 	}
-		// weapon and ammo
+		compass(g);
+	// weapon and ammo
 	{
 		const WeaponDef *w = &WPN[p->weapon];
 		panel(0, 206, 120, 34, RGBA(0, 0, 0, 100));
 		T(w->name, 8, 208, 0.5f, WHITE, AL_L);
-		if (p->weapon != W_FISTS) { ammo_text(buf, sizeof buf, p->ammo[p->weapon]); T(buf, 112, 208, 0.5f, p->ammo[p->weapon] < 6 ? RGBA(255, 90, 70, 255) : GOLD, AL_R); }
+		if (!weapon_melee(p->weapon)) { ammo_text(buf, sizeof buf, p->ammo[p->weapon]); T(buf, 112, 208, 0.5f, p->ammo[p->weapon] < 6 ? RGBA(255, 90, 70, 255) : GOLD, AL_R); }
 		else T("SELECT: weapons", 8, 224, 0.3f, RGBA(255, 255, 255, 150), AL_L);
 	}
 	// driving: speed and car health
 	if (p->car >= 0) {
 		const Car *c = &g->car[p->car];
 		float spd = sqrtf(c->vx * c->vx + c->vz * c->vz);
-		panel(300, c->kind == CAR_HELI ? 172 : 190, 100, c->kind == CAR_HELI ? 68 : 50, RGBA(0, 0, 0, 100));
+		bool air = c->kind == CAR_HELI || c->kind == CAR_PLANE;
+		panel(300, air ? 172 : 190, 100, air ? 68 : 50, RGBA(0, 0, 0, 100));
 		snprintf(buf, sizeof buf, "%d", (int)(spd * 3.6f));
 		T(buf, 394, 190, 0.9f, spd > 30 ? GOLD : WHITE, AL_R);
 		T("km/h", 394, 216, 0.32f, RGBA(255, 255, 255, 180), AL_R);
-		if (c->kind == CAR_HELI) { snprintf(buf, sizeof buf, "ALT %d m", (int)(c->y + 0.5f)); T(buf, 394, 174, 0.45f, RGBA(150, 220, 255, 255), AL_R); }
+		if (air) { snprintf(buf, sizeof buf, "ALT %d m", (int)(c->y + 0.5f)); T(buf, 394, 174, 0.45f, RGBA(150, 220, 255, 255), AL_R); }
 		bar(306, 232, 88, 4, c->hp / 100.0f, c->hp < 30 ? RGBA(255, 120, 40, 255) : RGBA(120, 220, 120, 255), RGBA(40, 40, 40, 255));
+	} else if (p->cover && p->ps == PS_ALIVE) {
+		T("Y  leave cover      L / R  lean out and aim", 200, 190, 0.45f, GOLD, AL_C);
 	} else if (game_nearest_car(g, p->p[0], p->p[2], 3.4f) >= 0 && !g->paused && p->ps == PS_ALIVE) {
 		T("X   get in", 250, 190, 0.55f, GOLD, AL_C);
+	}
+	if (p->car < 0 && !p->cover && p->ps == PS_ALIVE && !g->paused && !g->wheel) {
+		float cv[6];
+		static float lastT = -9.0f; static bool lastHit;                      // the search is ~220 probes: five times a second is plenty
+		if (g->time - lastT > 0.2f || g->time < lastT) { lastT = g->time; lastHit = cover_find(g, p->p[0], p->p[2], g->cam.yaw, cv); }
+		if (lastHit) T("Y   take cover", 200, 170, 0.5f, RGBA(150, 220, 255, 255), AL_C);
+	}
+	if (p->car < 0 && p->airT > 0.05f && p->ps == PS_ALIVE) {                 // falling or under the parachute
+		snprintf(buf, sizeof buf, "ALT %d m", (int)(p->p[1] + 0.5f)); T(buf, 394, 190, 0.5f, RGBA(150, 220, 255, 255), AL_R);
+		T(p->chute > 0.3f ? "parachute open: steer with the circle pad" : "free fall", 394, 206, 0.32f, RGBA(255, 255, 255, 190), AL_R);
 	}
 	// arrest meter
 	if (p->arrestT > 0.05f && p->ps == PS_ALIVE) {
@@ -202,7 +237,7 @@ void hud_top(const Game *g, const Scene *s)
 		float a = g->hintT > 1 ? 255 : g->hintT * 255;
 		float t = 9.0f - g->hintT;
 		if (t < 4.0f) T("GRAND THEFT OTTO II", 200, 40, 0.9f, with_alpha(ORANGE, a), AL_C);
-		T("R shoot   L aim / lock on   SELECT weapons   X get in   B B B sprint   START pause", 200, 70, 0.36f, with_alpha(WHITE, a * 0.85f), AL_C);
+		T("R shoot   L aim   Y cover   SELECT weapons   X get in   B B B sprint", 200, 70, 0.36f, with_alpha(WHITE, a * 0.85f), AL_C);
 	}
 	// WASTED / BUSTED
 	if (p->ps != PS_ALIVE) {
@@ -216,10 +251,15 @@ void hud_top(const Game *g, const Scene *s)
 		panel(0, 0, 400, 240, RGBA(0, 0, 0, 140));
 		T("PAUSED", 200, 30, 1.0f, WHITE, AL_C);
 		T("START  resume", 200, 100, 0.55f, WHITE, AL_C);
+		T("A  respawn at the hospital (cash kept)", 200, 124, 0.45f, GOLD, AL_C);
+		T("SELECT  restart from the beginning", 200, 140, 0.4f, RGBA(255, 255, 255, 200), AL_C);
 		snprintf(buf, sizeof buf, "D-pad down: invert camera Y  (%s)", g->invertY ? "on" : "off"); T(buf, 200, 160, 0.4f, RGBA(255, 255, 255, 200), AL_C);
 		snprintf(buf, sizeof buf, "D-pad up: show FPS  (%s)", g->showFps ? "on" : "off"); T(buf, 200, 178, 0.4f, RGBA(255, 255, 255, 200), AL_C);
 	}
-	if (g->showFps) { snprintf(buf, sizeof buf, "%d fps", (int)(g->fps + 0.5f)); T(buf, 4, 192, 0.35f, RGBA(180, 255, 180, 255), AL_L); }
+	if (g->showFps) {
+		snprintf(buf, sizeof buf, "%d fps%s", (int)(g->fps + 0.5f), g->slow ? "  (reduced detail)" : ""); T(buf, 4, 176, 0.35f, RGBA(180, 255, 180, 255), AL_L);
+		snprintf(buf, sizeof buf, "logic %.1f  build %.1f  3D %.1f  hud %.1f  wait %.1f ms", g->tm[0], g->tm[1], g->tm[2], g->tm[3], g->tm[4]); T(buf, 4, 188, 0.3f, RGBA(180, 255, 180, 255), AL_L);
+	}
 }
 
 // ---- bottom screen: the city map and weapon buttons -------------------------------------------------------------------------------------------
@@ -267,7 +307,7 @@ static void city_map(const Game *g)
 		if (!g->car[i].on || g->car[i].driven || g->car[i].wreck) continue;
 		float cx, cy; map_pt(g->car[i].x, g->car[i].z, &cx, &cy);
 		bool cop = g->car[i].bot;
-		if (g->car[i].kind == CAR_HELI) { panel(cx - 2.5f, cy - 2.5f, 5, 5, RGBA(120, 220, 255, 255)); continue; }
+		if (g->car[i].kind == CAR_HELI || g->car[i].kind == CAR_PLANE) { panel(cx - 2.5f, cy - 2.5f, 5, 5, RGBA(120, 220, 255, 255)); continue; }
 		panel(cx - 1.5f, cy - 1.5f, 3, 3, cop ? (((int)(g->time * 4) & 1) ? RGBA(255, 60, 60, 255) : RGBA(70, 110, 255, 255)) : g->car[i].ai.on ? RGBA(230, 240, 255, 255) : RGBA(255, 220, 90, 255));
 	}
 	for (int i = 0; i < MAX_PED; i++) {
@@ -284,14 +324,14 @@ static void city_map(const Game *g)
 
 static void weapon_buttons(const Game *g)
 {
-	static const char *short_[W_COUNT] = { "Fists", "Pistol", "SMG", "Shotgun" };
+	static const char *short_[W_COUNT] = { "Fist", "9mm", "SMG", "Shot", "Bat", "Rifle", "Snipe", "RPG" };
 	char buf[24];
 	for (int i = 0; i < W_COUNT; i++) {
-		float x = 6.0f + i * 58.5f, y = 216.0f;
-		bool has = g->p.has[i] && (i == W_FISTS || g->p.ammo[i] > 0), sel = g->p.weapon == i;
-		panel(x, y, 55, 22, sel ? RGBA(200, 90, 20, 255) : has ? RGBA(46, 54, 78, 255) : RGBA(26, 30, 40, 255));
-		T(short_[i], x + 27.5f, y, 0.32f, has ? WHITE : RGBA(255, 255, 255, 80), AL_C);
-		if (i != W_FISTS) { ammo_text(buf, sizeof buf, g->p.ammo[i]); T(buf, x + 27.5f, y + 10, 0.32f, has ? GOLD : RGBA(255, 255, 255, 70), AL_C); }
+		float x = 6.0f + i * 38.5f, y = 216.0f;
+		bool has = weapon_usable(&g->p, i), sel = g->p.weapon == i;
+		panel(x, y, 36, 22, sel ? RGBA(200, 90, 20, 255) : has ? RGBA(46, 54, 78, 255) : RGBA(26, 30, 40, 255));
+		T(short_[i], x + 18, y, 0.3f, has ? WHITE : RGBA(255, 255, 255, 80), AL_C);
+		if (!weapon_melee(i)) { ammo_text(buf, sizeof buf, g->p.ammo[i]); T(buf, x + 18, y + 10, 0.3f, has ? GOLD : RGBA(255, 255, 255, 70), AL_C); }
 	}
 }
 

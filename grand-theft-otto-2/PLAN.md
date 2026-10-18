@@ -23,3 +23,14 @@ skeleton (gfx3ds.c / main.c / shader / chunked static scene / PC preview + sim t
 
 ## Not yet verified
 Never run on hardware. The user installs the CIA with FBI and reports frame rate / feel (the 3D slider doubles the draw cost).
+
+## Milestone 4e: more weapons, cover, tyre smoke
+- Weapon wheel now has 8 slices (fists, pistol, SMG, shotgun, bat, rifle, sniper, rocket launcher); pickups for each; RPG explodes on contact, sniper zooms while aiming.
+- Cover (Y): next to a wall or the side of a parked car Y hides Otto (chest to the cover, camera behind and above him). Circle Pad slides along it; at an end L/R leans him out round the corner and aims (locks on whoever is visible from there). Cars stop bullets, police included. Y elsewhere still cycles the weapon.
+- Tyre smoke on hard braking from speed and in slides; motorcycles capped at 46 m/s (was 64).
+- Follow-up: in cover Otto stands back flat against the wall (leaning back, hips on it; crouched behind cars), camera diagonal over the shoulder; aiming from cover is limited to the half in front of the end he leans out of. Each gun has its own hold (GUNPOSE in scene.c: pistol at arm's length, SMG low, shotgun / rifle shouldered, sniper crouched, RPG on the shoulder). The bat is a real two-handed swing (0.5 s). D-pad right / left / down: hold = glance, double-tap = turn Otto; up still tilts the camera.
+- Follow-up 2: slanted shooting stance (body turned away from the aim, GUNPOSE.blade); behind a car L stands him up to aim over the roof (peek 2) when not at an end; X gets out at any speed (landing hurts above 36 km/h).
+- Follow-up 3: over-the-shoulder camera while aiming a gun; tougher police (stars from 10 heat, hostile from 1 star, more officers/cars/SWAT, faster, tougher, quicker spawns); street furniture (bins, newspaper boxes, dumpsters: World.prop, low cover); airport south of the city (AIRBOX, EX_AIR: terminal, tower, hangars, 4 parked airliners, 2 runways, 2 animated airliners).
+- Follow-up 4: flyable airliners at the airport (CAR_PLANE, plane_step), police find Otto away from the streets (player_far), D-pad up = first-person aim while aiming (no camera effect), perimeter fence, close over-the-shoulder aim camera + bigger / more detailed guns, sports cars with wings and more of them.
+- Follow-up 5: police fix (full car slots starved the foot officers; make_car_room, MAX_CAR 56, independent foot spawns, cops reach Otto away from the streets), small agile flyable planes, parachute skydive (Player.chute, gravity + roofs as floors), pause-menu respawn (A), compass.
+- Follow-up 6 (performance): timer overlay (pause > D-pad up shows fps + logic/build/3D/hud/wait ms), fence + airliners in the near-only detail group, airport split into 3 chunks, draw limits, block-restricted ray casts, at most 2 physics steps per frame, 4 skinned people, far cars as boxes, cover prompt throttled, automatic reduced-detail mode (Game.slow).

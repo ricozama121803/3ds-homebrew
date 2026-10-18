@@ -124,10 +124,7 @@ int main(void)
 		if (cstick) irrstCstickRead(&cs);
 		stick(cp.dx / 150.0f, cp.dy / 150.0f, &in.lx, &in.ly);                  // circle pad: move / steer
 		stick(cs.dx / 150.0f, cs.dy / 150.0f, &in.cx, &in.cy);                  // C-stick: camera
-		if (held & KEY_DRIGHT) in.cx += 1.0f;                                   // d-pad: camera too
-		if (held & KEY_DLEFT) in.cx -= 1.0f;
-		if (held & KEY_DUP) in.cy += 1.0f;
-		if (held & KEY_DDOWN) in.cy -= 1.0f;
+		// the D-pad does not move the camera: left / right / down glance and turn, up toggles first-person aiming (game.c)
 		in.cx = in.cx > 1 ? 1 : in.cx < -1 ? -1 : in.cx; in.cy = in.cy > 1 ? 1 : in.cy < -1 ? -1 : in.cy;
 		in.gas = (held & (KEY_R | KEY_ZR)) != 0;                               // R: shoot on foot, gas in a car
 		in.hand = (held & (KEY_A | KEY_L | KEY_ZL)) != 0;                      // A or L: handbrake in a car
@@ -137,7 +134,7 @@ int main(void)
 		in.brake = (held & KEY_B) != 0;                                        // B: brake / reverse; two quick taps on foot = sprint
 		in.a_p = (down & KEY_A) != 0;
 		in.b_p = (down & KEY_B) != 0;
-		in.x_p = (down & KEY_Y) != 0;                                          // Y: next weapon
+		in.x_p = (down & KEY_Y) != 0;                                          // Y: take / leave cover (next to a wall or car), otherwise the next weapon
 		in.enter_p = (down & KEY_X) != 0;                                      // X: get in / out of a car
 		in.start_p = (down & KEY_START) != 0;
 		in.select_p = (down & KEY_SELECT) != 0;                                // SELECT: weapon wheel (restart is on the pause screen)
@@ -147,14 +144,22 @@ int main(void)
 			touchPosition tp; hidTouchRead(&tp);
 			if (down & KEY_TOUCH) {
 				in.touch_p = true; in.tx = tp.px; in.ty = tp.py;
-				if (tp.py >= 214 && tp.px >= 6 && tp.px < 6 + 4 * 58.5f) in.weap = 1 + (int)((tp.px - 6) / 58.5f);        // the weapon buttons under the map
+				if (tp.py >= 214 && tp.px >= 6 && tp.px < 6 + W_COUNT * 38.5f) in.weap = 1 + (int)((tp.px - 6) / 38.5f);        // the weapon buttons under the map
 			}
 			else { in.tdx = (float)tp.px - lastTouch.px; in.tdy = (float)tp.py - lastTouch.py; }
 			lastTouch = tp;
 		}
 
+		u64 t0 = svcGetSystemTick();
 		game_update(&g, &in, dt);
+		u64 t1 = svcGetSystemTick();
 		fpsAvg += (1.0f / dt - fpsAvg) * fminf(1.0f, dt * 1.5f); g.fps = fpsAvg;
+		{                                                                   // automatic quality: tighten the drawing limits after a few poor seconds, relax them after a long smooth stretch
+			static float lowT = 0, hiT = 0;
+			if (fpsAvg < 24.0f) { lowT += dt; hiT = 0; } else if (fpsAvg > 50.0f) { hiT += dt; lowT = 0; } else { lowT = fmaxf(0, lowT - dt); hiT = 0; }
+			if (!g.slow && lowT > 3.0f) { g.slow = true; lowT = 0; }
+			else if (g.slow && hiT > 12.0f) { g.slow = false; hiT = 0; }
+		}
 		if (framesRun < 100000 && ++framesRun == 900) remove(LOCK_FILE);          // 30 s of play: this launch is fine
 		if (g.saveNeeded && now - lastSave > 5 * (u64)SYSCLOCK_ARM11) { write_save(&g); g.saveNeeded = false; lastSave = now; }                  // cash and settings, at most every 5 s
 
@@ -163,7 +168,9 @@ int main(void)
 		hud_frame_begin();
 
 		C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
+		u64 t2 = svcGetSystemTick();
 		Scene *scene = gfx_begin(&g);
+		u64 t3 = svcGetSystemTick();
 		C2D_TargetClear(topL, clearTop);
 		C2D_SceneBegin(topL);
 		gfx_draw(scene, -1.0f, slider); gfx_end_3d();
@@ -174,10 +181,14 @@ int main(void)
 			gfx_draw(scene, +1.0f, slider); gfx_end_3d();
 			hud_top(&g, scene);
 		}
+		u64 t4 = svcGetSystemTick();
 		C2D_TargetClear(bot, clearBot);
 		C2D_SceneBegin(bot);
 		hud_bottom(&g);
+		u64 t5 = svcGetSystemTick();
 		C3D_FrameEnd(0);
+		u64 t6 = svcGetSystemTick();
+		{ const float k = 0.05f, ms = 1000.0f / (float)SYSCLOCK_ARM11; float v[5] = { (t1 - t0) * ms, (t3 - t2) * ms, (t4 - t3) * ms, (t5 - t4) * ms, (t6 - t5) * ms }; for (int i = 0; i < 5; i++) g.tm[i] += (v[i] - g.tm[i]) * k; }
 	}
 
 	write_save(&g);

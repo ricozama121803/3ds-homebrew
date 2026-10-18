@@ -18,7 +18,7 @@ enum { MAT_WHITE, MAT_ROAD, MAT_GLASS, MAT_CREAM, MAT_RED, MAT_TAN, MAT_COPPER, 
 #define PITCH     64.0f
 #define CITY      (NB * PITCH)
 #define MAX_BOX   900
-#define MAX_CAR   40
+#define MAX_CAR   56
 #define MAX_PED   56
 #define MAX_BULLET 48
 #define MAX_PART  120
@@ -45,8 +45,13 @@ typedef struct {
 	short bld;                               // boxes of one building are consecutive and share this id
 } Box;
 
+// street furniture on the pavements: trash bins, newspaper boxes and dumpsters. Low cover (they do not stop a standing shot, a crouched Otto hides behind them); only people and bullets see them.
+#define MAX_PROP 320
+typedef struct { float x, z, hx, hz, h; unsigned char type, face; } Prop;      // type 0 bin, 1 newspaper box, 2 dumpster; face 0 +x, 1 -x, 2 +z, 3 -z: the way it faces (the street)
+
 typedef struct {
 	Box box[MAX_BOX]; int nbox, nbld;
+	Prop prop[MAX_PROP]; int nprop; short pfirst[NB][NB], pcount[NB][NB];
 	int bfirst[NB][NB], bcount[NB][NB];      // boxes per block (all boxes of a block are consecutive)
 	bool park[NB][NB];
 	int downtown0, downtown1;                // downtown blocks are i >= downtown0 and j < downtown1 (north-east corner)
@@ -59,10 +64,35 @@ float city_ray(const World *w, const float o[3], const float d[3], float tmax, f
 void  city_move(const World *w, float p[3], const float d[3], Contact *c);                     // move the on-foot body with collision (axis by axis)
 bool  city_push_circle(const World *w, float *x, float *z, float r, float n[2]);               // push a ground circle out of the buildings; true (and the push direction) if it hit
 bool  city_push_circle_y(const World *w, float *x, float *z, float r, float ylo, float yhi, float n[2]);   // same, only against buildings that reach into the height range
+bool  city_prop_push(const World *w, float *x, float *z, float r, float n[2]);                 // push a ground circle out of the street furniture; true (and the direction) if it hit
+float city_prop_seg(const World *w, const float a[3], const float b[3]);                      // 0..1 where a segment first goes through street furniture, or -1
 float city_roof_h(const World *w, float x, float z, float r);                                  // top of the highest building under a circle (0 over a street)
-static inline bool world_walkable(float x, float z)       // on foot: the city, the beach and the pier
+// the airport south of the city: Otto can walk or drive onto it from the city's southern edge. Its solid parts (terminal, tower, hangars, parked planes) are AIRBOX boxes.
+#define AIR_X0 40.0f
+#define AIR_X1 (CITY - 12.0f)
+#define AIR_Z0 CITY
+#define AIR_Z1 (CITY + 440.0f)
+#define RWY1_Z (CITY + 297.0f)                   // the centre lines of the two runways, running east - west
+#define RWY2_Z (CITY + 385.0f)
+typedef struct { float x0, z0, x1, z1, h; } AirBox;
+#define N_AIRBOX 10
+static const AirBox AIRBOX[N_AIRBOX] = {
+	{ 262, CITY + 88, 436, CITY + 128, 14 },            // terminal
+	{ 440, CITY + 92, 452, CITY + 104, 34 },            // control tower
+	{ 52, CITY + 90, 132, CITY + 135, 15 },             // hangars
+	{ 52, CITY + 150, 132, CITY + 195, 15 },
+	{ 456, CITY + 140, 498, CITY + 178, 9 },            // cargo shed
+	{ 287.6f, CITY + 149, 292.4f, CITY + 187, 6.5f },   // the four parked airliners (fuselages)
+	{ 337.6f, CITY + 149, 342.4f, CITY + 187, 6.5f },
+	{ 387.6f, CITY + 149, 392.4f, CITY + 187, 6.5f },
+	{ 437.6f, CITY + 149, 442.4f, CITY + 187, 6.5f },
+	{ 188.6f, CITY + 62.6f, 189.4f, CITY + 63.4f, 8 } };   // a lamp tower on the plaza
+static const float AIR_PLANE_X[4] = { 290.0f, 340.0f, 390.0f, 440.0f };
+#define AIR_PLANE_Z (CITY + 168.0f)
+static inline bool world_walkable(float x, float z)       // on foot: the city, the beach, the pier and the airport
 {
 	if (z >= 1.0f && z <= CITY - 1.0f && x >= BEACH_X && x <= CITY - 1.0f) return true;
+	if (z > CITY - 1.0f && z <= AIR_Z1 && x >= AIR_X0 - 20.0f && x <= AIR_X1) return true;
 	return x >= PIER_X && x <= BEACH_X && z >= PIER_Z0 && z <= PIER_Z1;
 }
 unsigned rnd_next(unsigned *s);
@@ -84,7 +114,9 @@ typedef struct {
 	float tx, ty;
 } Input;
 
-enum { W_FISTS, W_PISTOL, W_SMG, W_SHOTGUN, W_COUNT };
+enum { W_FISTS, W_PISTOL, W_SMG, W_SHOTGUN, W_BAT, W_RIFLE, W_SNIPER, W_RPG, W_COUNT };        // the weapon wheel has one slice for each, clockwise from the top
+static inline float melee_time(int w) { return w == W_BAT ? 0.5f : 0.34f; }                // how long a punch or a bat swing lasts
+static inline bool weapon_melee(int w) { return w == W_FISTS || w == W_BAT; }                   // no ammo, hits what is right in front of Otto
 #ifndef TEST_LOADOUT
 #define TEST_LOADOUT 1                       // testing: Otto starts (and restarts) with every weapon and never runs out of ammo; set to 0 for the real game
 #endif
@@ -104,6 +136,15 @@ typedef struct {
 	float aimYaw;
 	int punchSide;                           // alternates: right jab, left cross
 	bool punchHit;                           // the punch has not landed yet (it does when the fist is fully out)
+	int cover;                               // 0 in the open, 1 hugging a wall, 2 crouched behind a car (Y)
+	int coverCar;                            // the car that is the cover, or -1 for a wall
+	float coverX, coverZ, coverNx, coverNz;  // where Otto hides, and the direction from the cover toward him (he faces that way, his back against the cover)
+	float coverCarX, coverCarZ;              // where that car was when he took cover (if it moves, the cover is gone)
+	int peek;                                // 0 hidden, -1 / +1: leaning out round the left / right end of the cover to aim
+	float peekT, peekDx, peekDz, coverRef;   // 0..1 how far out he is, how far he goes at 1, and the heading he aims at when nobody is in sight
+	float chute, airT;                       // parachute 0..1 (open), seconds since he left the ground (v[1] is his vertical speed)
+	float crouch, lean;                      // 0..1: how crouched he is, how far he leans against the cover
+	int coverView;                           // which way along the cover the camera looks (-1 / +1)
 	bool sprint;                             // running flat out (two quick taps of B)
 	float sprintBoost, bTapT, sprintT;       // 0..1: more taps of B, a faster sprint; time since the last B tap; how long the stick has been let go
 	float face;                              // body heading (yaw)
@@ -112,9 +153,10 @@ typedef struct {
 	int car;                                 // index of the car being driven, or -1
 	float enterT;                            // seat transition time left
 } Player;
+static inline bool weapon_usable(const Player *p, int w) { return p->has[w] && (weapon_melee(w) || p->ammo[w] > 0); }
 
 enum { CAR_SEDAN, CAR_SPORTS, CAR_VAN, CAR_TAXI, CAR_POLICE, CAR_SWAT, CAR_KINDS,    // CAR_KINDS: the Blender-modelled cars, same order as LINEUP in assets/models/build_cars.py
-       CAR_BIKE = CAR_KINDS, CAR_HELI, CAR_ALL };                                    // a motorcycle and a helicopter are built from prisms in scene.c
+       CAR_BIKE = CAR_KINDS, CAR_HELI, CAR_PLANE, CAR_ALL };                                    // a motorcycle, a helicopter and an airliner are built from prisms in scene.c
 // A car driven by the computer: it follows a lane (one per direction, right-hand traffic) along a grid line, obeys the traffic lights and turns at junctions on a curve.
 typedef struct {
 	bool on;
@@ -144,7 +186,7 @@ typedef struct {
 	Ai ai;
 	bool bot;                                // steered by chase input below (police)
 	float botLx; bool botGas, botBrake, botHand;
-	float botStuck, botReplan, botTx, botTz, botStillT; bool unloaded;
+	float botStuck, botReplan, botTx, botTz, botStillT; bool unloaded, botEnd;
 	bool wreck; float burn, wreckT;
 	int owner;                               // spawned for the police (1) or traffic (0)
 } Car;
@@ -165,15 +207,15 @@ typedef struct {
 	float cash;                              // what the body drops
 } Ped;
 
-typedef struct { bool on; float p[3], v[3], life; int owner, dmg; } Bullet;          // owner 0 = Otto, 1 = police
-enum { PT_BLOOD, PT_SMOKE, PT_FIRE, PT_SPARK };
+typedef struct { bool on; float p[3], v[3], life; int owner, dmg; int skip; bool rocket; } Bullet;          // owner 0 = Otto, 1 = police; skip = the car it was fired from inside (index + 1); rockets explode
+enum { PT_BLOOD, PT_SMOKE, PT_FIRE, PT_SPARK, PT_TIRE };
 typedef struct { bool on; int kind; float p[3], v[3], life, maxLife, size; } Particle;
 typedef struct { bool on; float x, z, age, size; } Decal;                          // a blood stain on the ground
-enum { PK_CASH, PK_HEALTH, PK_ARMOR, PK_PISTOL, PK_SMG, PK_SHOTGUN, PK_COUNT };
+enum { PK_CASH, PK_HEALTH, PK_ARMOR, PK_PISTOL, PK_SMG, PK_SHOTGUN, PK_BAT, PK_RIFLE, PK_SNIPER, PK_RPG, PK_COUNT };       // the weapon pickups follow the order of the W_ enum from W_PISTOL
 typedef struct { bool on; int type, amount; float x, z, t, respawn; bool fixed; } Pickup;
 typedef struct { bool on; float x, y, z, t; } Blast;
 
-typedef struct { float eye[3], yaw, pitch, dist, fov, manualT; } Cam;
+typedef struct { float eye[3], yaw, pitch, dist, fov, manualT, look, shoulder; } Cam;      // shoulder: how far the camera has slid to Otto's right while he aims (0..1)      // look: extra yaw while the D-pad glances left / right / back
 
 typedef struct {
 	World w;
@@ -192,17 +234,24 @@ typedef struct {
 	float respawnT, pnsT, pickT, stillT;
 	bool paused;
 	float time, hintT;
+	bool fpsAim;                             // first-person aiming (D-pad up while aiming with L)
 	bool wheel; int wheelSel; float wheelT;  // the weapon wheel (SELECT): open, the weapon under the stick, how long it has been open
 	float hitT, killT;                       // crosshair hit marker and kill marker time left
+	float dpT[3]; bool dpPrev[3], dpSup[3];  // D-pad right / left / down: time since the last press, held last frame, glance suppressed (a double tap turns Otto instead)
+	float turnT, turnAmt;                    // a double tap turns Otto and the camera by turnAmt over turnT seconds
+	float lookOff, yawSwing;                 // D-pad down / left / right held: how far the camera has swung away from behind Otto; a double-tap's turn still to do
+	float dTapAt[3]; float dPrev[3];         // D-pad down, left, right: when each was last pressed, and whether it was down last frame
 	unsigned rng;
 	float sens; bool invertY, showFps, lowq; float fps;
+	bool slow; float tm[5];                  // slow: the frame rate has been poor, so the drawing limits are tightened (not saved); tm: smoothed milliseconds per frame for the logic, the scene build, the 3D draw, the HUD and the wait for the screen
+#define LOWQ(g) ((g)->lowq || (g)->slow)
 	bool quit, saveNeeded;
 } Game;
 
 #define CAR_LEN 4.5f
 #define CAR_R   1.05f                        // collision circles: three along the car
-static inline float car_radius(int kind) { return kind == CAR_BIKE ? 0.62f : kind == CAR_HELI ? 1.5f : CAR_R; }
-static inline float car_spacing(int kind) { return kind == CAR_BIKE ? 0.55f : kind == CAR_HELI ? 1.0f : 1.45f; }
+static inline float car_radius(int kind) { return kind == CAR_BIKE ? 0.62f : kind == CAR_HELI ? 1.5f : kind == CAR_PLANE ? 1.9f : CAR_R; }
+static inline float car_spacing(int kind) { return kind == CAR_BIKE ? 0.55f : kind == CAR_HELI ? 1.0f : kind == CAR_PLANE ? 3.2f : 1.45f; }
 
 void  game_init(Game *g, bool lowq);
 void  game_start(Game *g);                                  // new game: Otto on the street, a few cars parked around
@@ -210,6 +259,8 @@ void  game_update(Game *g, const Input *in, float dt);
 int   game_nearest_car(const Game *g, float x, float z, float maxd);   // closest unoccupied car within maxd of the point, or -1
 int   game_add_car(Game *g, int kind, float x, float z, float yaw);
 bool  car_flying(const Car *c);                             // a helicopter well above the ground
+bool  cover_find(const Game *g, float x, float z, float refYaw, float out[6]);   // cover within reach of the point: out = Otto's spot x, z, direction from the cover to him x, z, the car index or -1, 1 if the cover is low (a car or street furniture)
+bool  cover_peek_offset(const Game *g, int side, float out[2]);                  // how far Otto must step to clear the end of his cover on one side (-1 left, +1 right); false if it is not close or not free
 void  car_circles(const Car *c, float cx[3], float cz[3]); // world positions of the car's 3 collision circles
 
 // ---- traffic.c ------------------------------------------------------------------------------------------------------------
@@ -219,7 +270,7 @@ void  traffic_eject_driver(Game *g, int car);               // the driver of car
 int   signal_state(const Game *g, int jx, int jz, int axis); // 0 red, 1 yellow, 2 green for traffic travelling along axis at junction (jx, jz)
 bool  car_is_moving_traffic(const Car *c);
 
-typedef struct { const char *name; float dmg; int pellets; float rate, spread, range, speed; int buy; } WeaponDef;
+typedef struct { const char *name; float dmg; int pellets; float rate, spread, range, speed; int buy; bool rocket; } WeaponDef;
 extern const WeaponDef WPN[W_COUNT];
 #define HOSPITAL_X (2 * PITCH)
 #define HOSPITAL_Z (6 * PITCH - 22.0f)
@@ -235,6 +286,7 @@ static const float PADS[N_PADS][3] = { { 5.5f * PITCH, 6.5f * PITCH, 0.0f }, { -
 void  combat_init(Game *g);
 void  combat_update(Game *g, const Input *in, float dt);
 void  damage_player(Game *g, float amount);
+void  player_respawn(Game *g);                              // the pause menu's respawn: back on his feet at the hospital, cash kept
 void  damage_ped(Game *g, int idx, float amount, int byPlayer);
 void  damage_car(Game *g, int idx, float amount, int byPlayer);
 void  spawn_particles(Game *g, int kind, float x, float y, float z, int n, float speed, float size, float life);

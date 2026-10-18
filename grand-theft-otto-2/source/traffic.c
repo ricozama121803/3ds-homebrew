@@ -233,7 +233,7 @@ int traffic_spawn_car(Game *g, int kind, float minFromPlayer, float maxFromPlaye
 		bool free = true;
 		for (int i = 0; i < MAX_CAR && free; i++) if (g->car[i].on) { float ex = g->car[i].x - x, ez = g->car[i].z - z; if (ex * ex + ez * ez < 9.0f * 9.0f) free = false; }
 		if (!free) continue;
-		int k = (int)(trnd(g) % 20), kd = kind >= 0 ? kind : (k < 8 ? CAR_SEDAN : k < 12 ? CAR_SPORTS : k < 15 ? CAR_VAN : CAR_TAXI);
+		int k = (int)(trnd(g) % 20), kd = kind >= 0 ? kind : (k < 6 ? CAR_SEDAN : k < 13 ? CAR_SPORTS : k < 16 ? CAR_VAN : CAR_TAXI);
 		int ci = game_add_car(g, kd, x, z, yaw);
 		if (ci < 0) return -1;
 		Ai *a = &g->car[ci].ai;
@@ -477,6 +477,12 @@ void traffic_update(Game *g, float dt)
 void traffic_eject_driver(Game *g, int car)
 {
 	const Car *c = &g->car[car];
+	bool full = true; for (int i = 0; i < MAX_PED; i++) if (!g->ped[i].on) { full = false; break; }
+	if (full) {                                                           // every slot is taken: the driver replaces the pedestrian furthest from the car
+		int far = -1; float fd = 0;
+		for (int i = 0; i < MAX_PED; i++) { const Ped *q = &g->ped[i]; if (q->cop) continue; float d = (q->x - c->x) * (q->x - c->x) + (q->z - c->z) * (q->z - c->z); if (d > fd) { fd = d; far = i; } }
+		if (far >= 0) g->ped[far].on = false;
+	}
 	for (int i = 0; i < MAX_PED; i++) if (!g->ped[i].on) {
 		Ped *p = &g->ped[i];
 		memset(p, 0, sizeof *p);

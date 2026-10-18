@@ -8,7 +8,7 @@ typedef struct { float x, y, z, u, v, r, g, b, a; } Vtx;       // 36 bytes (floa
 #define CH_BLOCKS 3                                           // static geometry is split into chunks of CH_BLOCKS x CH_BLOCKS blocks, culled by distance and view cone
 #define CH_N      ((NB + CH_BLOCKS - 1) / CH_BLOCKS)
 #define NCH_GRID  (CH_N * CH_N)
-enum { EX_BEACH = NCH_GRID, EX_PIER, EX_HILLS, EX_FWY0, EX_FWY1, EX_FWY2, EX_FWY3, EX_NORTH, EX_SOUTH, NCH };     // chunks outside the city grid; chunk index NCH = always drawn (sea, outskirts)
+enum { EX_BEACH = NCH_GRID, EX_PIER, EX_HILLS, EX_FWY0, EX_FWY1, EX_FWY2, EX_FWY3, EX_NORTH, EX_SOUTH, EX_AIR, EX_AIR_T, EX_AIR_W, NCH };     // chunks outside the city grid; chunk index NCH = always drawn (sea, outskirts)
 enum { GRP_SKY = MAT_COUNT, GRP_CLOUD, GRP_SUN, GRP_SHADOW, GRP_DETAIL, GRP_COUNT };                       // GRP_DETAIL: props and cornices (white texture, vertex colours), drawn only for nearby chunks
 enum { D_OPAQUE, D_ALPHA, D_ADD, D_COUNT };
 #define CAP_D_OPAQUE 30000

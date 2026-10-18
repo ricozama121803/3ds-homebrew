@@ -26,8 +26,8 @@ int main(int argc, char **argv)
 		Input y; memset(&y, 0, sizeof y); y.enter_p = true;
 		game_update(&G, &y, 1.0f / 60);
 		int pedsAfter = 0; for (int i = 0; i < MAX_PED; i++) pedsAfter += G.ped[i].on;
-		printf("carjack: in car %d (expected %d), traffic flag %d, driver ejected: %s\n", G.p.car, ci, G.car[ci].ai.on, pedsAfter == pedsBefore + 1 ? "yes" : "NO");
-		if (G.p.car != ci || G.car[ci].ai.on || pedsAfter != pedsBefore + 1) return 1;
+		printf("carjack: peds %d -> %d; in car %d (expected %d), traffic flag %d, driver ejected: %s\n", pedsBefore, pedsAfter, G.p.car, ci, G.car[ci].ai.on, pedsAfter >= pedsBefore + 1 || pedsBefore == MAX_PED ? "yes" : "NO");
+		if (G.p.car != ci || G.car[ci].ai.on || (pedsAfter < pedsBefore + 1 && pedsBefore != MAX_PED)) return 1;
 		Input e; memset(&e, 0, sizeof e); e.enter_p = true; game_update(&G, &e, 1.0f / 60); G.p.car = -1; G.car[ci].on = false;                  // take the stolen car off the road so it does not block the lane for the soak
 	}
 	G.p.p[0] = 2 * PITCH + 32; G.p.p[2] = 3 * PITCH + 32;                   // Otto waits in the park, out of the traffic's way

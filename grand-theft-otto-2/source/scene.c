@@ -62,7 +62,7 @@ static float shadev(V3 n) { return shade(n.x, n.y, n.z); }
 // static world
 // =============================================================================================================================
 static const Game *SG;
-#define DETAIL_RANGE 120.0f                                   // props and cornices are drawn only this close (chunk edge distance)
+#define DETAIL_RANGE 100.0f                                   // props and cornices are drawn only this close (chunk edge distance)
 static Mesh sm[GRP_COUNT][NCH + 1];
 static int curChunk = NCH;
 #define SM(g) sm[g][curChunk]
@@ -81,7 +81,7 @@ bool scene_chunk_visible(const Scene *s, int c)
 	chunk_info(c, &cx, &cz, &cy, &r, &rh);
 	float vx = cx - s->eye[0], vy = cy - s->eye[1], vz = cz - s->eye[2], d = sqrtf(vx * vx + vy * vy + vz * vz);
 	if (d < r) return true;
-	if (d - r > 820.0f) return false;
+	if (d - r > (c < NCH_GRID ? 520.0f : 820.0f)) return false;                                 // the city's own blocks go at half a kilometre (the haze covers it); hills, sea-side scenery and landmarks carry further
 	float ca = (vx * s->fwd[0] + vy * s->fwd[1] + vz * s->fwd[2]) / d;
 	float half = atanf(tanf(s->fov * 0.5f * PI_F / 180.0f) * 1.667f);                          // vertical -> horizontal half angle (400x240), the corner of the screen is a bit more
 	float lim = sqrtf(half * half + (s->fov * 0.5f * PI_F / 180.0f) * (s->fov * 0.5f * PI_F / 180.0f)) + 0.12f + asinf(r / d);
@@ -598,6 +598,9 @@ static void bone_between(int i, V3 h, V3 t, V3 left, V3 forward)
 	frame_of(sub(arr3(otto_bones[i].tail), arr3(otto_bones[i].head)), v3(1, 0, 0), v3(0, 0, 1), &rx, &ry, &rz);
 	bones[i] = (BonePose){ h, add(mul(x, rx.x), add(mul(y, ry.x), mul(z, rz.x))), add(mul(x, rx.y), add(mul(y, ry.y), mul(z, rz.y))), add(mul(x, rx.z), add(mul(y, ry.z), mul(z, rz.z))) };
 }
+static V3 BAT_BASE, BAT_D; static float BAT_ON;                           // the bat held in both hands during a swing (set by pose_skeleton): the knob, the direction, and whether it applies
+static bool FPS_GUN;                                                       // drawing the first-person weapon
+static V3 HAND_R;                                                          // the middle of the right hand after posing (a bat is held there)
 static V3 GUN_POS, GUN_DIR, GUN_LEFT;                                       // where the right hand holds a gun, and which way it points (set by pose_skeleton)
 static V3 RIDE_Y, RIDE_Z, RIDE_FOOT[2], RIDE_HAND[2];                       // a rider: the bike's up and forward axes, where the feet (0 = left) and hands go (set by draw_rider)
 #define RIDE_PELVIS 0.60f
@@ -621,7 +624,29 @@ static float seg_len(int bone) { return vlen(sub(arr3(otto_bones[bone].tail), ar
 
 // How Otto (or an officer) stands and holds himself when fighting. aim 0..1 = how much of the stance; gun = holding a gun (else fists);
 // punchU 0..1 runs through a punch (wind-up, strike, recovery) with punchSide 0 = right jab, 1 = left cross.
-typedef struct { float aim; bool gun; int weapon; float punchU; int punchSide; float crouch; bool ride; } Stance;
+typedef struct { float aim; bool gun; int weapon; float punchU; int punchSide; float crouch; bool ride; float cover; } Stance;      // cover 0..1: back flat against a wall
+
+// How each gun is held. reach: how far out the right wrist is (fraction of the arm); rise: its height against the shoulder; sup: where the left hand holds the gun;
+// twist: how far the shoulders turn; wide / fwd / back: the feet; bend: how much the knees give. A pistol is held out at arm's length, an SMG low, long guns are pulled into the shoulder.
+typedef struct { float reach, rise, sup, twist, wide, fwd, back, bend, blade; } GunPose;      // blade: how far the body is turned away from the aim (right-handed: the right shoulder back), so he is seen slanted from behind
+static const GunPose GUNPOSE[W_COUNT] = {
+	[W_FISTS]    = { 0.84f, -0.03f, 0.03f, 0.3f, 0.16f, 0.24f, 0.15f, 0.075f, 0.0f },
+	[W_PISTOL]   = { 0.88f, -0.03f, 0.03f, 0.3f, 0.14f, 0.2f, 0.13f, 0.05f, 0.5f },
+	[W_SMG]      = { 0.66f, -0.13f, 0.27f, 0.32f, 0.17f, 0.22f, 0.16f, 0.09f, 0.55f },
+	[W_SHOTGUN]  = { 0.50f, 0.00f, 0.40f, 0.34f, 0.18f, 0.25f, 0.18f, 0.1f, 0.62f },
+	[W_BAT]      = { 0.84f, -0.03f, 0.03f, 0.3f, 0.16f, 0.24f, 0.15f, 0.075f, 0.0f },
+	[W_RIFLE]    = { 0.46f, 0.04f, 0.31f, 0.34f, 0.19f, 0.27f, 0.19f, 0.1f, 0.66f },
+	[W_SNIPER]   = { 0.42f, 0.06f, 0.38f, 0.36f, 0.22f, 0.3f, 0.22f, 0.17f, 0.72f },
+	[W_RPG]      = { 0.54f, 0.14f, 0.24f, 0.34f, 0.22f, 0.2f, 0.24f, 0.11f, 0.62f },
+};
+static float sstep(float k) { k = k < 0 ? 0 : k > 1 ? 1 : k; return k * k * (3 - 2 * k); }
+static float bat_twist(float u)                                            // torso turn through a swing: cocked, wound back, through, back to ready
+{
+	if (u < 0) return -0.45f;
+	if (u < 0.3f) return lerpf(-0.45f, -0.85f, sstep(u / 0.3f));
+	if (u < 0.62f) return lerpf(-0.85f, 0.9f, sstep((u - 0.3f) / 0.32f));
+	return lerpf(0.9f, -0.45f, sstep((u - 0.62f) / 0.38f));
+}
 
 static float punch_reach(float u)                                          // how far the fist is from the shoulder, 0..1 of the arm
 {
@@ -642,25 +667,32 @@ static void pose_skeleton(V3 P, float face, float speed, float phase, float fall
 {
 	V3 up = v3(0, 1, 0), f = v3(sinf(face), 0, -cosf(face));
 	bool ride = st->ride;
-	if (ride) { up = RIDE_Y; f = RIDE_Z; }                                  // seated on a motorcycle: the body follows the bike's axes
+	BAT_ON = 0;
+	const GunPose *gp = &GUNPOSE[st->gun ? st->weapon : W_FISTS];
+	V3 aimF = f;                                                            // where the arms point
+	if (ride) { up = RIDE_Y; f = RIDE_Z; }
+	else if (st->gun) {                                                     // the body is turned away from the aim: a slanted stance, not square on
+		float bl = gp->blade * st->aim * (1 - fall) * (1 - gait_ease(speed / 0.9f));
+		f = v3(sinf(face + bl), 0, -cosf(face + bl));
+	}                                  // seated on a motorcycle: the body follows the bike's axes
 	V3 R = norm(cross(f, up));
 	float amp = ride ? 0.0f : gait_ease(speed / 0.9f) * (1 - fall);
 	float wUp = ride ? 1.0f : st->aim * (1 - fall);                         // the upper body takes the stance whether or not Otto is walking
-	float wLeg = ride ? 1.0f : wUp * (1 - amp);                             // the legs only when he stands still
+	float wLeg = ride ? 1.0f : fmaxf(wUp * (1 - amp), st->cover * (1 - fall) * (1 - amp));                             // the legs only when he stands still
 	float wCr = st->crouch * (1 - fall) * (1 - amp);                        // crouched
 	bool punching = !st->gun && st->punchU > 0;
 	float twistSide = st->punchSide ? -1.0f : 1.0f;
 	float twist = 0;                                                        // torso rotation about the vertical: + brings the right shoulder forward
-	if (wUp > 0.02f && !ride) twist = wUp * (st->gun ? 0.38f : (punching ? punch_twist(st->punchU) * twistSide : 0.3f));
+	if (wUp > 0.02f && !ride) twist = wUp * (st->gun ? gp->twist : st->weapon == W_BAT ? bat_twist(punching ? st->punchU : -1.0f) : (punching ? punch_twist(st->punchU) * twistSide : 0.3f));
 	int ca, cb; float blend = gait_blend(speed, &ca, &cb);
 	float key = (phase - floorf(phase)) * GAIT_KEYS; int k = (int)key, n = (k + 1) % GAIT_KEYS; float t = key - k;
 	const GaitKey *a = &gait_clips[ca].key[k], *a1 = &gait_clips[ca].key[n], *b = &gait_clips[cb].key[k], *b1 = &gait_clips[cb].key[n];
 	float height = lerpf(lerpf(a->height, a1->height, t), lerpf(b->height, b1->height, t), blend);
-	float lean = ride ? RIDE_LEAN : amp * (0.02f + 0.07f * gait_ease((speed - 2.0f) / 3.0f)) + fall * 1.5f;
+	float lean = ride ? RIDE_LEAN : amp * (0.02f + 0.07f * gait_ease((speed - 2.0f) / 3.0f)) + fall * 1.5f - 0.26f * st->cover * (1 - fall);       // leaning back on the cover
 	V3 L = mul(R, -1), u = norm(add(mul(up, cosf(lean)), mul(f, sinf(lean)))), fw = norm(cross(L, u));
 	float breathe = 0.004f * sinf(time * 2.2f) * (1 - amp);
-	float pelvis = ride ? RIDE_PELVIS : lerpf(lerpf(0.93f, height, amp) + breathe - 0.075f * wLeg - 0.40f * wCr, 0.22f, fall);     // knees bend a little in the stance
-	BonePose world = { add(P, mul(up, pelvis)), L, u, fw };
+	float pelvis = ride ? RIDE_PELVIS : lerpf(lerpf(0.93f, height, amp) + breathe - gp->bend * wLeg - 0.40f * wCr, 0.22f, fall);     // knees bend a little in the stance
+	BonePose world = { add(add(P, mul(up, pelvis)), mul(f, -0.12f * st->cover * (1 - fall) * (1 - amp))), L, u, fw };      // hips back against the cover
 	for (int i = 0; i < OTTO_NB; i++) {
 		HQuat q = qblend(qblend(hq(a->q[i]), hq(a1->q[i]), t), qblend(hq(b->q[i]), hq(b1->q[i]), t), blend), idle = { 1, 0, 0, 0 };
 		q = qblend(idle, q, amp);
@@ -685,7 +717,8 @@ static void pose_skeleton(V3 P, float face, float speed, float phase, float fall
 	if ((wLeg > 0.02f || wCr > 0.02f) && fall < 0.3f) {
 		bool cr = wCr > wLeg;
 		float w = ride ? 1.0f : gait_ease(cr ? wCr : wLeg);
-		float fwd = cr ? 0.12f : st->gun ? 0.24f : 0.32f, back = cr ? 0.1f : st->gun ? 0.15f : 0.24f, wide = cr ? 0.15f : st->gun ? 0.16f : 0.2f;
+		float fwd = cr ? 0.12f : st->gun ? gp->fwd : 0.32f, back = cr ? 0.1f : st->gun ? gp->back : 0.24f, wide = cr ? 0.15f : st->gun ? gp->wide : 0.2f;
+			if (st->cover > 0.5f && wUp < 0.3f && !cr) { fwd = 0.22f; back = 0.1f; wide = 0.17f; }          // feet out in front, hips on the wall
 		for (int sd = 0; sd < 2; sd++) {                                    // 0 = left leg, 1 = right leg
 			int th = sd ? OB_R_THIGH : OB_L_THIGH, sh = th + 1, ft = th + 2, tt = th + 3;
 			float side = sd ? -1.0f : 1.0f;
@@ -711,7 +744,7 @@ static void pose_skeleton(V3 P, float face, float speed, float phase, float fall
 	GUN_POS = v3(0, 0, 0); GUN_DIR = f; GUN_LEFT = L;
 	if (wUp > 0.02f && fall < 0.3f) {
 		float w = gait_ease(wUp);
-		V3 dir = norm(add(f, mul(up, 0.04f)));
+		V3 dir = norm(add(st->gun && !ride ? aimF : f, mul(up, 0.04f)));
 		V3 S[2] = { bones[OB_L_UPPERARM].p, bones[OB_R_UPPERARM].p };
 		float l1 = seg_len(OB_R_UPPERARM), l2 = seg_len(OB_R_FOREARM), l3 = seg_len(OB_R_HAND);
 		V3 Wt[2], hint[2];                                                  // wrist targets and the direction each elbow bends toward
@@ -720,13 +753,30 @@ static void pose_skeleton(V3 P, float face, float speed, float phase, float fall
 			for (int sd = 0; sd < 2; sd++) { Wt[sd] = RIDE_HAND[sd]; hint[sd] = add(mul(up, -1.0f), mul(L, sd ? -0.9f : 0.9f)); }
 		} else if (st->gun) {
 			// right hand holds the grip with the arm almost straight out, the left hand supports the front of the gun
-			Wt[1] = add(S[1], mul(dir, (l1 + l2) * 0.9f)); hint[1] = add(mul(up, -1.0f), mul(L, 0.35f));
+			Wt[1] = add(add(S[1], mul(dir, (l1 + l2) * gp->reach)), v3(0, gp->rise, 0)); hint[1] = add(mul(up, -1.0f), mul(L, 0.35f));
 			V3 gunAt = add(Wt[1], mul(dir, l3 * 0.65f));
-			float sup = st->weapon == W_SHOTGUN ? 0.40f : st->weapon == W_SMG ? 0.26f : 0.03f;
+			float sup = gp->sup;
 			V3 grip = add(gunAt, add(mul(dir, sup), v3(0, -0.04f, 0)));
 			hint[0] = add(mul(up, -1.0f), mul(L, 0.9f));
 			V3 Wd0 = dir, wr0;                                               // the hand lies along the forearm: find the wrist that puts the middle of the hand on the grip
 			for (int it = 0; it < 3; it++) { Wt[0] = sub(grip, mul(Wd0, l3 * 0.5f)); V3 e = ik_joint(S[0], Wt[0], l1, l2, hint[0], &wr0); Wd0 = norm(sub(wr0, e)); }
+		} else if (st->weapon == W_BAT) {
+			// both hands on the bat: it is cocked behind the right shoulder, wound back, swung round flat at chest height and brought back up
+			float u = punching ? st->punchU : -1.0f, th, pit;                // th: the bat's heading in the ground plane (0 ahead, + to the right); pit: how steeply it points up
+			if (u < 0) { th = 2.0f; pit = 0.85f; }
+			else if (u < 0.3f) { float k = sstep(u / 0.3f); th = lerpf(2.0f, 2.4f, k); pit = lerpf(0.85f, 1.0f, k); }
+			else if (u < 0.62f) { float k = sstep((u - 0.3f) / 0.32f); th = lerpf(2.4f, -1.1f, k); pit = lerpf(1.0f, 0.12f, sqrtf(k)); }
+			else { float k = sstep((u - 0.62f) / 0.38f); th = lerpf(-1.1f, 2.0f, k); pit = lerpf(0.12f, 0.85f, k) + 0.45f * sinf(k * PI_F); }
+			V3 h = add(mul(f, cosf(th)), mul(R, sinf(th)));
+			V3 D = norm(add(mul(h, cosf(pit)), mul(up, sinf(pit))));
+			V3 C = add(add(mul(add(S[0], S[1]), 0.5f), v3(0, -0.14f, 0)), add(mul(h, 0.30f), mul(up, 0.1f * pit)));
+			V3 grip[2] = { sub(C, mul(D, 0.08f)), add(C, mul(D, 0.08f)) };      // the left hand is the lower one
+			hint[1] = add(mul(L, -0.9f), mul(up, 0.2f)); hint[0] = add(mul(up, -0.6f), mul(L, 0.9f));
+			for (int sd = 0; sd < 2; sd++) {
+				V3 Wd = norm(sub(grip[sd], S[sd])), wr;
+				for (int it = 0; it < 3; it++) { Wt[sd] = sub(grip[sd], mul(Wd, l3 * 0.5f)); V3 el = ik_joint(S[sd], Wt[sd], l1, l2, hint[sd], &wr); Wd = norm(sub(wr, el)); }
+			}
+			BAT_BASE = sub(C, mul(D, 0.17f)); BAT_D = D; BAT_ON = w;
 		} else {
 			// boxing: the punching arm goes through its reach, the other hand stays up by the chin
 			int pa = st->punchSide ? 0 : 1, ga = 1 - pa;                     // the arm that punches, the arm that guards (indices as above: 1 = right)
@@ -746,29 +796,83 @@ static void pose_skeleton(V3 P, float face, float speed, float phase, float fall
 			V3 E = lerp3(E0, E1, w), W = lerp3(W0, Wr, w), T = lerp3(T0, T1, w);
 			bone_between(ua, S[sd], E, L, f); bone_between(fa, E, W, L, f); bone_between(hd, W, T, L, f);
 			if (sd == 1 && st->gun) { GUN_POS = add(W, mul(dir, l3 * 0.65f)); GUN_DIR = norm(lerp3(norm(sub(T0, W0)), dir, w)); }
-		}
-	}
-}
+			}
+			}
+			HAND_R = add(bones[OB_R_HAND].p, bone_rot(&bones[OB_R_HAND], mul(sub(arr3(otto_bones[OB_R_HAND].tail), arr3(otto_bones[OB_R_HAND].head)), 0.5f)));
+			}
 
 // a gun held in the right hand: pistol, SMG or shotgun, built from a few dark prisms along GUN_DIR
+// a baseball bat: in both hands during a swing, otherwise carried up in the right hand
+static void draw_bat(const Player *p)
+{
+	V3 d, a;
+	if (BAT_ON > 0.5f) { d = BAT_D; a = BAT_BASE; }
+	else { V3 f = v3(sinf(p->face), 0, -cosf(p->face)); d = norm(add(v3(0, 0.9f, 0), mul(f, 0.45f))); a = sub(HAND_R, mul(d, 0.12f)); }
+	V3 sx = norm(cross(d, v3(0, 1, 0)));
+	if (vlen(sx) < 0.1f) sx = v3(1, 0, 0);
+	V3 sy = norm(cross(d, sx));
+	static const V3 wood = { 0.62f, 0.45f, 0.26f };
+	Mesh *m = &dm[D_OPAQUE];
+	prism(m, a, add(a, mul(d, 0.40f)), sx, sy, 0.022f, 0.022f, 0.03f, 0.03f, wood, true);
+	prism(m, add(a, mul(d, 0.40f)), add(a, mul(d, 0.92f)), sx, sy, 0.03f, 0.03f, 0.054f, 0.054f, wood, true);
+}
+
 static void draw_gun(int weapon, V3 *muzzleOut)
 {
-	if (weapon == W_FISTS) return;
+	if (weapon_melee(weapon)) return;
 	static const V3 steel = { 0.55f, 0.56f, 0.6f }, dark = { 0.2f, 0.2f, 0.22f }, wood = { 0.55f, 0.36f, 0.2f };
 	V3 d = GUN_DIR, L = GUN_LEFT, up = norm(cross(L, d));                    // up from the hand's left and the barrel direction
 	if (up.y < 0) up = mul(up, -1);
+	float gs = FPS_GUN ? 1.05f : 1.3f;                                         // the weapon is drawn a little oversized so its detail reads on the small screen
+	d = mul(d, gs); L = mul(L, gs); up = mul(up, gs);
 	V3 p = GUN_POS;
 	Mesh *m = &dm[D_OPAQUE];
 	#define GBOX(a0, a1, hw, hh, col) prism(m, add(p, mul(d, a0)), add(p, mul(d, a1)), L, up, hw, hh, hw, hh, col, true)
 	if (weapon == W_PISTOL) {
 		GBOX(-0.07f, 0.26f, 0.03f, 0.045f, steel);
+		prism(m, add(p, add(mul(d, -0.06f), mul(up, 0.04f))), add(p, add(mul(d, 0.25f), mul(up, 0.04f))), L, up, 0.026f, 0.014f, 0.026f, 0.014f, dark, true);                  // the slide
+		prism(m, add(p, add(mul(d, 0.23f), mul(up, 0.055f))), add(p, add(mul(d, 0.245f), mul(up, 0.075f))), L, d, 0.006f, 0.01f, 0.006f, 0.01f, dark, true);                   // front sight
+		prism(m, add(p, add(mul(d, -0.055f), mul(up, 0.055f))), add(p, add(mul(d, -0.04f), mul(up, 0.072f))), L, d, 0.016f, 0.01f, 0.016f, 0.01f, dark, true);                  // rear sight
+		prism(m, add(p, add(mul(d, 0.075f), mul(up, -0.045f))), add(p, add(mul(d, 0.075f), mul(up, -0.085f))), L, d, 0.012f, 0.05f, 0.012f, 0.05f, dark, true);                   // trigger guard
 		prism(m, add(p, add(mul(d, -0.04f), mul(up, -0.02f))), add(p, add(mul(d, -0.09f), mul(up, -0.15f))), L, d, 0.028f, 0.04f, 0.028f, 0.04f, dark, true);     // grip
 		*muzzleOut = add(p, mul(d, 0.28f));
 	} else if (weapon == W_SMG) {
 		GBOX(-0.14f, 0.40f, 0.035f, 0.06f, dark);
 		prism(m, add(p, add(mul(d, 0.10f), mul(up, -0.03f))), add(p, add(mul(d, 0.10f), mul(up, -0.2f))), L, d, 0.024f, 0.04f, 0.024f, 0.04f, steel, true);          // magazine
 		GBOX(0.40f, 0.52f, 0.014f, 0.016f, steel);
+		prism(m, add(p, add(mul(d, -0.1f), mul(up, 0.06f))), add(p, add(mul(d, 0.34f), mul(up, 0.06f))), L, up, 0.014f, 0.012f, 0.014f, 0.012f, steel, true);                      // top rail
+		prism(m, add(p, add(mul(d, 0.36f), mul(up, 0.06f))), add(p, add(mul(d, 0.37f), mul(up, 0.1f))), L, d, 0.006f, 0.01f, 0.006f, 0.01f, dark, true);                          // front sight
+		prism(m, add(p, add(mul(d, 0.22f), mul(up, -0.05f))), add(p, add(mul(d, 0.22f), mul(up, -0.14f))), L, d, 0.016f, 0.03f, 0.016f, 0.03f, dark, true);                         // foregrip
+		GBOX(-0.32f, -0.14f, 0.012f, 0.03f, steel);                                                                                                                               // wire stock
 		*muzzleOut = add(p, mul(d, 0.54f));
+	} else if (weapon == W_RIFLE) {
+		GBOX(-0.32f, -0.06f, 0.03f, 0.065f, wood);
+		GBOX(-0.06f, 0.36f, 0.035f, 0.055f, dark);
+		prism(m, add(p, add(mul(d, 0.12f), mul(up, -0.03f))), add(p, add(mul(d, 0.17f), mul(up, -0.2f))), L, d, 0.022f, 0.045f, 0.022f, 0.045f, steel, true);          // magazine
+		GBOX(0.22f, 0.56f, 0.04f, 0.04f, wood);
+		GBOX(0.36f, 0.84f, 0.015f, 0.018f, steel);
+		prism(m, add(p, add(mul(d, -0.04f), mul(up, 0.06f))), add(p, add(mul(d, 0.30f), mul(up, 0.075f))), L, up, 0.014f, 0.016f, 0.014f, 0.012f, dark, true);                    // carry handle / rail
+		prism(m, add(p, add(mul(d, 0.8f), mul(up, 0.02f))), add(p, add(mul(d, 0.81f), mul(up, 0.07f))), L, d, 0.006f, 0.01f, 0.006f, 0.01f, dark, true);                          // front sight post
+		GBOX(0.84f, 0.9f, 0.022f, 0.022f, dark);                                                                                                                                  // muzzle brake
+		*muzzleOut = add(p, mul(d, 0.92f));
+	} else if (weapon == W_SNIPER) {
+		static const V3 olive = { 0.3f, 0.34f, 0.24f };
+		GBOX(-0.36f, -0.04f, 0.03f, 0.065f, olive);
+		GBOX(-0.04f, 0.46f, 0.032f, 0.05f, dark);
+		GBOX(0.46f, 1.18f, 0.013f, 0.015f, steel);
+		GBOX(1.18f, 1.26f, 0.02f, 0.02f, dark);                                                                                                                                   // muzzle brake
+		for (int sd = -1; sd <= 1; sd += 2) prism(m, add(p, add(mul(d, 0.7f), mul(L, sd * 0.012f))), add(p, add(add(mul(d, 0.78f), mul(L, sd * 0.1f)), mul(up, -0.2f))), L, d, 0.006f, 0.006f, 0.006f, 0.006f, steel, true);    // bipod
+		prism(m, add(p, add(mul(d, 0.04f), mul(up, 0.085f))), add(p, add(mul(d, 0.44f), mul(up, 0.085f))), L, up, 0.03f, 0.03f, 0.03f, 0.03f, dark, true);                 // scope
+		prism(m, add(p, add(mul(d, 0.12f), mul(up, 0.05f))), add(p, add(mul(d, 0.12f), mul(up, 0.085f))), L, d, 0.01f, 0.02f, 0.01f, 0.02f, steel, true);
+		*muzzleOut = add(p, mul(d, 1.2f));
+	} else if (weapon == W_RPG) {
+		static const V3 olive = { 0.3f, 0.36f, 0.24f }, warhead = { 0.8f, 0.25f, 0.18f };
+		GBOX(-0.5f, 0.55f, 0.06f, 0.06f, olive);
+		GBOX(-0.5f, -0.38f, 0.085f, 0.085f, dark);
+		GBOX(0.55f, 0.74f, 0.045f, 0.045f, dark);
+		GBOX(0.74f, 0.98f, 0.04f, 0.04f, warhead);
+		prism(m, add(p, add(mul(d, 0.2f), mul(up, -0.05f))), add(p, add(mul(d, 0.2f), mul(up, -0.22f))), L, d, 0.025f, 0.04f, 0.025f, 0.04f, dark, true);                 // grip
+		*muzzleOut = add(p, mul(d, 1.0f));
 	} else {
 		GBOX(-0.26f, 0.12f, 0.04f, 0.06f, wood);
 		GBOX(0.12f, 0.86f, 0.03f, 0.036f, dark);
@@ -826,12 +930,34 @@ static void draw_otto(const Game *g)
 	V3 P = v3(p->p[0], p->p[1], p->p[2]);
 	bool dead = p->ps == PS_WASTED;
 	float fall = dead ? sat(p->psT / 0.35f) : 0;
-	bool armed = p->weapon != W_FISTS;
-	Stance st = { dead ? 0 : p->aimT, armed && p->punchT <= 0, p->weapon, p->punchT > 0 ? 1.0f - p->punchT / 0.34f : 0.0f, p->punchSide, 0.0f, false };
+	bool armed = !weapon_melee(p->weapon);
+	Stance st = { dead ? 0 : (p->weapon == W_BAT && p->punchT > 0 ? 1.0f : p->aimT), armed && p->punchT <= 0, p->weapon, p->punchT > 0 ? 1.0f - p->punchT / melee_time(p->weapon) : 0.0f, p->punchSide, p->crouch, false, p->cover ? p->lean : 0.0f };
 	if (!armed || p->punchT > 0) st.gun = false;
+	if (g->fpsAim && !dead && st.gun) {                                      // first person: only the weapon, held in front of the camera
+		float cy = cosf(g->cam.yaw), sy = sinf(g->cam.yaw), cp = cosf(g->cam.pitch), sp = sinf(g->cam.pitch);
+		V3 fw = v3(sy * cp, sp, -cy * cp), rt = v3(cy, 0, sy), eye = v3(g->cam.eye[0], g->cam.eye[1], g->cam.eye[2]);
+		GUN_POS = add(eye, add(mul(fw, 0.9f), add(mul(rt, 0.2f), v3(0, -0.2f, 0)))); GUN_DIR = fw; GUN_LEFT = mul(rt, -1);
+		FPS_GUN = true; V3 mz; draw_gun(p->weapon, &mz); FPS_GUN = false; if (p->flashT > 0) muzzle_flash(mz);
+		return;
+	}
+	if (p->airT > 0.05f && !dead) st.crouch = p->chute > 0.3f ? 0.3f : 0.55f;           // legs tucked while he falls, dangling under the canopy
 	pose_skeleton(P, p->face, p->speed, p->phase, fall, g->time, &st);
 	skin_mesh(otto_verts, OTTO_NV, otto_tris, OTTO_NT, otto_colors, P, 1.0f, false);
+	if (p->chute > 0.05f && !dead) {                                        // the parachute: an eight-sided dome on four lines
+		float k = p->chute, h0 = 3.0f * k;
+		static const V3 ax = { 1, 0, 0 }, az = { 0, 0, 1 }, ax45 = { 0.7071f, 0, 0.7071f }, az45 = { -0.7071f, 0, 0.7071f };
+		static const V3 orange = { 1.6f, 0.55f, 0.12f }, white = { 1.5f, 1.5f, 1.45f };
+		V3 c = v3(p->p[0], p->p[1], p->p[2]);
+		static const float R0[3] = { 2.4f, 2.1f, 1.45f }, R1[3] = { 2.1f, 1.45f, 0.6f }, Y0[3] = { 0.0f, 0.4f, 0.8f };
+		for (int t = 0; t < 3; t++) {
+			V3 col = t == 1 ? white : orange, a = add(c, v3(0, 1.9f + h0 + Y0[t] * k, 0)), b = add(c, v3(0, 1.9f + h0 + (Y0[t] + 0.4f) * k, 0));
+			prism(&dm[D_OPAQUE], a, b, ax, az, R0[t] * k, R0[t] * k, R1[t] * k, R1[t] * k, col, true);
+			prism(&dm[D_OPAQUE], a, b, ax45, az45, R0[t] * k, R0[t] * k, R1[t] * k, R1[t] * k, col, true);
+		}
+		for (int i = 0; i < 4; i++) { float sx = (i & 1) ? 1.0f : -1.0f, sz = (i & 2) ? 1.0f : -1.0f; V3 lo = add(c, v3(sx * 0.18f, 1.5f, sz * 0.1f)), hi = add(c, v3(sx * 1.9f * k, 1.9f + h0, sz * 1.9f * k)); prism(&dm[D_OPAQUE], lo, hi, ax, az, 0.012f, 0.012f, 0.012f, 0.012f, v3(1.0f, 1.0f, 1.0f), false); }
+	}
 	if (!dead && st.gun && p->aimT > 0.25f) { V3 mz; draw_gun(p->weapon, &mz); if (p->flashT > 0) muzzle_flash(mz); }
+	if (!dead && p->weapon == W_BAT) draw_bat(p);
 	blob_shadow(p->p[0], p->p[1] + 0.07f, p->p[2], 0.62f, 0.5f);
 }
 
@@ -898,13 +1024,13 @@ static void draw_peds(const Game *g, const Scene *s)
 	for (int i = 0; i < MAX_PED; i++) {
 		const Ped *p = &g->ped[i];
 		if (!p->on) continue;
-		float dx = p->x - s->eye[0], dz = p->z - s->eye[2], d2 = dx * dx + dz * dz, lim = g->lowq ? 56.0f : 86.0f;
+		float dx = p->x - s->eye[0], dz = p->z - s->eye[2], d2 = dx * dx + dz * dz, lim = LOWQ(g) ? 56.0f : 86.0f;
 		if (d2 > lim * lim || dx * s->fwd[0] + dz * s->fwd[2] < -4.0f) continue;
 		order[n] = i; dist[i] = d2; n++;
 	}
 	for (int i = 1; i < n; i++) { int k = order[i], j = i - 1; while (j >= 0 && dist[order[j]] > dist[k]) { order[j + 1] = order[j]; j--; } order[j + 1] = k; }
-	int maxDraw = g->lowq ? 3 : 6, maxCheap = g->lowq ? 8 : 22, skinned = 0, cheap = 0;
-	float nearLim = g->lowq ? 26.0f : 40.0f, farLim = g->lowq ? 55.0f : 85.0f;
+	int maxDraw = LOWQ(g) ? 2 : 4, maxCheap = LOWQ(g) ? 8 : 22, skinned = 0, cheap = 0;      // only the nearest few people are full skinned models
+	float nearLim = LOWQ(g) ? 20.0f : 30.0f, farLim = LOWQ(g) ? 55.0f : 85.0f;
 	for (int q = 0; q < n; q++) {
 		const Ped *pc = &g->ped[order[q]];
 		float d2 = dist[order[q]];
@@ -932,6 +1058,7 @@ static void draw_peds(const Game *g, const Scene *s)
 // ---- cars: the Blender body mesh (flat-shaded triangles with a tag) + four wheels that roll and steer --------------------------------------
 #include "car_mesh.h"
 typedef struct { V3 x, y, z, o; } CFrame;                                 // x = the car's left, y = up, z = forward (right-handed, like Otto's)
+static void lpart(const CFrame *f, V3 a, V3 b, float w0, float d0, float w1, float d1, V3 col);
 static V3 cf_pt(const CFrame *f, const float v[3]) { return add(f->o, add(mul(f->x, v[0]), add(mul(f->y, v[1]), mul(f->z, v[2])))); }
 static V3 cf_dir(const CFrame *f, V3 d) { return add(mul(f->x, d.x), add(mul(f->y, d.y), mul(f->z, d.z))); }
 
@@ -993,6 +1120,23 @@ static void draw_car(const Game *g, int idx, bool wheels)
 			const float *pc = car_palette[t->col];
 			float sh = shade(fabsf(nn.x), nn.y, nn.z) * OTTO_BOOST * 0.9f, cc[3] = { pc[0] * sh, pc[1] * sh, pc[2] * sh };
 			for (int q = 0; q < 3; q++) { SV s = sv(wp[t->v[q]].x, wp[t->v[q]].y, wp[t->v[q]].z, 0.5f, 0.5f, cc, 1); put(m, &s); }
+		}
+	}
+	// sports cars carry a rear wing: a low lip, a GT wing on struts, or a tall double-plane wing (by car)
+	if (c->kind == CAR_SPORTS && !c->wreck) {
+		int var = (idx * 7 + 3) % 3;
+		V3 carbon = v3(0.1f, 0.1f, 0.12f), tipc = v3(c->col[0] * 1.2f, c->col[1] * 1.2f, c->col[2] * 1.2f);
+		float zr = -1.95f;
+		if (var == 0) {
+			lpart(&fr, v3(-0.84f, 0.7f, zr), v3(0.84f, 0.7f, zr), 0.06f, 0.26f, 0.06f, 0.26f, carbon);
+		} else {
+			float yw = var == 1 ? 0.98f : 1.12f;
+			for (int sd = -1; sd <= 1; sd += 2) {
+				lpart(&fr, v3(sd * 0.5f, 0.52f, zr), v3(sd * 0.5f, yw, zr), 0.035f, 0.07f, 0.03f, 0.06f, carbon);
+				lpart(&fr, v3(sd * 0.93f, yw - 0.1f, zr), v3(sd * 0.93f, yw + 0.17f, zr), 0.012f, 0.24f, 0.012f, 0.24f, tipc);
+			}
+			lpart(&fr, v3(-0.93f, yw, zr), v3(0.93f, yw, zr), 0.035f, 0.24f, 0.035f, 0.24f, carbon);
+			if (var == 2) lpart(&fr, v3(-0.9f, yw + 0.17f, zr + 0.1f), v3(0.9f, yw + 0.17f, zr + 0.1f), 0.025f, 0.16f, 0.025f, 0.16f, tipc);
 		}
 	}
 	// soft shadow under the car
@@ -1323,6 +1467,7 @@ static void draw_effects(const Game *g, const Scene *s)
 		V3 c = v3(p->p[0], p->p[1], p->p[2]);
 		switch (p->kind) {
 		case PT_BLOOD: { static const float col[3] = { 0.55f, 0.03f, 0.03f }; billboard(D_ALPHA, c, p->size, col, 0.9f * fminf(1.0f, k * 2)); break; }
+		case PT_TIRE: { static const float col[3] = { 0.88f, 0.88f, 0.9f }; billboard(D_ALPHA, c, p->size * (1.0f + (1 - k) * 2.8f), col, 0.7f * k); break; }
 		case PT_SMOKE: { static const float col[3] = { 0.16f, 0.16f, 0.18f }; billboard(D_ALPHA, c, p->size * (1.0f + (1 - k) * 2.2f), col, 0.55f * k); break; }
 		case PT_FIRE: { static const float col[3] = { 1.0f, 0.5f, 0.12f }; billboard(D_ADD, c, p->size * (0.6f + 0.6f * k), col, k); break; }
 		default: { static const float col[3] = { 1.0f, 0.85f, 0.4f }; billboard(D_ADD, c, p->size, col, k); break; }
@@ -1336,7 +1481,8 @@ static void draw_effects(const Game *g, const Scene *s)
 		V3 d = norm(v), sx = norm(cross(d, v3(0, 1, 0)));
 		if (vlen(sx) < 0.1f) sx = v3(1, 0, 0);
 		V3 sy = norm(cross(d, sx));
-		prism(&dm[D_ADD], tail, e, sx, sy, 0.025f, 0.025f, 0.025f, 0.025f, b->owner == 0 ? v3(1.0f, 0.85f, 0.4f) : v3(1.0f, 0.45f, 0.3f), true);
+		float rw = b->rocket ? 0.07f : 0.025f;
+		prism(&dm[D_ADD], tail, e, sx, sy, rw, rw, rw, rw, b->owner == 0 ? v3(1.0f, 0.85f, 0.4f) : v3(1.0f, 0.45f, 0.3f), true);
 	}
 	// blasts: a fireball and a flash
 	for (int i = 0; i < MAX_BLAST; i++) {
@@ -1380,10 +1526,127 @@ static void draw_marker(const Game *g)
 	prism(&dm[D_OPAQUE], tip, top, s, f, 0.0f, 0.0f, 0.42f, 0.42f, v3(1.7f, 1.35f, 0.25f), false);
 }
 
+// ---- street furniture and aeroplanes -------------------------------------------------------------------------------------------------------------------
+static void draw_props(const Game *g, const Scene *s)
+{
+	const World *w = &g->w; Mesh *m = &dm[D_OPAQUE];
+	const float R = LOWQ(g) ? 38.0f : 55.0f;
+	int i0 = (int)floorf((s->eye[0] - R) / PITCH), i1 = (int)floorf((s->eye[0] + R) / PITCH), j0 = (int)floorf((s->eye[2] - R) / PITCH), j1 = (int)floorf((s->eye[2] + R) / PITCH);
+	i0 = i0 < 0 ? 0 : i0; j0 = j0 < 0 ? 0 : j0; i1 = i1 > NB - 1 ? NB - 1 : i1; j1 = j1 > NB - 1 ? NB - 1 : j1;
+	static const V3 sx = { 1, 0, 0 }, sz = { 0, 0, 1 };
+	static const V3 BIN = { 0.26f, 0.5f, 0.32f }, LID = { 0.16f, 0.16f, 0.18f }, DUMP = { 0.14f, 0.5f, 0.3f }, DUMPL = { 0.09f, 0.3f, 0.19f }, WIN = { 0.8f, 0.9f, 0.95f }, NEWS_TOP = { 0.15f, 0.15f, 0.2f };
+	for (int j = j0; j <= j1; j++) for (int i = i0; i <= i1; i++) for (int k = w->pfirst[j][i]; k < w->pfirst[j][i] + w->pcount[j][i]; k++) {
+		const Prop *p = &w->prop[k];
+		float dx = p->x - s->eye[0], dz = p->z - s->eye[2];
+		if (dx * dx + dz * dz > R * R || dx * s->fwd[0] + dz * s->fwd[2] < -3.0f) continue;
+		V3 c = v3(p->x, 0, p->z);
+		if (p->type == 0) {
+			prism(m, c, add(c, v3(0, p->h * 0.88f, 0)), sx, sz, p->hx * 0.85f, p->hz * 0.85f, p->hx, p->hz, BIN, true);
+			prism(m, add(c, v3(0, p->h * 0.88f, 0)), add(c, v3(0, p->h, 0)), sx, sz, p->hx * 1.05f, p->hz * 1.05f, p->hx * 0.9f, p->hz * 0.9f, LID, true);
+		} else if (p->type == 1) {
+			bool blue = ((int)(p->x * 3.0f + p->z * 5.0f) & 1) != 0;
+			V3 body = blue ? v3(0.2f, 0.36f, 0.86f) : v3(0.82f, 0.2f, 0.16f);
+			prism(m, c, add(c, v3(0, p->h * 0.92f, 0)), sx, sz, p->hx, p->hz, p->hx, p->hz, body, true);
+			prism(m, add(c, v3(0, p->h * 0.92f, 0)), add(c, v3(0, p->h, 0)), sx, sz, p->hx * 1.1f, p->hz * 1.1f, p->hx * 1.1f, p->hz * 1.1f, NEWS_TOP, true);
+			static const float FX[4] = { 1, -1, 0, 0 }, FZ[4] = { 0, 0, 1, -1 };
+			V3 fv = v3(FX[p->face], 0, FZ[p->face]), tg = v3(-fv.z, 0, fv.x);
+			float depth = fabsf(fv.x) > 0.5f ? p->hx : p->hz;
+			V3 wc = add(c, mul(fv, depth + 0.012f));
+			prism(m, add(wc, v3(0, 0.55f, 0)), add(wc, v3(0, 0.95f, 0)), tg, fv, 0.17f, 0.01f, 0.17f, 0.01f, WIN, true);
+		} else {
+			prism(m, c, add(c, v3(0, p->h * 0.9f, 0)), sx, sz, p->hx, p->hz, p->hx, p->hz, DUMP, true);
+			prism(m, add(c, v3(0, p->h * 0.9f, 0)), add(c, v3(0, p->h, 0)), sx, sz, p->hx * 1.06f, p->hz * 1.06f, p->hx * 1.06f, p->hz * 1.06f, DUMPL, true);
+		}
+	}
+}
+
+// An airliner about 38 m long: pos = on the ground under the middle of it; the nose points along yaw (0 = -z) and pitches up by pitch. gear: wheels down.
+static void airliner(Mesh *m, V3 pos, float yaw, float pitch, float roll, float sc, const V3 body, const V3 accent, bool gear)
+{
+	V3 U0 = v3(0, 1, 0), f0 = v3(sinf(yaw), 0, -cosf(yaw));
+	V3 F = norm(add(mul(f0, cosf(pitch)), mul(U0, sinf(pitch)))), Rr = norm(cross(F, U0)), U = cross(Rr, F);
+	{ V3 R2 = add(mul(Rr, cosf(roll)), mul(U, sinf(roll))), U2 = sub(mul(U, cosf(roll)), mul(Rr, sinf(roll))); Rr = R2; U = U2; }       // roll about the nose: + lifts the right wing
+	F = mul(F, sc); Rr = mul(Rr, sc); U = mul(U, sc);                          // the whole airliner scaled by sc (every prism is built from these axes)
+	V3 mid = add(pos, mul(U, 3.4f));
+	#define AT(f_, r_, u_) add(mid, add(mul(F, f_), add(mul(Rr, r_), mul(U, u_))))
+	static const V3 dark = { 0.16f, 0.2f, 0.3f }, steel = { 0.55f, 0.56f, 0.6f }, tyre = { 0.1f, 0.1f, 0.1f };
+	V3 R45 = mul(norm(add(Rr, U)), sc), U45 = mul(norm(sub(U, Rr)), sc);                                    // the same axes turned 45 degrees: two crossed boxes make a round-ish body
+	for (int k = 0; k < 2; k++) {
+		V3 s = k ? R45 : Rr, u = k ? U45 : U;
+		prism(m, AT(-19.0f, 0, 0.4f), AT(-12.0f, 0, 0.1f), s, u, 0.6f, 0.6f, 2.1f, 2.1f, body, true);
+		prism(m, AT(-12.0f, 0, 0), AT(12.0f, 0, 0), s, u, 2.1f, 2.1f, 2.1f, 2.1f, body, false);
+		prism(m, AT(12.0f, 0, 0), AT(19.0f, 0, -0.3f), s, u, 2.1f, 2.1f, 0.8f, 0.8f, body, false);
+	}
+	prism(m, AT(-11.0f, 0, -0.3f), AT(11.5f, 0, -0.3f), Rr, U, 2.16f, 0.22f, 2.16f, 0.22f, accent, false);                 // the livery stripe
+	prism(m, AT(-9.0f, 0, 0.7f), AT(10.0f, 0, 0.7f), Rr, U, 2.17f, 0.2f, 2.17f, 0.2f, dark, false);                       // the windows
+	prism(m, AT(14.0f, 0, 0.75f), AT(17.0f, 0, 0.55f), Rr, U, 1.5f, 0.28f, 1.1f, 0.2f, dark, false);                       // the cockpit
+	for (int sd = -1; sd <= 1; sd += 2) {
+		prism(m, AT(1.0f, sd * 2.0f, -0.5f), AT(-8.5f, sd * 17.5f, 0.4f), F, U, 3.6f, 0.2f, 1.2f, 0.1f, body, true);        // wing: swept back, a little up at the tip
+		prism(m, AT(-16.0f, sd * 1.6f, 2.0f), AT(-19.2f, sd * 6.8f, 2.5f), F, U, 1.8f, 0.1f, 0.8f, 0.07f, body, true);      // tail plane
+		V3 e0 = AT(-3.5f, sd * 7.0f, -1.5f);
+		for (int k = 0; k < 2; k++) { V3 s = k ? R45 : Rr, u = k ? U45 : U; prism(m, e0, add(e0, mul(F, 4.2f)), s, u, 0.8f, 0.8f, 0.8f, 0.8f, steel, k == 0); }
+	}
+	prism(m, AT(-14.5f, 0, 1.8f), AT(-18.8f, 0, 8.8f), Rr, F, 0.18f, 3.0f, 0.12f, 1.2f, accent, true);                       // the tail fin
+	if (gear) {
+		prism(m, AT(13.0f, 0, -1.4f), add(pos, mul(F, 13.0f - 0.0f)), Rr, F, 0.15f, 0.15f, 0.2f, 0.45f, tyre, true);
+		for (int sd = -1; sd <= 1; sd += 2) prism(m, AT(-1.0f, sd * 2.6f, -1.4f), add(pos, add(mul(F, -1.0f), mul(Rr, sd * 2.6f))), Rr, F, 0.15f, 0.15f, 0.25f, 0.8f, tyre, true);
+	}
+	#undef AT
+}
+
+// a car far from the camera: two boxes and a shadow (about 30 triangles instead of 300)
+static void draw_car_far(const Car *c)
+{
+	CFrame fr = car_frame(c);
+	const CarModel *cm = &car_models[c->kind];
+	bool tall = c->kind == CAR_VAN || c->kind == CAR_SWAT;
+	V3 paint = mul(v3(c->col[0], c->col[1], c->col[2]), 1.4f), glass = v3(0.12f, 0.16f, 0.24f);
+	if (c->kind == CAR_POLICE) paint = v3(0.15f, 0.2f, 0.5f); else if (c->kind == CAR_SWAT) paint = v3(0.14f, 0.15f, 0.18f);
+	lpart(&fr, v3(0, 0.5f, -cm->hl * 0.98f), v3(0, 0.5f, cm->hl * 0.98f), cm->hw * 0.97f, 0.24f, cm->hw * 0.97f, 0.24f, paint);
+	lpart(&fr, v3(0, tall ? 0.95f : 0.86f, -cm->hl * 0.35f), v3(0, tall ? 0.95f : 0.86f, cm->hl * 0.45f), cm->hw * 0.8f, tall ? 0.4f : 0.2f, cm->hw * 0.68f, tall ? 0.4f : 0.2f, glass);
+	blob_shadow(c->x, 0.07f, c->z, 1.6f, 0.5f);
+}
+
+// the airliner the player can fly
+static void draw_plane(const Game *g, const Car *c)
+{
+	float k = c->wreck ? 0.2f : 1.0f;
+	V3 body = mul(v3(1.3f, 1.3f, 1.32f), k), accent = mul(v3(0.2f, 0.9f, 0.55f), k);
+	airliner(&dm[D_OPAQUE], v3(c->x, c->y + 0.05f, c->z), c->yaw, c->pitch, -c->lean, 0.5f, body, accent, c->y < 8.0f);          // half the size of the airport's airliners
+	blob_shadow(c->x, 0.08f, c->z, 6.0f, 0.45f * clampf(1.0f - c->y / 160.0f, 0.15f, 1.0f));
+}
+
+// Two airliners that use the runways: one takes off from runway 1, one lands on runway 2 and taxis off, on a 120 s loop.
+static void draw_airport_planes(const Game *g, const Scene *s)
+{
+	if (hypotf(s->eye[0] - 300.0f, s->eye[2] - (CITY + 300.0f)) > 900.0f) return;
+	Mesh *m = &dm[D_OPAQUE];
+	float t = fmodf(g->time + 8.0f, 120.0f);
+	static const V3 body = { 1.3f, 1.3f, 1.32f }, accA = { 0.2f, 0.36f, 1.1f }, accB = { 1.4f, 0.25f, 0.2f };
+	if (t < 16.0f) {                                                        // take-off roll
+		float x = 60.0f + 0.5f * 3.1f * t * t;
+		airliner(m, v3(x, 0.05f, RWY1_Z), PI_F / 2, 0, 0, 1.0f, body, accA, true);
+	} else if (t < 44.0f) {                                                 // lifts off at 457 m, climbs over the freeway
+		float x = 60.0f + 0.5f * 3.1f * 256.0f + 50.0f * (t - 16.0f), lift = fmaxf(0.0f, x - 457.0f);
+		float y = lift * 0.2f, pit = lift > 0 ? 0.19f : 0.0f;
+		airliner(m, v3(x, y + 0.05f, RWY1_Z), PI_F / 2, pit, 0, 1.0f, body, accA, lift < 60.0f);
+	}
+	if (t >= 48.0f && t < 66.0f) {                                          // final approach from the east, over the freeway
+		float x = 1500.0f - 58.0f * (t - 48.0f), y = fmaxf(0.0f, (x - 440.0f) * 0.095f);
+		airliner(m, v3(x, y + 0.05f, RWY2_Z), -PI_F / 2, y > 0 ? -0.09f : 0.0f, 0, 1.0f, body, accB, true);
+	} else if (t >= 66.0f && t < 108.0f) {                                  // rolls out, slows, turns off toward the taxiway and goes
+		float tt = t - 66.0f, x, z = RWY2_Z, yaw = -PI_F / 2;
+		if (tt < 8.0f) x = 440.0f - (55.0f * tt - 3.25f * tt * tt);
+		else if (tt < 20.0f) x = 208.0f - 3.0f * (tt - 8.0f);
+		else { x = 172.0f; float k = tt - 20.0f; yaw = -PI_F / 2 - fminf(1.0f, k / 3.0f) * PI_F / 2; z = RWY2_Z - fmaxf(0.0f, k - 3.0f) * 6.0f; if (z < CITY + 238.0f) return; }
+		airliner(m, v3(x, 0.05f, z), yaw, 0, 0, 1.0f, body, accB, true);
+	}
+}
+
 void scene_build(const Game *g, Scene *s)
 {
 	const Cam *cam = &g->cam;
-	float cy = cosf(cam->yaw), sy = sinf(cam->yaw), cp = cosf(cam->pitch), sp = sinf(cam->pitch);
+	float vyaw = cam->yaw + cam->look, cy = cosf(vyaw), sy = sinf(vyaw), cp = cosf(cam->pitch), sp = sinf(cam->pitch);
 	float f[3] = { sy * cp, sp, -cy * cp };
 	float R[3] = { cy, 0, sy };
 	float U[3] = { R[1] * f[2] - R[2] * f[1], R[2] * f[0] - R[0] * f[2], R[0] * f[1] - R[1] * f[0] };
@@ -1416,19 +1679,24 @@ void scene_build(const Game *g, Scene *s)
 		const Car *c = &g->car[i];
 		if (!c->on) continue;
 		float dx = c->x - cam->eye[0], dz = c->z - cam->eye[2];
-		if (dx * dx + dz * dz > (g->lowq ? 130.0f : 170.0f) * (g->lowq ? 130.0f : 170.0f)) continue;
+		if (dx * dx + dz * dz > (c->kind == CAR_PLANE ? 420.0f : LOWQ(g) ? 130.0f : 170.0f) * (c->kind == CAR_PLANE ? 420.0f : LOWQ(g) ? 130.0f : 170.0f)) continue;
 		if (dx * s->fwd[0] + dz * s->fwd[2] < -6.0f) continue;                       // behind the camera
-		bool near = dx * dx + dz * dz < (g->lowq ? 45.0f * 45.0f : 75.0f * 75.0f);
-		if (c->kind == CAR_BIKE) draw_bike(g, c, near);
+		bool near = dx * dx + dz * dz < (LOWQ(g) ? 40.0f * 40.0f : 60.0f * 60.0f);
+		float fl = LOWQ(g) ? 80.0f : 115.0f;
+		if (c->kind < CAR_KINDS && !c->wreck && !c->driven && dx * dx + dz * dz > fl * fl) draw_car_far(c);
+		else if (c->kind == CAR_BIKE) draw_bike(g, c, near);
 		else if (c->kind == CAR_HELI) draw_heli(g, c);
+		else if (c->kind == CAR_PLANE) draw_plane(g, c);
 		else draw_car(g, i, near);
 	}
 	draw_peds(g, s);
 	draw_signals(g, s);
 	draw_scenery_dynamic(g, s);
+	draw_props(g, s);
+	draw_airport_planes(g, s);
 	draw_marker(g);
 	draw_effects(g, s);
-	draw_speed_streaks(g, s);
+	if (!LOWQ(g)) draw_speed_streaks(g, s);
 	for (int i = 0; i < D_COUNT; i++) s->count[i] = dm[i].n;
 }
 

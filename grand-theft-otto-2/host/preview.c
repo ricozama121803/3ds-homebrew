@@ -354,7 +354,8 @@ int main(int argc, char **argv)
 		const float SX = 4 * PITCH, SZ = 4 * PITCH + 24;
 		game_start(&G); for (int i = 0; i < MAX_PED; i++) G.ped[i].on = false; for (int i = 0; i < MAX_CAR; i++) G.car[i].on = false;
 		G.hintT = 0; G.p.p[0] = SX + 3; G.p.p[2] = SZ; G.p.face = 0; G.cam.yaw = 0; G.p.has[W_SMG] = G.p.has[W_SHOTGUN] = true; G.p.ammo[W_SMG] = 60; G.p.ammo[W_SHOTGUN] = 16;
-		for (int w = W_PISTOL; w <= W_SHOTGUN; w++) {
+		for (int w = W_PISTOL; w <= W_RPG; w++) {
+			if (w == W_BAT) continue;
 			G.p.weapon = w; G.p.aimT = 1; G.p.lastShotT = G.time; G.p.flashT = w == W_SMG ? 0.05f : 0;
 			char nm[32]; snprintf(nm, sizeof nm, "w%d_aim", w); run(0.05f, idle); G.p.aimT = 1;
 			snaplook(out, nm, (float[3]){ G.p.p[0], 1.0f, G.p.p[2] }, G.p.face + PI_F / 2, 3.4f, 0.25f, 42);
@@ -368,6 +369,49 @@ int main(int argc, char **argv)
 			char nm[32]; snprintf(nm, sizeof nm, "w0_punch%d", k);
 			snaplook(out, nm, (float[3]){ G.p.p[0], 1.0f, G.p.p[2] }, G.p.face + PI_F * (k / 4 ? 0.7f : 0.3f), 3.0f, 0.25f, 42);
 		}
+		// the bat swing
+		G.p.weapon = W_BAT;
+		G.p.aimT = 1; run(0.001f, idle); snaplook(out, "w4_ready", (float[3]){ G.p.p[0], 1.0f, G.p.p[2] }, G.p.face + PI_F * 0.5f, 3.2f, 0.3f, 42);
+		for (int k = 0; k < 6; k++) { float u = 0.05f + 0.17f * k, T = melee_time(W_BAT); G.p.punchSide = 0; G.p.punchT = T * (1 - u); G.p.aimT = 1; run(0.001f, idle); G.p.aimT = 1; G.p.punchT = T * (1 - u); char nm[32]; snprintf(nm, sizeof nm, "w4_swing%d", k); snaplook(out, nm, (float[3]){ G.p.p[0], 1.0f, G.p.p[2] }, G.p.face + PI_F * 0.5f, 3.2f, 0.3f, 42); }
+		// cover: a wall corner, then a car
+		{
+			game_start(&G); for (int i = 0; i < MAX_PED; i++) G.ped[i].on = false; for (int i = 0; i < MAX_CAR; i++) G.car[i].on = false; G.hintT = 0;
+			const Box *wb = NULL;
+			for (int i = 0; i < G.w.nbox && !wb; i++) {
+				const Box *b = &G.w.box[i];
+				if (b->z1 - b->z0 < 14 || b->x1 - b->x0 < 14 || b->y1 < 8 || b->x0 < 40) continue;
+				bool clear = true;
+				for (int j = 0; j < G.w.nbox; j++) { if (j == i) continue; const Box *o = &G.w.box[j]; if (o->x1 > b->x0 - 12 && o->x0 < b->x0 + 14 && o->z1 > b->z0 - 4 && o->z0 < b->z1 + 14) clear = false; }
+				if (clear) wb = b;
+			}
+			if (wb) {
+				G.p.p[0] = wb->x0 - 1.0f; G.p.p[2] = wb->z1 - 5.0f; G.p.face = PI_F / 2; G.cam.yaw = PI_F / 2; G.cam.manualT = 0;
+				{ Input y = idle; y.x_p = true; run(0.05f, y); }
+				run(1.0f, idle); snap(out, "c1_wall_take");
+				Input sl = idle; sl.lx = 1; run(3.0f, sl); run(0.6f, idle); snap(out, "c2_wall_corner");
+				Ped *q = &G.ped[0]; memset(q, 0, sizeof *q); q->on = true; q->hp = 60; q->x = wb->x0 + 8.0f; q->z = wb->z1 + 3.0f; q->state = PED_IDLE; q->timer = 100; q->scale = 1; q->node = q->prev = traffic_nearest_node(&G, q->x, q->z); q->shirt = 1;
+				Input aim = idle; aim.aim = true; run(0.5f, aim); snap(out, "c3_wall_peek");
+				Input fire = aim; fire.gas = true; run(0.5f, fire); snap(out, "c4_wall_shoot");
+				run(1.5f, aim);
+			}
+			game_start(&G); for (int i = 0; i < MAX_PED; i++) G.ped[i].on = false; for (int i = 0; i < MAX_CAR; i++) G.car[i].on = false; G.hintT = 0;
+			float cxp = SX + 20.0f, czp = SZ - 20.0f;
+			game_add_car(&G, CAR_SEDAN, cxp, czp, 0.0f);
+			G.p.p[0] = cxp + 2.2f; G.p.p[2] = czp + 0.5f; G.p.face = -PI_F / 2; G.cam.yaw = -PI_F / 2; G.cam.manualT = 0;
+			{ Input y = idle; y.x_p = true; run(0.05f, y); }
+			run(1.0f, idle); snap(out, "c5_car_take");
+			{ Ped *q0 = &G.ped[0]; memset(q0, 0, sizeof *q0); q0->on = true; q0->hp = 60; q0->x = cxp - 9.0f; q0->z = czp - 1.0f; q0->state = PED_IDLE; q0->timer = 100; q0->scale = 1; q0->node = q0->prev = traffic_nearest_node(&G, q0->x, q0->z); q0->shirt = 4;
+			  Input ai = idle; ai.aim = true; run(0.7f, ai); snap(out, "c5b_car_over"); Input fi = ai; fi.gas = true; run(0.4f, fi); snap(out, "c5c_car_over_fire"); run(1.0f, idle); q0->on = false; }
+			Input sl = idle; sl.lx = 1; run(2.5f, sl); run(0.5f, idle); snap(out, "c6_car_end");
+			Ped *q = &G.ped[0]; memset(q, 0, sizeof *q); q->on = true; q->hp = 60; q->x = cxp - 9.0f; q->z = czp - 6.0f; q->state = PED_IDLE; q->timer = 100; q->scale = 1; q->node = q->prev = traffic_nearest_node(&G, q->x, q->z); q->shirt = 4;
+			Input aim = idle; aim.aim = true; run(0.5f, aim); snap(out, "c7_car_peek");
+			Input fire = aim; fire.gas = true; run(0.4f, fire); snap(out, "c8_car_shoot");
+		}
+		// tyre smoke
+		game_start(&G); for (int i = 0; i < MAX_PED; i++) G.ped[i].on = false; for (int i = 0; i < MAX_CAR; i++) G.car[i].on = false; G.hintT = 0;
+		{ int ci = game_add_car(&G, CAR_SPORTS, 0.5f * PITCH + 20, 4 * PITCH + 3.6f, DEG(90)); G.p.car = ci; G.car[ci].driven = true; G.p.p[0] = G.car[ci].x; G.p.p[2] = G.car[ci].z; G.cam.yaw = DEG(90); G.cam.manualT = 0;
+		  Input d = idle; d.gas = true; run(5.0f, d); Input b = idle; b.brake = true; run(0.7f, b); snap(out, "t1_smoke");
+		  G.cam.yaw = DEG(90) + 2.3f; G.cam.manualT = 5; run(0.3f, b); snaplook(out, "t2_smoke_side", (float[3]){ G.car[ci].x, 0.8f, G.car[ci].z }, DEG(90) + 1.0f, 8.0f, 1.2f, 50); }
 		// a shootout
 		game_start(&G); for (int i = 0; i < MAX_PED; i++) G.ped[i].on = false; for (int i = 0; i < MAX_CAR; i++) G.car[i].on = false; G.hintT = 0;
 		G.p.p[0] = SX + 3; G.p.p[2] = SZ; G.p.face = 0; G.cam.yaw = 0;
@@ -401,6 +445,73 @@ int main(int argc, char **argv)
 		G.p.p[0] = px + 4; G.p.p[2] = pz + 10; G.p.face = DEG(180); G.cam.yaw = DEG(180); run(0.3f, idle); snap(out, "y1_pickups");
 		G.p.p[0] = HOSPITAL_X + 6; G.p.p[2] = HOSPITAL_Z + 22; G.p.face = DEG(0); G.cam.yaw = 0; run(0.3f, idle); snap(out, "y2_hospital");
 		game_start(&G); G.hintT = 0;
+	}
+	// airport, street furniture, over-the-shoulder aim
+	G.hintT = 0;
+	const float SX = 4 * PITCH, SZ = 4 * PITCH + 24;
+	snapfree(out, "ap1_overview", 270.0f, 160.0f, CITY + 20.0f, DEG(0), -0.42f, 62);
+	snapfree(out, "ap2_gates", 250.0f, 14.0f, CITY + 245.0f, DEG(10), -0.12f, 62);
+	snapfree(out, "ap3_plane_close", 360.0f, 6.0f, AIR_PLANE_Z + 45.0f, DEG(-12), 0.05f, 58);
+	G.time = 12.0f - 8.0f + 120.0f; { float x = 60.0f + 0.5f * 3.1f * 144.0f; snaplook(out, "ap4_roll", (float[3]){ x, 3.0f, RWY1_Z }, DEG(-70), 60.0f, 3.0f, 55); }
+	G.time = 28.0f - 8.0f + 120.0f; { float x = 60.0f + 0.5f * 3.1f * 256.0f + 50.0f * 12.0f; snaplook(out, "ap5_takeoff", (float[3]){ x, (x - 457.0f) * 0.2f, RWY1_Z }, DEG(-60), 70.0f, 6.0f, 55); }
+	G.time = 56.0f - 8.0f + 120.0f; { float x = 1500.0f - 58.0f * 8.0f, y = (x - 440.0f) * 0.095f; snaplook(out, "ap6_landing", (float[3]){ x, y, RWY2_Z }, DEG(70), 90.0f, 8.0f, 55); }
+	G.time = 0;
+	{
+		game_start(&G); for (int i = 0; i < MAX_PED; i++) G.ped[i].on = false; for (int i = 0; i < MAX_CAR; i++) G.car[i].on = false; G.hintT = 0;
+		const Prop *pr = NULL; for (int k = 0; k < G.w.nprop && !pr; k++) if (G.w.prop[k].type == 1 && G.w.prop[k].x > 150 && G.w.prop[k].z > 150) pr = &G.w.prop[k];
+		if (pr) {
+			G.p.p[0] = pr->x - 3.0f; G.p.p[2] = pr->z + 6.0f; G.p.face = DEG(90); G.cam.yaw = DEG(90); G.cam.manualT = 0; run(0.6f, idle); snap(out, "pp1_props");
+			G.p.p[0] = pr->x - 1.1f; G.p.p[2] = pr->z; { Input y = idle; y.x_p = true; run(0.05f, y); } run(1.2f, idle); snap(out, "pp2_prop_cover");
+		}
+		game_start(&G); for (int i = 0; i < MAX_CAR; i++) G.car[i].on = false; for (int i = 0; i < MAX_PED; i++) G.ped[i].on = false; G.hintT = 0;
+		G.p.p[0] = SX + 3; G.p.p[2] = SZ; G.p.face = 0; G.cam.yaw = 0; G.p.weapon = W_RIFLE;
+		{ Ped *q = &G.ped[0]; memset(q, 0, sizeof *q); q->on = true; q->hp = 600; q->x = SX + 3; q->z = SZ - 20; q->state = PED_IDLE; q->timer = 100; q->scale = 1; q->node = q->prev = traffic_nearest_node(&G, q->x, q->z); q->shirt = 3; }
+		Input sh = idle; sh.aim = true; run(1.0f, sh); snap(out, "sh1_aim_shoulder"); sh.gas = true; run(0.3f, sh); snap(out, "sh2_fire_shoulder");
+	}
+	// aiming close up, first person, a flyable airliner, the fence, spoilers
+	{
+		const float SX2 = 4 * PITCH, SZ2 = 4 * PITCH + 24;
+		game_start(&G); for (int i = 0; i < MAX_CAR; i++) G.car[i].on = false; for (int i = 0; i < MAX_PED; i++) G.ped[i].on = false; G.hintT = 0;
+		G.p.p[0] = SX2 + 3; G.p.p[2] = SZ2; G.p.face = 0; G.cam.yaw = 0; G.p.weapon = W_RIFLE;
+		{ Ped *q = &G.ped[0]; memset(q, 0, sizeof *q); q->on = true; q->hp = 900; q->x = SX2 + 3; q->z = SZ2 - 22; q->state = PED_IDLE; q->timer = 100; q->scale = 1; q->node = q->prev = traffic_nearest_node(&G, q->x, q->z); q->shirt = 3; }
+		Input a1 = idle; a1.aim = true; run(1.0f, a1); snap(out, "ai1_close_rifle");
+		G.p.weapon = W_SMG; run(0.6f, a1); snap(out, "ai2_close_smg");
+		G.p.weapon = W_SNIPER; run(0.6f, a1); snap(out, "ai2b_close_sniper");
+		G.p.weapon = W_PISTOL; run(0.6f, a1); snap(out, "ai2c_close_pistol");
+		G.p.weapon = W_RIFLE; Input u1 = a1; u1.up_p = true; run(0.05f, u1); run(0.6f, a1); snap(out, "ai3_fps");
+		Input f1 = a1; f1.gas = true; run(0.15f, f1); snap(out, "ai4_fps_fire");
+		G.p.weapon = W_RPG; run(0.6f, a1); snap(out, "ai4b_fps_rpg");
+		run(0.1f, idle);
+		game_start(&G); for (int i = 0; i < MAX_PED; i++) G.ped[i].on = false; G.hintT = 0;
+		int pi = -1; for (int i = 0; i < MAX_CAR; i++) if (G.car[i].on && G.car[i].kind == CAR_PLANE) { pi = i; break; }
+		if (pi >= 0) {
+			G.p.p[0] = G.car[pi].x; G.p.p[2] = G.car[pi].z + 5.5f; { Input x = idle; x.enter_p = true; run(0.05f, x); }
+			run(0.5f, idle); snap(out, "pl1_cockpit_ground");
+			Input th = idle; th.gas = true; run(7.0f, th); Input pu = th; pu.ly = -1; run(5.0f, pu); snap(out, "pl2_climb");
+			Input bk = th; bk.lx = 1; run(3.0f, bk); snap(out, "pl3_bank");
+		}
+		snapfree(out, "fe1_fence", 300.0f, 2.5f, 6.0f, DEG(15), 0.0f, 62);
+		snapfree(out, "fe2_fence_air", 260.0f, 2.5f, AIR_Z1 - 40.0f, DEG(160), 0.0f, 62);
+		game_start(&G); for (int i = 0; i < MAX_PED; i++) G.ped[i].on = false; G.hintT = 0;
+		for (int i = 0; i < MAX_CAR; i++) G.car[i].on = false;
+		for (int k = 0; k < 3; k++) { int ci = game_add_car(&G, CAR_SPORTS, 20.0f + k * 12.0f, 100.0f, 0.0f); G.car[ci].col[0] = 0.1f + 0.4f * k; G.car[ci].col[1] = 0.2f; G.car[ci].col[2] = 0.8f - 0.3f * k; char nm[24]; snprintf(nm, sizeof nm, "sp%d_spoiler", ci); (void)nm; }
+		for (int i = 0, k = 0; i < MAX_CAR; i++) if (G.car[i].on && G.car[i].kind == CAR_SPORTS) { char nm[24]; snprintf(nm, sizeof nm, "sp%d_spoiler", k++); snaplook(out, nm, (float[3]){ G.car[i].x, 0.6f, G.car[i].z }, PI_F + 0.7f, 6.5f, 1.6f, 48); }
+	}
+	// skydive, compass, pause menu
+	{
+		game_start(&G); for (int i = 0; i < MAX_PED; i++) G.ped[i].on = false; G.hintT = 0;
+		int h = -1; for (int i = 0; i < MAX_CAR; i++) if (G.car[i].on && G.car[i].kind == CAR_HELI) { h = i; break; }
+		G.p.p[0] = G.car[h].x + 4.0f; G.p.p[2] = G.car[h].z; { Input x = idle; x.enter_p = true; run(0.05f, x); }
+		Input up = idle; up.gas = true; run(9.0f, up); run(0.3f, idle); { Input x = idle; x.enter_p = true; run(0.05f, x); }
+		run(0.6f, idle); snap(out, "sk1_freefall"); run(1.2f, idle); snap(out, "sk2_chute_opening"); run(2.0f, idle); snap(out, "sk3_chute");
+		Input dr = idle; dr.ly = 1; run(1.5f, dr); snap(out, "sk4_glide");
+		game_start(&G); G.hintT = 0; snap(out, "cm1_compass");
+		G.cam.yaw = DEG(120); snap(out, "cm2_compass_se");
+		G.paused = true; snap(out, "u2_pause"); G.paused = false;
+		int pi = -1; for (int i = 0; i < MAX_CAR; i++) if (G.car[i].on && G.car[i].kind == CAR_PLANE) { pi = i; break; }
+		G.p.p[0] = G.car[pi].x; G.p.p[2] = G.car[pi].z + 4.0f; { Input x = idle; x.enter_p = true; run(0.05f, x); }
+		run(0.5f, idle); snap(out, "pl4_small_plane");
+		Input th = idle; th.gas = true; run(4.0f, th); Input pu = th; pu.ly = -1; run(2.5f, pu); Input bk = th; bk.lx = 1; run(1.0f, bk); snap(out, "pl5_turning");
 	}
 	// scenery: the beach, the pier, the sign, the observatory, the freeway, downtown
 	G.hintT = 0;

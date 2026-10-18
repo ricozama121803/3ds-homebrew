@@ -117,29 +117,73 @@ void city_generate(World *w, unsigned seed)
 		}
 		w->bcount[j][i] = w->nbox - w->bfirst[j][i];
 	}
+	// street furniture along the pavements, a few per block side (between the corners, which are kept clear)
+	for (int j = 0; j < NB; j++) for (int i = 0; i < NB; i++) {
+		w->pfirst[j][i] = (short)w->nprop;
+		if (w->park[j][i]) continue;
+		for (int side = 0; side < 4; side++) {
+			int n = RF() < 0.3f ? 0 : RF() < 0.7f ? 1 : 2;
+			float last = -99.0f;
+			for (int k = 0; k < n && w->nprop < MAX_PROP; k++) {
+				float u = 20.0f + RF() * (PITCH - 40.0f);
+				if (fabsf(u - last) < 9.0f) continue;
+				last = u;
+				float r = RF(), x, z;
+				int type = r < 0.45f ? 0 : r < 0.78f ? 1 : 2;
+				float off = type == 2 ? 11.5f : 11.6f;                                  // against the kerb: the pavement between them and the buildings stays wide enough to walk
+				bool alongZ = side < 2;                                                 // 0 west, 1 east pavement run along z; 2 north, 3 south along x
+				if (side == 0) { x = i * PITCH + off; z = j * PITCH + u; }
+				else if (side == 1) { x = (i + 1) * PITCH - off; z = j * PITCH + u; }
+				else if (side == 2) { x = i * PITCH + u; z = j * PITCH + off; }
+				else { x = i * PITCH + u; z = (j + 1) * PITCH - off; }
+				Prop *p = &w->prop[w->nprop++];
+				float hw = type == 0 ? 0.38f : type == 1 ? 0.27f : 0.5f, hl = type == 2 ? 0.95f : hw;      // half width across the pavement, half length along it
+				p->x = x; p->z = z; p->hx = alongZ ? hw : hl; p->hz = alongZ ? hl : hw;
+				p->h = type == 0 ? 1.0f : type == 1 ? 1.1f : 1.25f; p->type = (unsigned char)type;
+				p->face = (unsigned char)(side == 0 ? 1 : side == 1 ? 0 : side == 2 ? 3 : 2);
+			}
+		}
+		w->pcount[j][i] = (short)(w->nprop - w->pfirst[j][i]);
+	}
 }
 
 // ---- ray cast -------------------------------------------------------------------------------------------------------------
+static bool ray_aabb(const float lo[3], const float hi[3], const float o[3], const float d[3], float *best, float n[3])
+{
+	float t0 = 0, t1 = *best; int ax = -1, sg = 0;
+	for (int k = 0; k < 3; k++) {
+		if (fabsf(d[k]) < 1e-6f) { if (o[k] < lo[k] || o[k] > hi[k]) return false; continue; }
+		float ta = (lo[k] - o[k]) / d[k], tb = (hi[k] - o[k]) / d[k]; int sgn = -1;
+		if (ta > tb) { float t = ta; ta = tb; tb = t; sgn = 1; }
+		if (ta > t0) { t0 = ta; ax = k; sg = sgn; }
+		if (tb < t1) t1 = tb;
+		if (t0 > t1) return false;
+	}
+	if (ax < 0 || t0 <= 0.001f || t0 >= *best) return false;
+	*best = t0;
+	if (n) { n[0] = n[1] = n[2] = 0; n[ax] = (float)sg; }
+	return true;
+}
+
 float city_ray(const World *w, const float o[3], const float d[3], float tmax, float n[3])
 {
 	float best = tmax; bool hit = false;
-	for (int i = 0; i < w->nbox; i++) {
-		const Box *b = &w->box[i];
-		const float lo[3] = { b->x0, b->y0, b->z0 }, hi[3] = { b->x1, b->y1, b->z1 };
-		float t0 = 0, t1 = best; int ax = -1, sg = 0;
-		bool ok = true;
-		for (int k = 0; k < 3 && ok; k++) {
-			if (fabsf(d[k]) < 1e-6f) { if (o[k] < lo[k] || o[k] > hi[k]) ok = false; continue; }
-			float ta = (lo[k] - o[k]) / d[k], tb = (hi[k] - o[k]) / d[k]; int sgn = -1;
-			if (ta > tb) { float t = ta; ta = tb; tb = t; sgn = 1; }
-			if (ta > t0) { t0 = ta; ax = k; sg = sgn; }
-			if (tb < t1) t1 = tb;
-			if (t0 > t1) ok = false;
-		}
-		if (!ok || ax < 0 || t0 <= 0.001f || t0 >= best) continue;
-		best = t0; hit = true;
-		if (n) { n[0] = n[1] = n[2] = 0; n[ax] = (float)sg; }
+	{                                                                      // only the blocks the ray passes over (every box lies inside its block)
+		float te = fminf(tmax, 1500.0f), ex = o[0] + d[0] * te, ez = o[2] + d[2] * te;
+		int i0 = (int)floorf(fminf(o[0], ex) / PITCH), i1 = (int)floorf(fmaxf(o[0], ex) / PITCH), j0 = (int)floorf(fminf(o[2], ez) / PITCH), j1 = (int)floorf(fmaxf(o[2], ez) / PITCH);
+		i0 = i0 < 0 ? 0 : i0; j0 = j0 < 0 ? 0 : j0; i1 = i1 > NB - 1 ? NB - 1 : i1; j1 = j1 > NB - 1 ? NB - 1 : j1;
+		for (int j = j0; j <= j1; j++) for (int i = i0; i <= i1; i++)
+			for (int k = w->bfirst[j][i], ke = k + w->bcount[j][i]; k < ke; k++) {
+				const Box *b = &w->box[k];
+				const float lo[3] = { b->x0, b->y0, b->z0 }, hi[3] = { b->x1, b->y1, b->z1 };
+				if (ray_aabb(lo, hi, o, d, &best, n)) hit = true;
+			}
 	}
+	if (o[2] > AIR_Z0 - 120.0f || o[2] + d[2] * tmax > AIR_Z0 - 120.0f)
+		for (int i = 0; i < N_AIRBOX; i++) {
+			const float lo[3] = { AIRBOX[i].x0, 0, AIRBOX[i].z0 }, hi[3] = { AIRBOX[i].x1, AIRBOX[i].h, AIRBOX[i].z1 };
+			if (ray_aabb(lo, hi, o, d, &best, n)) hit = true;
+		}
 	return hit ? best : -1.0f;
 }
 
@@ -175,6 +219,25 @@ void city_move(const World *w, float p[3], const float d[3], Contact *c)
 	if (c) *c = k;
 }
 
+// the airport's solid parts (terminal, tower, hangars, parked planes) against a ground circle whose height span is ylo..yhi
+static bool air_push(float *x, float *z, float r, float ylo, float yhi, float n[2])
+{
+	bool hit = false;
+	if (*z < AIR_Z0 - r - 1.0f) return false;
+	for (int i = 0; i < N_AIRBOX; i++) {
+		const AirBox *b = &AIRBOX[i];
+		if (b->h < ylo || yhi < 0) continue;
+		float cx = clampf(*x, b->x0, b->x1), cz = clampf(*z, b->z0, b->z1);
+		float dx = *x - cx, dz = *z - cz, d2 = dx * dx + dz * dz;
+		if (d2 >= r * r) continue;
+		float nx, nz, pen;
+		if (d2 > 1e-8f) { float d = sqrtf(d2); nx = dx / d; nz = dz / d; pen = r - d; }
+		else { float l = *x - b->x0, rr = b->x1 - *x, t = *z - b->z0, bt = b->z1 - *z, m = fminf(fminf(l, rr), fminf(t, bt)); nx = nz = 0; if (m == l) nx = -1; else if (m == rr) nx = 1; else if (m == t) nz = -1; else nz = 1; pen = m + r; }
+		*x += nx * pen; *z += nz * pen; n[0] += nx; n[1] += nz; hit = true;
+	}
+	return hit;
+}
+
 bool city_push_circle(const World *w, float *x, float *z, float r, float n[2])
 {
 	bool hit = false;
@@ -192,8 +255,56 @@ bool city_push_circle(const World *w, float *x, float *z, float r, float n[2])
 		}
 		*x += nx * pen; *z += nz * pen; n[0] += nx; n[1] += nz; hit = true;
 	}
+	if (air_push(x, z, r, 0, 1e9f, n)) hit = true;
 	if (hit) { float l = sqrtf(n[0] * n[0] + n[1] * n[1]); if (l > 1e-6f) { n[0] /= l; n[1] /= l; } }
 	return hit;
+}
+
+bool city_prop_push(const World *w, float *x, float *z, float r, float n[2])
+{
+	bool hit = false;
+	n[0] = n[1] = 0;
+	int i0, i1, j0, j1;
+	near_range(*x, *z, r + 1.0f, &i0, &i1, &j0, &j1);
+	for (int j = j0; j <= j1; j++) for (int i = i0; i <= i1; i++) for (int k = w->pfirst[j][i]; k < w->pfirst[j][i] + w->pcount[j][i]; k++) {
+		const Prop *p = &w->prop[k];
+		float cx = clampf(*x, p->x - p->hx, p->x + p->hx), cz = clampf(*z, p->z - p->hz, p->z + p->hz);
+		float dx = *x - cx, dz = *z - cz, d2 = dx * dx + dz * dz;
+		if (d2 >= r * r) continue;
+		if (d2 < 1e-8f) {                                                          // centre inside: leave through the nearest face
+			float l = *x - (p->x - p->hx), rr = (p->x + p->hx) - *x, t = *z - (p->z - p->hz), bt = (p->z + p->hz) - *z, m = fminf(fminf(l, rr), fminf(t, bt));
+			float nx = 0, nz = 0; if (m == l) nx = -1; else if (m == rr) nx = 1; else if (m == t) nz = -1; else nz = 1;
+			*x += nx * (m + r); *z += nz * (m + r); n[0] += nx; n[1] += nz; hit = true; continue;
+		}
+		float d = sqrtf(d2);
+		*x += dx / d * (r - d); *z += dz / d * (r - d); n[0] += dx / d; n[1] += dz / d; hit = true;
+	}
+	if (hit) { float l = sqrtf(n[0] * n[0] + n[1] * n[1]); if (l > 1e-6f) { n[0] /= l; n[1] /= l; } }
+	return hit;
+}
+
+float city_prop_seg(const World *w, const float a[3], const float b[3])
+{
+	float mx = 0.5f * (a[0] + b[0]), mz = 0.5f * (a[2] + b[2]), half = 0.5f * hypotf(b[0] - a[0], b[2] - a[2]) + 1.0f;
+	int i0, i1, j0, j1;
+	near_range(mx, mz, half, &i0, &i1, &j0, &j1);
+	float best = 2.0f;
+	for (int j = j0; j <= j1; j++) for (int i = i0; i <= i1; i++) for (int k = w->pfirst[j][i]; k < w->pfirst[j][i] + w->pcount[j][i]; k++) {
+		const Prop *p = &w->prop[k];
+		const float lo[3] = { p->x - p->hx, 0, p->z - p->hz }, hi[3] = { p->x + p->hx, p->h, p->z + p->hz };
+		float t0 = 0, t1 = 1; bool ok = true;
+		for (int q = 0; q < 3 && ok; q++) {
+			float d = b[q] - a[q];
+			if (fabsf(d) < 1e-6f) { if (a[q] < lo[q] || a[q] > hi[q]) ok = false; continue; }
+			float ta = (lo[q] - a[q]) / d, tb = (hi[q] - a[q]) / d;
+			if (ta > tb) { float t = ta; ta = tb; tb = t; }
+			if (ta > t0) t0 = ta;
+			if (tb < t1) t1 = tb;
+			if (t0 > t1) ok = false;
+		}
+		if (ok && t0 < best) best = t0;
+	}
+	return best <= 1.0f ? best : -1.0f;
 }
 
 // a helicopter's circle against the buildings it is not above: boxes whose top is below ylo (or whose base is above yhi) do not count
@@ -215,6 +326,7 @@ bool city_push_circle_y(const World *w, float *x, float *z, float r, float ylo, 
 		}
 		*x += nx * pen; *z += nz * pen; n[0] += nx; n[1] += nz; hit = true;
 	}
+	if (air_push(x, z, r, ylo, yhi, n)) hit = true;
 	if (hit) { float l = sqrtf(n[0] * n[0] + n[1] * n[1]); if (l > 1e-6f) { n[0] /= l; n[1] /= l; } }
 	return hit;
 }
@@ -226,5 +338,6 @@ float city_roof_h(const World *w, float x, float z, float r)
 	FOR_NEAR(w, x, z, r + 0.5f, b) {
 		if (x + r > b->x0 && x - r < b->x1 && z + r > b->z0 && z - r < b->z1 && b->y1 > top) top = b->y1;
 	}
+	if (z + r > AIR_Z0) for (int i = 0; i < N_AIRBOX; i++) { const AirBox *b = &AIRBOX[i]; if (x + r > b->x0 && x - r < b->x1 && z + r > b->z0 && z - r < b->z1 && b->h > top) top = b->h; }
 	return top;
 }

@@ -16,7 +16,7 @@ static bool s_ok;
 
 static const float IOD = 0.18f, FOCUS = 9.0f;
 #define FOG_START 60.0f
-#define FOG_END   1300.0f
+#define FOG_END   1100.0f
 #define HAZE_RGBA (0xFF000000u | ((u32)(0.80f * 255) << 0) | ((u32)(0.88f * 255) << 8) | ((u32)(0.97f * 255) << 16))     // 0xAABBGGRR
 
 bool gfx_init(const Game *g)

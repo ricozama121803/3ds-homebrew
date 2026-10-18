@@ -3,8 +3,8 @@
 #include "game.h"
 #include "otto_gait.h"
 
-static const float STAR_HEAT[5] = { 20.0f, 70.0f, 140.0f, 240.0f, 380.0f };       // heat that gives 1 .. 5 stars
-static const int FOOT_WANT[6] = { 0, 2, 4, 5, 6, 8 }, CAR_WANT[6] = { 0, 1, 2, 3, 3, 4 }, SWAT_WANT[6] = { 0, 0, 0, 0, 1, 2 };
+static const float STAR_HEAT[5] = { 10.0f, 45.0f, 100.0f, 180.0f, 300.0f };       // heat that gives 1 .. 5 stars
+static const int FOOT_WANT[6] = { 0, 3, 5, 7, 9, 12 }, CAR_WANT[6] = { 0, 1, 2, 3, 4, 5 }, SWAT_WANT[6] = { 0, 0, 1, 2, 3, 4 };
 #define PATROL_COPS 3
 
 static float prnd(Game *g) { return rndf(&g->trng); }
@@ -15,6 +15,13 @@ static void target_point(const Game *g, float *x, float *z, float *vx, float *vz
 	const Player *p = &g->p;
 	if (p->car >= 0) { const Car *c = &g->car[p->car]; *x = c->x; *z = c->z; *vx = c->vx; *vz = c->vz; *onFoot = false; }
 	else { *x = p->p[0]; *z = p->p[2]; *vx = p->v[0]; *vz = p->v[2]; *onFoot = true; }
+}
+
+// Otto is away from the streets (on the airport, out on the pier, in the air): the officers cannot follow the pavements to him and simply run or drive straight at him
+static bool player_far(const Game *g, float tx, float tz)
+{
+	float nx, nz; traffic_node_xy(traffic_nearest_node(g, tx, tz), &nx, &nz);
+	return hypotf(nx - tx, nz - tz) > 60.0f || (g->p.car >= 0 && g->car[g->p.car].y > 3.0f);
 }
 
 // ---- spawning ---------------------------------------------------------------------------------------------------------------------------------
@@ -28,7 +35,27 @@ static int free_ped_slot(Game *g)
 		float d = (p->x - g->p.p[0]) * (p->x - g->p.p[0]) + (p->z - g->p.p[2]) * (p->z - g->p.p[2]);
 		if (d > bd) { bd = d; best = i; }
 	}
+	if (best < 0) for (int i = 0; i < MAX_PED; i++) {                           // everybody is close: take the furthest civilian anyway
+		const Ped *p = &g->ped[i];
+		if (p->cop) continue;
+		float d = (p->x - g->p.p[0]) * (p->x - g->p.p[0]) + (p->z - g->p.p[2]) * (p->z - g->p.p[2]);
+		if (d > bd * 0.1f) { bd = d; best = i; }
+	}
 	return best;
+}
+
+// no free car slot: take the car furthest from Otto that nobody is using (traffic, parked cars, bikes; never aircraft or his own car) so the police can always be sent
+static void make_car_room(Game *g)
+{
+	int best = -1; float bd = 80.0f * 80.0f;
+	for (int i = 0; i < MAX_CAR; i++) { if (!g->car[i].on) return; }
+	for (int i = 0; i < MAX_CAR; i++) {
+		const Car *c = &g->car[i];
+		if (!c->on || c->driven || c->bot || c->kind >= CAR_HELI || is_police(c)) continue;
+		float d = (c->x - g->p.p[0]) * (c->x - g->p.p[0]) + (c->z - g->p.p[2]) * (c->z - g->p.p[2]);
+		if (d > bd) { bd = d; best = i; }
+	}
+	if (best >= 0) g->car[best].on = false;
 }
 
 static int spawn_cop(Game *g, int kind, float x, float z)
@@ -37,7 +64,7 @@ static int spawn_cop(Game *g, int kind, float x, float z)
 	if (i < 0) return -1;
 	Ped *p = &g->ped[i];
 	memset(p, 0, sizeof *p);
-	p->on = true; p->cop = (unsigned char)kind; p->hp = kind == 2 ? 170.0f : 100.0f; p->state = PED_WALK; p->scale = kind == 2 ? 1.04f : 1.0f;
+	p->on = true; p->cop = (unsigned char)kind; p->hp = kind == 2 ? 230.0f : 130.0f; p->state = PED_WALK; p->scale = kind == 2 ? 1.04f : 1.0f;
 	p->x = x; p->z = z; p->yaw = prnd(g) * 2 * PI_F; p->phase = prnd(g);
 	p->node = p->prev = traffic_nearest_node(g, x, z); p->cw = (rnd_next(&g->trng) & 1) != 0;
 	p->shootCd = 0.6f + prnd(g);
@@ -51,12 +78,17 @@ static bool spawn_foot_cop(Game *g, int kind)
 		int id = (int)(rnd_next(&g->trng) % (NB * NB * 4));
 		float x, z; traffic_node_xy(id, &x, &z);
 		float dx = x - g->p.p[0], dz = z - g->p.p[2], d2 = dx * dx + dz * dz;
-		if (d2 < 60.0f * 60.0f || d2 > 150.0f * 150.0f) continue;
+		if (d2 < 40.0f * 40.0f || d2 > 115.0f * 115.0f) continue;
 		bool hidden = !los_clear(g, g->p.p[0], 1.5f, g->p.p[2], x, 1.5f, z);
-		if (!hidden && d2 < 100.0f * 100.0f && tries < 24) continue;
+		if (!hidden && d2 < 70.0f * 70.0f && tries < 24) continue;
 		return spawn_cop(g, kind, x, z) >= 0;
 	}
-	return false;
+	{                                                                         // nowhere suitable (Otto is far from the streets): send one in from the nearest pavement to him
+		float tx, tz, vx, vz; bool foot; target_point(g, &tx, &tz, &vx, &vz, &foot);
+		float x, z; traffic_node_xy(traffic_nearest_node(g, tx, tz), &x, &z);
+		float a = prnd(g) * 2 * PI_F;
+		return spawn_cop(g, kind, x + cosf(a) * 6.0f, z + sinf(a) * 6.0f) >= 0;
+	}
 }
 
 // ---- foot officers --------------------------------------------------------------------------------------------------------------------------------
@@ -75,17 +107,19 @@ static void cop_step(Game *g, int idx, float dt)
 		if (sees) p->losT = 0.7f;
 		int from = traffic_nearest_node(g, p->x, p->z), to = traffic_nearest_node(g, tx, tz);
 		p->wpNode = traffic_path_next(from, to);
+		p->timer = from == to ? 1.0f : 0.0f;                          // (timer is free for officers) at the pavement node nearest Otto: nothing more to follow
 		p->prev = from;
 	}
 	bool sees = p->losT > 0;
-	float standoff = g->stars >= 2 ? (swat ? 7.0f : 11.0f) : 0.8f;
-	bool hostile = g->stars >= 2 || (swat && g->stars >= 1);
+	float standoff = g->stars >= 2 ? (swat ? 7.0f : 10.0f) : (g->stars >= 1 ? 6.0f : 0.8f);
+	bool hostile = g->stars >= 1;                                           // officers shoot from the first star
 	float goalx, goalz;
-	bool direct = sees && d < 30.0f;
+	bool farAway = player_far(g, tx, tz);
+	bool direct = (sees && d < 30.0f) || (farAway && (d < 160.0f || p->timer > 0.5f));
 	if (direct) { goalx = tx; goalz = tz; }
 	else { traffic_node_xy(p->wpNode, &goalx, &goalz); }
 	float gx = goalx - p->x, gz = goalz - p->z, gd = sqrtf(gx * gx + gz * gz);
-	float want = (direct && d <= standoff) ? 0.0f : (swat ? 4.2f : 4.7f);
+	float want = (direct && d <= standoff) ? 0.0f : (swat ? 4.8f : 5.4f);
 	if (!direct && gd < 0.7f) want = 0.5f;
 	p->speed += (want - p->speed) * fminf(1.0f, dt * 7.0f);
 	if (gd > 0.05f && p->speed > 0.1f) {
@@ -100,15 +134,16 @@ static void cop_step(Game *g, int idx, float dt)
 	p->yaw = wrapang(p->yaw + wrapang(faceYaw - p->yaw) * fminf(1.0f, dt * 10.0f));
 	if (p->speed > 0.05f) p->phase += dt * p->speed / gait_stride(p->speed);
 	// shooting
-	bool aiming = hostile && direct && d < (swat ? 26.0f : 34.0f) && pl->ps == PS_ALIVE;
+	bool aiming = hostile && direct && d < (swat ? 30.0f : 42.0f) && pl->ps == PS_ALIVE;
 	p->aimT += ((aiming ? 1.0f : 0.0f) - p->aimT) * fminf(1.0f, dt * 8.0f);
 	p->shootCd -= dt;
 	if (aiming && p->aimT > 0.7f && p->shootCd <= 0 && fabsf(wrapang(atan2f(dx, -dz) - p->yaw)) < 0.25f) {
 		float m[3] = { p->x + sinf(p->yaw) * 0.85f + cosf(p->yaw) * 0.2f, 1.3f, p->z - cosf(p->yaw) * 0.85f + sinf(p->yaw) * 0.2f };
-		float pitch = atan2f((onFoot ? 1.1f : 1.0f) - 1.3f, fmaxf(d, 1.0f));
+		float aimY = onFoot ? 1.1f : pl->car >= 0 ? g->car[pl->car].y + 1.4f : 1.0f;
+		float pitch = atan2f(aimY - 1.3f, fmaxf(d, 1.0f));
 		const WeaponDef *w = swat ? &WPN[W_SHOTGUN] : &WPN[W_PISTOL];
-		fire_bullet(g, 1, m, atan2f(tx + tvx * 0.15f - m[0], -(tz + tvz * 0.15f - m[2])), pitch, w, swat ? 0.55f : 0.3f);
-		p->shootCd = swat ? 1.5f + prnd(g) * 0.5f : 0.9f + prnd(g) * 0.9f; p->flashT = 0.08f;
+		fire_bullet(g, 1, m, atan2f(tx + tvx * 0.15f - m[0], -(tz + tvz * 0.15f - m[2])), pitch, w, swat ? 0.7f : 0.45f);
+		p->shootCd = swat ? 1.0f + prnd(g) * 0.4f : 0.55f + prnd(g) * 0.55f; p->flashT = 0.08f;
 		spawn_particles(g, PT_SPARK, m[0], m[1], m[2], 2, 2.0f, 0.06f, 0.15f);
 	}
 	// holding Otto
@@ -163,12 +198,13 @@ static void police_car_step(Game *g, int idx, float dt)
 	float dx = tx - c->x, dz = tz - c->z, d = sqrtf(dx * dx + dz * dz);
 	float spd = hypotf(c->vx, c->vz), fs = c->vx * sinf(c->yaw) - c->vz * cosf(c->yaw);
 	c->botReplan -= dt;
-	bool direct = d < 55.0f && los_clear(g, c->x, 1.0f, c->z, tx, 1.0f, tz);
+	bool direct = (d < 55.0f && los_clear(g, c->x, 1.0f, c->z, tx, 1.0f, tz)) || (player_far(g, tx, tz) && (d < 170.0f || c->botEnd));
 	if (c->botReplan <= 0 || hypotf(c->botTx - c->x, c->botTz - c->z) < 14.0f) {
 		c->botReplan = 0.4f;
 		int ccx = (int)floorf(c->x / PITCH + 0.5f), ccz = (int)floorf(c->z / PITCH + 0.5f), pcx = (int)floorf(tx / PITCH + 0.5f), pcz = (int)floorf(tz / PITCH + 0.5f);
 		ccx = (int)clampf((float)ccx, 1, NB - 1); ccz = (int)clampf((float)ccz, 1, NB - 1); pcx = (int)clampf((float)pcx, 1, NB - 1); pcz = (int)clampf((float)pcz, 1, NB - 1);
 		int ox, oz; next_cell(ccx, ccz, pcx, pcz, &ox, &oz);
+		c->botEnd = ccx == pcx && ccz == pcz;                                 // at the junction nearest Otto
 		c->botTx = ox * PITCH; c->botTz = oz * PITCH;
 		// a junction we have already passed would make the car turn round: look one more cell ahead along the way instead
 		float fx = sinf(c->yaw), fz = -cosf(c->yaw);
@@ -178,7 +214,7 @@ static void police_car_step(Game *g, int idx, float dt)
 	if (direct || (d < 22.0f)) { gx = tx + tvx * 0.25f; gz = tz + tvz * 0.25f; } else { gx = c->botTx; gz = c->botTz; }
 	float want = atan2f(gx - c->x, -(gz - c->z)), e = wrapang(want - c->yaw);
 	float gd = hypotf(gx - c->x, gz - c->z);
-	float vt = c->kind == CAR_SWAT ? 22.0f : 28.0f;
+	float vt = c->kind == CAR_SWAT ? 27.0f : 34.0f;
 	vt *= clampf(1.25f - fabsf(e) / 1.0f, 0.22f, 1.0f);
 	if (gd < 25.0f && !direct) vt = fminf(vt, 13.0f);
 	// stand next to Otto when he is on foot, ram him when he is in a car
@@ -240,7 +276,7 @@ void police_update(Game *g, float dt)
 	for (int i = 0; i < MAX_PED && !seen; i++) { const Ped *p = &g->ped[i]; if (p->on && p->cop && !p->dead && (p->losT > 0 || hypotf(p->x - pl->p[0], p->z - pl->p[2]) < 55.0f)) seen = true; }
 	for (int i = 0; i < MAX_CAR && !seen; i++) { const Car *c = &g->car[i]; if (c->on && c->bot && !c->wreck && hypotf(c->x - pl->p[0], c->z - pl->p[2]) < 45.0f) seen = true; }
 	if (seen) g->unseenT = 0; else g->unseenT += dt;
-	g->heat -= (g->unseenT > 9.0f ? 7.0f : 0.25f) * dt;                    // the wanted level fades once nobody has had eyes on Otto for a while
+	g->heat -= (g->unseenT > 14.0f ? 5.0f : 0.15f) * dt;                    // the wanted level fades once nobody has had eyes on Otto for a while
 	if (g->heat < 0) g->heat = 0;
 	int ns = 0;
 	for (int k = 0; k < 5; k++) if (g->heat >= STAR_HEAT[k]) ns = k + 1;
@@ -261,14 +297,20 @@ void police_update(Game *g, float dt)
 		}
 	}
 	if (spawnT <= 0) {
-		spawnT = 1.4f;
+		spawnT = 0.8f;
+		bool did = false;
 		if (cars < CAR_WANT[g->stars]) {
-			int ci = traffic_spawn_car(g, CAR_POLICE, 110.0f, 260.0f, false);
-			if (ci >= 0) { Car *c = &g->car[ci]; c->bot = true; c->owner = 1; c->botTx = c->x; c->botTz = c->z; c->botReplan = 0; }
+			make_car_room(g);
+			int ci = traffic_spawn_car(g, CAR_POLICE, 80.0f, 200.0f, false);
+			if (ci < 0) ci = traffic_spawn_car(g, CAR_POLICE, 150.0f, 650.0f, false);
+			if (ci >= 0) { Car *c = &g->car[ci]; c->bot = true; c->owner = 1; c->botTx = c->x; c->botTz = c->z; c->botReplan = 0; did = true; }
 		} else if (swat < SWAT_WANT[g->stars]) {
-			int ci = traffic_spawn_car(g, CAR_SWAT, 120.0f, 280.0f, false);
-			if (ci >= 0) { Car *c = &g->car[ci]; c->bot = true; c->owner = 1; c->botTx = c->x; c->botTz = c->z; c->botReplan = 0; }
-		} else if (foot < FOOT_WANT[g->stars]) spawn_foot_cop(g, (g->stars >= 4 && (rnd_next(&g->trng) & 1)) ? 2 : 1);
+			make_car_room(g);
+			int ci = traffic_spawn_car(g, CAR_SWAT, 90.0f, 220.0f, false);
+			if (ci < 0) ci = traffic_spawn_car(g, CAR_SWAT, 150.0f, 650.0f, false);
+			if (ci >= 0) { Car *c = &g->car[ci]; c->bot = true; c->owner = 1; c->botTx = c->x; c->botTz = c->z; c->botReplan = 0; did = true; }
+		} else did = false;
+		if (foot < FOOT_WANT[g->stars] && (!did || (foot < 2))) spawn_foot_cop(g, (g->stars >= 4 && (rnd_next(&g->trng) & 1)) ? 2 : 1);      // a failed car spawn must not starve the officers on foot
 	}
 	for (int i = 0; i < MAX_PED; i++) if (g->ped[i].on && g->ped[i].cop && !g->ped[i].dead && g->ped[i].state != PED_DOWN) cop_step(g, i, dt);
 	for (int i = 0; i < MAX_CAR; i++) if (g->car[i].on && g->car[i].bot && !g->car[i].wreck) police_car_step(g, i, dt);

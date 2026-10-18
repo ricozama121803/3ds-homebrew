@@ -21,7 +21,7 @@ static void sbox(int mat, float x0, float y0, float z0, float x1, float y1, floa
 		for (int i = 0; i < 4; i++) {
 			float *p = sides[f][i];
 			float u = f < 2 ? p[0] * uv : f < 4 ? p[2] * uv : p[0] * uv, w = f == 4 ? p[2] * uv : p[1] * uv;
-			v[i] = sv(p[0], p[1], p[2], mat == MAT_WHITE ? 0.5f : u, mat == MAT_WHITE ? 0.5f : w, c, 1);
+			v[i] = sv(p[0], p[1], p[2], mat == MAT_WHITE || mat >= MAT_COUNT ? 0.5f : u, mat == MAT_WHITE || mat >= MAT_COUNT ? 0.5f : w, c, 1);
 		}
 		quad(m, &v[0], &v[1], &v[2], &v[3]);
 	}
@@ -60,6 +60,9 @@ static void chunk_info(int c, float *cx, float *cz, float *cy, float *rv, float 
 	case EX_HILLS: *cx = CITY * 0.5f; *cz = -480.0f; *cy = 60.0f; *rh = 700.0f; break;
 	case EX_NORTH: *cx = 270.0f; *cz = -85.0f; *rh = 290.0f; *cy = 30.0f; break;                      // Capitol Records and Dodger Stadium
 	case EX_SOUTH: *cx = CITY * 0.38f; *cz = CITY + 95.0f; *rh = 45.0f; *cy = 20.0f; break;          // the Theme Building
+	case EX_AIR: *cx = 290.0f; *cz = CITY + 235.0f; *rh = 330.0f; *cy = 30.0f; break;                 // the airport's runways, taxiway and paving
+	case EX_AIR_T: *cx = 370.0f; *cz = CITY + 150.0f; *rh = 140.0f; *cy = 30.0f; break;               // the terminal, tower, gates and parked airliners
+	case EX_AIR_W: *cx = 92.0f; *cz = CITY + 142.0f; *rh = 60.0f; *cy = 30.0f; break;                 // the hangars
 	default: {
 		int k = c - EX_FWY0;
 		*cx = CITY + 77.0f; *cz = FWY_Z0 + (k + 0.5f) * (FWY_Z1 - FWY_Z0) / 4; *rh = 0.5f * (FWY_Z1 - FWY_Z0) / 4 + 20.0f; break; }
@@ -490,6 +493,100 @@ static void helipads(void)
 	}
 }
 
+// the airport south of the city: plaza with the Theme Building, terminal and tower, hangars, an apron with four parked airliners, taxiway and two runways.
+// (Its solid parts are the AIRBOX table in game.h; two more airliners take off and land in scene.c.)
+static void airliner(Mesh *m, V3 pos, float yaw, float pitch, float roll, float sc, const V3 body, const V3 accent, bool gear);
+static void airport(void)
+{
+	curChunk = EX_AIR;
+	const float zc = CITY;
+	static const float conc[3] = { 0.66f, 0.66f, 0.68f }, asph[3] = { 0.34f, 0.34f, 0.37f }, line[3] = { 1.6f, 1.6f, 1.5f }, yel[3] = { 1.7f, 1.4f, 0.25f };
+	static const float cream[3] = { 1.05f, 1.02f, 0.95f }, glass[3] = { 0.95f, 1.0f, 1.05f }, white[3] = { 1.3f, 1.3f, 1.3f }, grey[3] = { 0.7f, 0.72f, 0.76f }, dark[3] = { 0.18f, 0.2f, 0.26f };
+	// paving: the plaza and apron, the taxiway, the runways with their connectors
+	flat(MAT_ROOF, 100.0f, zc + 40.0f, 520.0f, zc + 215.0f, 0.04f, conc, 1.0f / 8.0f);
+	flat(MAT_ROOF, 30.0f, zc + 60.0f, 100.0f, zc + 215.0f, 0.04f, conc, 1.0f / 8.0f);
+	flat(MAT_ROOF, 30.0f, zc + 215.0f, 560.0f, zc + 235.0f, 0.04f, asph, 1.0f / 8.0f);
+	for (int k = 0; k < 2; k++) {
+		float rz = k ? RWY2_Z : RWY1_Z;
+		flat(MAT_ROOF, 10.0f, rz - 22.5f, 560.0f, rz + 22.5f, 0.04f, asph, 1.0f / 8.0f);
+		for (float x = 30.0f; x < 540.0f; x += 50.0f) flat(MAT_WHITE, x, rz - 0.6f, x + 30.0f, rz + 0.6f, 0.07f, line, 0);
+		flat(MAT_WHITE, 10.0f, rz - 22.2f, 560.0f, rz - 21.8f, 0.07f, line, 0);
+		flat(MAT_WHITE, 10.0f, rz + 21.8f, 560.0f, rz + 22.2f, 0.07f, line, 0);
+		for (int b = 0; b < 8; b++) for (int end = 0; end < 2; end++) { float x0 = end ? 541.0f : 14.0f; flat(MAT_WHITE, x0, rz - 19.0f + b * 5.0f, x0 + 12.0f, rz - 17.0f + b * 5.0f, 0.07f, line, 0); }
+	}
+	for (int k = 0; k < 3; k++) {                                          // connectors: taxiway - runway 1 - runway 2
+		float x = 110.0f + k * 190.0f;
+		flat(MAT_ROOF, x, zc + 235.0f, x + 16.0f, RWY1_Z - 22.5f, 0.04f, asph, 1.0f / 8.0f);
+		flat(MAT_ROOF, x, RWY1_Z + 22.5f, x + 16.0f, RWY2_Z - 22.5f, 0.04f, asph, 1.0f / 8.0f);
+	}
+	flat(MAT_WHITE, 30.0f, zc + 224.6f, 560.0f, zc + 225.4f, 0.07f, yel, 0);
+	for (int k = 0; k < 4; k++) flat(MAT_WHITE, AIR_PLANE_X[k] - 0.4f, zc + 150.0f, AIR_PLANE_X[k] + 0.4f, zc + 225.0f, 0.07f, yel, 0);     // the lead-in lines to the gates
+	curChunk = EX_AIR_T;
+	// terminal: glass front with a canopy over the gates, jet bridges to each plane
+	sbox(MAT_GLASS, 262.0f, 0, zc + 88.0f, 436.0f, 14.0f, zc + 128.0f, glass, 1.0f / 6.8f);
+	flat(MAT_ROOF, 262.0f, zc + 88.0f, 436.0f, zc + 128.0f, 14.03f, grey, 1.0f / 8.0f);
+	sbox(MAT_WHITE, 258.0f, 9.0f, zc + 128.0f, 440.0f, 9.7f, zc + 140.0f, white, 1);
+	for (int k = 0; k < 5; k++) sbox(MAT_WHITE, 258.0f + k * 45.5f, 0, zc + 138.0f, 259.0f + k * 45.5f, 9.0f, zc + 139.0f, grey, 1);
+	for (int k = 0; k < 4; k++) sbox(MAT_WHITE, AIR_PLANE_X[k] - 1.1f, 3.2f, zc + 128.0f, AIR_PLANE_X[k] + 1.1f, 5.2f, zc + 148.0f, grey, 1);
+	// control tower
+	sbox(MAT_CREAM, 440.0f, 0, zc + 92.0f, 452.0f, 26.0f, zc + 104.0f, cream, 1.0f / 6.8f);
+	sbox(MAT_GLASS, 437.0f, 26.0f, zc + 89.0f, 455.0f, 31.0f, zc + 107.0f, dark, 1.0f / 6.8f);
+	sbox(MAT_WHITE, 436.0f, 31.0f, zc + 88.0f, 456.0f, 32.0f, zc + 108.0f, white, 1);
+	sbox(MAT_WHITE, 445.6f, 32.0f, zc + 97.6f, 446.4f, 38.0f, zc + 98.4f, grey, 1);
+	curChunk = EX_AIR_W;
+	// hangars and the cargo shed
+	for (int k = 0; k < 2; k++) {
+		float z0 = zc + (k ? 150.0f : 90.0f), z1 = z0 + (k ? 45.0f : 45.0f);
+		sbox(MAT_TAN, 52.0f, 0, z0, 132.0f, 12.0f, z1, cream, 1.0f / 6.8f);
+		sbox(MAT_WHITE, 55.0f, 12.0f, z0 + 3.0f, 129.0f, 14.0f, z1 - 3.0f, grey, 1);
+		sbox(MAT_WHITE, 62.0f, 0, z1, 122.0f, 9.0f, z1 + 0.15f, dark, 1);
+	}
+	curChunk = EX_AIR_T;
+	sbox(MAT_CREAM, 456.0f, 0, zc + 140.0f, 498.0f, 9.0f, zc + 178.0f, cream, 1.0f / 6.8f);
+	sbox(MAT_WHITE, 459.0f, 9.0f, zc + 143.0f, 495.0f, 10.0f, zc + 175.0f, grey, 1);
+	curChunk = EX_AIR;
+	sbox(MAT_WHITE, 188.6f, 0, zc + 62.6f, 189.4f, 8.0f, zc + 63.4f, grey, 1);
+	sbox(MAT_WHITE, 187.0f, 8.0f, zc + 61.0f, 191.0f, 8.6f, zc + 65.0f, white, 1);
+	curChunk = EX_AIR_T;                                                       // (the parked airliners are detail: drawn only when Otto is near)
+	// four airliners at the gates, nose to the terminal
+	static const V3 body = { 1.3f, 1.3f, 1.32f }, acc[4] = { { 0.2f, 0.36f, 1.1f }, { 1.4f, 0.25f, 0.2f }, { 0.2f, 1.1f, 0.45f }, { 1.5f, 0.8f, 0.15f } };
+	for (int k = 0; k < 4; k++) airliner(&SM(GRP_DETAIL), v3(AIR_PLANE_X[k], 0.05f, AIR_PLANE_Z), 0.0f, 0.0f, 0.0f, 1.0f, body, acc[k], true);
+}
+
+
+// ---- the fence round the playable area (everything but the sea): the city's edges, the airport's edges. -------------------------------------------------
+// chunk -1: pick the grid chunk the post stands in
+static int air_chunk(float x, float z) { return x < 150.0f && z < CITY + 205.0f ? EX_AIR_W : x >= 150.0f && z < CITY + 220.0f ? EX_AIR_T : EX_AIR; }
+static void fence_run(float x0, float z0, float x1, float z1, bool air)
+{
+	static const float post[3] = { 0.3f, 0.31f, 0.35f }, rail[3] = { 0.75f, 0.77f, 0.8f }, top[3] = { 1.7f, 1.25f, 0.25f };
+	bool alongX = fabsf(x1 - x0) > fabsf(z1 - z0);
+	float len = alongX ? fabsf(x1 - x0) : fabsf(z1 - z0);
+	int n = (int)ceilf(len / 8.0f);
+	float sx = (x1 - x0) / n, sz = (z1 - z0) / n;
+	for (int i = 0; i <= n; i++) {
+		float x = x0 + sx * i, z = z0 + sz * i;
+		if (air) curChunk = air_chunk(x + sx * 0.5f, z + sz * 0.5f); else chunk_at(x + sx * 0.5f, z + sz * 0.5f);
+		sbox(GRP_DETAIL, x - 0.07f, 0, z - 0.07f, x + 0.07f, 2.6f, z + 0.07f, post, 1);                // the fence is detail: it is only built into the near-only group
+		if (i == n) break;
+		float xn = x + sx, zn = z + sz;
+		float ax = fminf(x, xn), bx = fmaxf(x, xn), az = fminf(z, zn), bz = fmaxf(z, zn);
+		if (alongX) { sbox(GRP_DETAIL, ax, 1.0f, z - 0.03f, bx, 1.07f, z + 0.03f, rail, 1); sbox(GRP_DETAIL, ax, 2.4f, z - 0.05f, bx, 2.5f, z + 0.05f, top, 1); }
+		else { sbox(GRP_DETAIL, x - 0.03f, 1.0f, az, x + 0.03f, 1.07f, bz, rail, 1); sbox(GRP_DETAIL, x - 0.05f, 2.4f, az, x + 0.05f, 2.5f, bz, top, 1); }
+	}
+}
+static void fences(void)
+{
+	const float xa = AIR_X0 - 20.0f - 0.4f, xb = AIR_X1 + 0.4f, zs = CITY - 0.6f, ze = AIR_Z1 + 0.4f;
+	fence_run(BEACH_X, 0.6f, CITY - 0.6f, 0.6f, false);                          // north edge, from the water's edge
+	fence_run(CITY - 0.6f, 0.6f, CITY - 0.6f, zs, false);                        // east edge
+	fence_run(BEACH_X, zs, xa, zs, false);                                       // south edge, west of the airport entrance
+	fence_run(xb, zs, CITY - 0.6f, zs, false);                                   // and east of it
+	fence_run(xa, zs, xa, ze, true);                                        // the airport: west, east and south sides
+	fence_run(xb, zs, xb, ze, true);
+	fence_run(xa, ze, xb, ze, true);
+}
+
 static void landmarks(void)
 {
 	capitol(130.0f, -52.0f);
@@ -498,6 +595,8 @@ static void landmarks(void)
 	venice_sign(-5.0f, 3 * PITCH);
 	randys_donut();
 	helipads();
+	airport();
+	fences();
 }
 
 static void scenery_static(void)

@@ -8,6 +8,10 @@ const WeaponDef WPN[W_COUNT] = {
 	{ "Pistol",    34.0f, 1, 3.2f, 0.020f, 75.0f, 100.0f, 0 },
 	{ "SMG",       17.0f, 1, 9.0f, 0.050f, 60.0f, 105.0f, 0 },
 	{ "Shotgun",   15.0f, 6, 1.1f, 0.100f, 30.0f, 90.0f, 0 },
+	{ "Bat",       42.0f, 1, 1.5f, 0.00f, 2.6f,   0.0f, 0 },
+	{ "Rifle",     22.0f, 1, 7.0f, 0.030f, 85.0f, 125.0f, 0 },
+	{ "Sniper",   130.0f, 1, 0.8f, 0.002f, 170.0f, 220.0f, 0 },
+	{ "RPG",        0.0f, 1, 0.5f, 0.000f, 110.0f, 60.0f, 0, true },
 };
 
 static float crand(Game *g) { return rndf(&g->trng); }
@@ -83,7 +87,7 @@ void damage_ped(Game *g, int idx, float amount, int byPlayer)
 	if (!p->on || p->dead) return;
 	p->hp -= amount; p->hurtT = 0.3f;
 	blood_burst(g, p, 4);
-	if (byPlayer) { add_heat(g, p->cop ? 14.0f : 6.0f); g->hitT = 0.22f; }
+	if (byPlayer) { add_heat(g, p->cop ? 20.0f : 10.0f); g->hitT = 0.22f; }
 	if (p->hp <= 0) {
 		if (byPlayer) g->killT = 0.9f;                                         // the crosshair confirms the kill
 		p->dead = true; p->state = PED_DOWN; p->timer = 14.0f; p->speed = 0;
@@ -91,7 +95,7 @@ void damage_ped(Game *g, int idx, float amount, int byPlayer)
 		add_decal(g, p->x, p->z, 1.0f + 0.8f * crand(g));
 		int amt = p->cop ? 30 + (int)(crand(g) * 60) : 5 + (int)(crand(g) * 55);
 		drop_cash(g, p->x + srand_(g) * 0.6f, p->z + srand_(g) * 0.6f, amt);
-		if (byPlayer) add_heat(g, p->cop ? 85.0f : 30.0f);
+		if (byPlayer) add_heat(g, p->cop ? 110.0f : 45.0f);
 	} else if (!p->cop && p->state != PED_DOWN) {
 		p->state = PED_FLEE; p->timer = 5.0f;
 		if (byPlayer) { g->noiseX = g->p.p[0]; g->noiseZ = g->p.p[2]; }
@@ -164,8 +168,14 @@ void fire_bullet(Game *g, int owner, const float from[3], float yaw, float pitch
 		for (int i = 0; i < MAX_BULLET; i++) if (!g->bullet[i].on) { b = &g->bullet[i]; break; }
 		if (!b) return;
 		float yy = yaw + srand_(g) * w->spread, pp = pitch + srand_(g) * w->spread * 0.4f;
-		b->on = true; b->owner = owner; b->dmg = (int)(w->dmg * dmgScale);
+		b->on = true; b->owner = owner; b->dmg = (int)(w->dmg * dmgScale); b->rocket = w->rocket; b->skip = 0;
 		memcpy(b->p, from, sizeof b->p);
+		for (int q = 0; q < MAX_CAR && !b->skip; q++) {                      // fired from inside a car's outline: that car does not stop it
+			const Car *c = &g->car[q];
+			if (!c->on || c->kind == CAR_HELI) continue;
+			float cx[3], cz[3]; car_circles(c, cx, cz);
+			for (int k = 0; k < 3; k++) if ((cx[k] - from[0]) * (cx[k] - from[0]) + (cz[k] - from[2]) * (cz[k] - from[2]) < car_radius(c->kind) * car_radius(c->kind)) { b->skip = q + 1; break; }
+		}
 		b->v[0] = sinf(yy) * cosf(pp) * w->speed; b->v[1] = sinf(pp) * w->speed; b->v[2] = -cosf(yy) * cosf(pp) * w->speed;
 		b->life = w->range / w->speed;
 	}
@@ -194,6 +204,7 @@ static void bullets_update(Game *g, float dt)
 		float dir[3] = { b->v[0] / sp, b->v[1] / sp, b->v[2] / sp }, n[3];
 		float tb = city_ray(&g->w, a, dir, seg, n);
 		if (tb >= 0 && tb / seg < best) { best = tb / seg; what = 1; }
+		{ float e3[3] = { nx, ny, nz }, tp = city_prop_seg(&g->w, a, e3); if (tp >= 0 && tp < best) { best = tp; what = 1; } }          // street furniture stops a low shot
 		if (ny < 0.05f) { best = fminf(best, a[1] > 0 ? a[1] / (a[1] - ny) : 0); what = 1; }
 		for (int k = 0; k < MAX_PED; k++) {
 			const Ped *p = &g->ped[k];
@@ -201,11 +212,13 @@ static void bullets_update(Game *g, float dt)
 			if (b->owner == 1) continue;                                     // officers aim at Otto only
 			float t, d2 = seg_dist2(a[0], a[2], nx, nz, p->x, p->z, &t);
 			float y = a[1] + (ny - a[1]) * t;
-			if (d2 < 0.45f * 0.45f && y > 0.0f && y < 1.95f && t < best) { best = t; what = 2; who = k; }
+			float rad = b->rocket ? 1.5f : 0.45f;                                // a rocket goes off when it passes close
+				if (d2 < rad * rad && y > 0.0f && y < 1.95f && t < best) { best = t; what = 2; who = k; }
 		}
 		for (int k = 0; k < MAX_CAR; k++) {
 			const Car *c = &g->car[k];
-			if (!c->on || (b->owner == 0 && g->p.car == k) || (b->owner == 1 && g->p.car != k)) continue;
+			if (!c->on || b->skip == k + 1 || (b->owner == 0 && g->p.car == k)) continue;
+if (b->owner == 1 && g->p.car != k && (c->kind == CAR_POLICE || c->kind == CAR_SWAT || c->kind == CAR_HELI)) continue;     // the police do not shoot their own cars; every other car is cover
 			float cx[3], cz[3]; car_circles(c, cx, cz);
 			float cr = car_radius(c->kind) * 0.95f, top = c->kind == CAR_HELI ? 3.0f : c->kind == CAR_BIKE ? 1.5f : 1.7f;
 			for (int q = 0; q < 3; q++) {
@@ -215,23 +228,25 @@ static void bullets_update(Game *g, float dt)
 		}
 		if (b->owner == 1 && g->p.car < 0 && g->p.ps == PS_ALIVE) {
 			float t, d2 = seg_dist2(a[0], a[2], nx, nz, g->p.p[0], g->p.p[2], &t), y = a[1] + (ny - a[1]) * t;
-			if (d2 < 0.5f * 0.5f && y > 0.0f && y < 1.9f && t < best) { best = t; what = 4; }
+			if (d2 < 0.5f * 0.5f && y > 0.0f && y < (g->p.crouch > 0.6f ? 1.05f : 1.9f) && t < best) { best = t; what = 4; }      // crouched behind cover, only his head and back are low
 		}
 		if (what) {
-			float hx = a[0] + (nx - a[0]) * best, hy = a[1] + (ny - a[1]) * best, hz = a[2] + (nz - a[2]) * best;
-			if (what == 1) spawn_particles(g, PT_SPARK, hx, hy, hz, 3, 3.0f, 0.07f, 0.25f);
+		float hx = a[0] + (nx - a[0]) * best, hy = a[1] + (ny - a[1]) * best, hz = a[2] + (nz - a[2]) * best;
+		if (b->rocket) { spawn_blast(g, hx, fmaxf(hy, 0.8f), hz, b->owner == 0); b->on = false; continue; }
+if (what == 1) spawn_particles(g, PT_SPARK, hx, hy, hz, 3, 3.0f, 0.07f, 0.25f);
 			else if (what == 2) { damage_ped(g, who, (float)b->dmg, b->owner == 0); Ped *p = &g->ped[who]; p->vx += b->v[0] * 0.02f; p->vz += b->v[2] * 0.02f; }
 			else if (what == 3) {
 				spawn_particles(g, PT_SPARK, hx, hy, hz, 3, 3.0f, 0.07f, 0.25f);
 				if (b->owner == 0) g->hitT = 0.15f;
 				damage_car(g, who, (float)b->dmg * (b->owner == 0 ? 0.2f : 0.09f), b->owner == 0);       // a car takes a lot of bullets: about 12 pistol shots, 25 SMG rounds, 5 shotgun blasts
-				if (b->owner == 1) damage_player(g, (float)b->dmg * 0.25f);
-			} else if (what == 4) damage_player(g, (float)b->dmg);
+				if (b->owner == 1 && who == g->p.car) damage_player(g, (float)b->dmg * 0.25f);
+				} else if (what == 4) damage_player(g, (float)b->dmg);
 			b->on = false;
 			continue;
 		}
 		b->p[0] = nx; b->p[1] = ny; b->p[2] = nz;
-		if (b->life <= 0) b->on = false;
+		if (b->rocket) spawn_particles(g, PT_SMOKE, a[0], a[1], a[2], 1, 0.25f, 0.45f, 0.7f);
+		if (b->life <= 0) { if (b->rocket) spawn_blast(g, nx, fmaxf(ny, 0.8f), nz, b->owner == 0); b->on = false; }
 	}
 }
 
@@ -270,8 +285,11 @@ static void pickups_update(Game *g, float dt)
 		case PK_HEALTH: if (p->hp >= PLAYER_MAX_HP) continue; p->hp = fminf(PLAYER_MAX_HP, p->hp + 75.0f); toast(g, "Health"); break;
 		case PK_ARMOR: if (p->armor >= 100.0f) continue; p->armor = fminf(100.0f, p->armor + 50.0f); toast(g, "Body armor"); break;
 		default: {
-			int w = k->type - PK_PISTOL + W_PISTOL, add = w == W_PISTOL ? 24 : w == W_SMG ? 60 : 16;
-			p->has[w] = true; p->ammo[w] += add; snprintf(buf, sizeof buf, "%s +%d", WPN[w].name, add); toast(g, buf);
+			static const int AMMO[W_COUNT] = { 0, 24, 60, 16, 0, 40, 10, 4 };
+			int w = k->type - PK_PISTOL + W_PISTOL, add = AMMO[w];
+			p->has[w] = true; p->ammo[w] += add;
+			if (add) snprintf(buf, sizeof buf, "%s +%d", WPN[w].name, add); else snprintf(buf, sizeof buf, "%s", WPN[w].name);
+			toast(g, buf);
 			if (p->weapon == W_FISTS) p->weapon = w;
 		} }
 		k->on = false;
@@ -311,28 +329,50 @@ static void next_weapon(Player *p, int dir)
 {
 	for (int k = 1; k <= W_COUNT; k++) {
 		int w = ((p->weapon + dir * k) % W_COUNT + W_COUNT) % W_COUNT;
-		if (p->has[w] && (w == W_FISTS || p->ammo[w] > 0)) { p->weapon = w; return; }
+		if (weapon_usable(p, w)) { p->weapon = w; return; }
 	}
 }
 
-// pick the thing to shoot at: the best living person within range, preferring the ones closest to the heading `ref` (Otto's, or the camera's)
-static int find_target(const Game *g, float range, float ref, float *yawOut)
+// a parked or wrecked car between two points stops a shot at chest height (unless one of the points is inside its outline)
+static int probeSkip = -1;                                                  // while choosing where to lean out: the cover car does not block a shot over its roof
+static bool car_blocks(const Game *g, float ax, float az, float bx, float bz)
 {
-	const Player *p = &g->p;
+	int skip = probeSkip >= 0 ? probeSkip : g->p.cover == 2 && g->p.peek == 2 ? g->p.coverCar : -1;       // leaning over the roof of the car he hides behind
+	for (int i = 0; i < MAX_CAR; i++) {
+		const Car *c = &g->car[i];
+		if (!c->on || c->kind >= CAR_BIKE || i == skip) continue;
+		float cx[3], cz[3]; car_circles(c, cx, cz);
+		float r = car_radius(c->kind), inside2 = r * r, hit2 = (r * 0.85f) * (r * 0.85f);
+		bool in = false;
+		for (int k = 0; k < 3; k++) if ((cx[k] - ax) * (cx[k] - ax) + (cz[k] - az) * (cz[k] - az) < inside2 || (cx[k] - bx) * (cx[k] - bx) + (cz[k] - bz) * (cz[k] - bz) < inside2) in = true;
+		if (in) continue;
+		for (int k = 0; k < 3; k++) { float t; if (seg_dist2(ax, az, bx, bz, cx[k], cz[k], &t) < hit2) return true; }
+	}
+	return false;
+}
+static bool shot_clear(const Game *g, float ax, float az, float bx, float bz)
+{
+	return los_clear(g, ax, 1.3f, az, bx, 1.2f, bz) && !car_blocks(g, ax, az, bx, bz);
+}
+
+// pick the thing to shoot at: the best living person within range, preferring the ones closest to the heading `ref` (Otto's, or the camera's)
+static int find_target_at(const Game *g, float ox, float oz, float range, float ref, float cone, float *yawOut)
+{
 	int best = -1; float bs = 1e9f;
 	for (int i = 0; i < MAX_PED; i++) {
 		const Ped *q = &g->ped[i];
 		if (!q->on || q->dead) continue;
-		float dx = q->x - p->p[0], dz = q->z - p->p[2], d = sqrtf(dx * dx + dz * dz);
+		float dx = q->x - ox, dz = q->z - oz, d = sqrtf(dx * dx + dz * dz);
 		if (d > range || d < 0.3f) continue;
 		float want = atan2f(dx, -dz), diff = fabsf(wrapang(want - ref));
-		if (diff > DEG(62) && d > 5.0f) continue;
-		if (!los_clear(g, p->p[0], 1.3f, p->p[2], q->x, 1.2f, q->z)) continue;
+		if (diff > cone && d > 5.0f) continue;
+		if (!shot_clear(g, ox, oz, q->x, q->z)) continue;
 		float score = d + diff * 6.0f + (q->state == PED_DOWN ? 8.0f : 0) - (q->cop && g->stars > 0 ? 4.0f : 0);
 		if (score < bs) { bs = score; best = i; *yawOut = want; }
 	}
 	return best;
 }
+static int find_target(const Game *g, float range, float ref, float *yawOut) { return find_target_at(g, g->p.p[0], g->p.p[2], range, ref, DEG(62), yawOut); }
 
 // Lock-on (hold L): the nearest person in front of the camera; flick the circle pad toward another person to switch to them.
 static int switch_target(const Game *g, int cur, float stx, float sty, float range)
@@ -351,12 +391,14 @@ static int switch_target(const Game *g, int cur, float stx, float sty, float ran
 		if (l < 0.5f) continue;
 		float align = (vr * stx + vf * sty) / l;
 		if (align < 0.45f) continue;
-		if (!los_clear(g, p->p[0], 1.3f, p->p[2], q->x, 1.2f, q->z)) continue;
+		if (!shot_clear(g, p->p[0], p->p[2], q->x, q->z)) continue;
 		float score = align * 10.0f - l * 0.2f;
 		if (score > bs) { bs = score; best = i; }
 	}
 	return best;
 }
+
+#define COVER_CONE DEG(100)                                                  // from a cover, targets are taken within this angle of the way along the cover toward the end he leans out of
 
 static void lock_update(Game *g, const Input *in, float dt, float range)
 {
@@ -365,18 +407,19 @@ static void lock_update(Game *g, const Input *in, float dt, float range)
 	if (p->lock >= 0) {
 		const Ped *q = &g->ped[p->lock];
 		if (!q->on || q->dead || hypotf(q->x - p->p[0], q->z - p->p[2]) > range + 8.0f) p->lock = -1;
-		else if (!los_clear(g, p->p[0], 1.3f, p->p[2], q->x, 1.2f, q->z)) { p->lockLosT += dt; if (p->lockLosT > 1.2f) p->lock = -1; }
+		else if (!shot_clear(g, p->p[0], p->p[2], q->x, q->z)) { p->lockLosT += dt; if (p->lockLosT > 1.2f) p->lock = -1; }
 		else p->lockLosT = 0;
 	}
 	if (p->lock < 0 && p->lockCd <= 0) {
 		float y;
-		p->lock = find_target(g, range, g->cam.yaw, &y); p->lockLosT = 0;
+		p->lock = p->cover ? find_target_at(g, p->p[0], p->p[2], range, p->coverRef, COVER_CONE, &y) : find_target(g, range, g->cam.yaw, &y); p->lockLosT = 0;
 		if (p->lock < 0) p->lockCd = 0.12f;
 	}
 	float mag = hypotf(in->lx, in->ly);
 	if (p->lock >= 0 && mag > 0.75f && p->lockMag <= 0.75f && p->lockCd <= 0) {
 		int n = switch_target(g, p->lock, in->lx / mag, in->ly / mag, range);
-		if (n >= 0) { p->lock = n; p->lockCd = 0.25f; p->lockLosT = 0; }
+		if (n >= 0 && p->cover) { const Ped *q = &g->ped[n]; if (fabsf(wrapang(atan2f(q->x - p->p[0], -(q->z - p->p[2])) - p->coverRef)) > COVER_CONE) n = -1; }
+			if (n >= 0) { p->lock = n; p->lockCd = 0.25f; p->lockLosT = 0; }
 	}
 	p->lockMag = mag;
 }
@@ -391,16 +434,56 @@ static void startle(Game *g, float x, float z, float radius)
 	}
 }
 
+static float auto_range(int weapon, const WeaponDef *w)
+{
+	if (weapon == W_BAT) return 3.0f;
+	if (weapon_melee(weapon)) return 2.4f;
+	return fminf(w->range * 0.6f, weapon == W_SNIPER ? 80.0f : 32.0f);
+}
+
+// In cover: when L or R is held, pick the end of the cover to lean out of: the side where somebody can be seen from, else the side the camera looks to
+static void choose_peek(Game *g, float range)
+{
+	Player *p = &g->p;
+	float fx = sinf(g->cam.yaw), fz = -cosf(g->cam.yaw), best = -1;
+	for (int i = 0; i < 2; i++) {
+		int s = i ? 1 : -1;
+		float off[2];
+		if (!cover_peek_offset(g, s, off)) continue;
+		float tx = p->coverNz * s, tz = -p->coverNx * s;
+		float ref = atan2f(tx, -tz), y;                                  // the heading along the cover toward that end: what is ahead of him when he leans out, not what is behind
+		
+		float score = (fx * tx + fz * tz > 0 ? 0.5f : 0.0f) + (find_target_at(g, p->coverX + off[0], p->coverZ + off[1], range, ref, COVER_CONE, &y) >= 0 ? 2.0f : 0.0f);
+		if (score > best) { best = score; p->peek = s; p->peekDx = off[0]; p->peekDz = off[1]; p->coverRef = ref; }
+	}
+	if (p->cover == 2) {                                                      // behind a car he can also stand up and aim over the roof, from where he is
+		float ref = atan2f(-p->coverNx, p->coverNz), y;
+		probeSkip = p->coverCar;
+		bool seen = find_target_at(g, p->coverX, p->coverZ, range, ref, COVER_CONE, &y) >= 0;
+		probeSkip = -1;
+		float score = seen ? 1.8f : 0.3f;
+		if (score > best) { p->peek = 2; p->peekDx = p->peekDz = 0; p->coverRef = ref; }
+	}
+}
+
 static void player_weapons(Game *g, const Input *in, float dt)
 {
 	Player *p = &g->p;
 	if (in->x_p) next_weapon(p, 1);
-	if (in->weap > 0 && in->weap <= W_COUNT && p->has[in->weap - 1] && (in->weap - 1 == W_FISTS || p->ammo[in->weap - 1] > 0)) p->weapon = in->weap - 1;
-	if (p->weapon != W_FISTS && p->ammo[p->weapon] <= 0) next_weapon(p, 1);
+	if (in->weap > 0 && in->weap <= W_COUNT && weapon_usable(p, in->weap - 1)) p->weapon = in->weap - 1;
+	if (!weapon_usable(p, p->weapon)) next_weapon(p, 1);
 	p->fireCd -= dt; p->flashT -= dt; p->punchT -= dt; p->hurtT -= dt;
-	bool onFoot = p->car < 0, shoot = in->gas && onFoot, aimHeld = in->aim && onFoot, gun = p->weapon != W_FISTS;
+	bool onFoot = p->car < 0, gun = !weapon_melee(p->weapon);
 	const WeaponDef *w = &WPN[p->weapon];
-	if (aimHeld) lock_update(g, in, dt, gun ? fminf(w->range * 0.8f, 40.0f) : 6.0f);
+	float lockRange = gun ? fminf(w->range * 0.8f, p->weapon == W_SNIPER ? 70.0f : 40.0f) : p->weapon == W_BAT ? 7.0f : 6.0f;
+	bool inCover = onFoot && p->cover;
+	if (inCover) {
+		if (!(in->aim || in->gas)) p->peek = 0;
+		else if (p->peek == 0 && p->peekT < 0.3f) choose_peek(g, lockRange);
+	}
+	bool covered = inCover && p->peekT < 0.6f;                                 // still behind the cover: not aiming yet
+	bool shoot = in->gas && onFoot && !covered, aimHeld = (in->aim || (inCover && in->gas)) && onFoot && !covered;
+	if (aimHeld) lock_update(g, in, dt, lockRange);
 	else { p->lock = -1; p->lockMag = 0; p->lockCd = 0; }
 	p->target = -1;
 	float aimTarget = 0;
@@ -409,8 +492,8 @@ static void player_weapons(Game *g, const Input *in, float dt)
 		int t = -1;
 		if (aimHeld) {                                                            // L: face the locked person, or where the camera looks
 			t = p->lock;
-			ty = t >= 0 ? atan2f(g->ped[t].x - p->p[0], -(g->ped[t].z - p->p[2])) : g->cam.yaw;
-		} else t = find_target(g, gun ? fminf(w->range * 0.6f, 32.0f) : 2.4f, p->face, &ty);       // R alone: auto-aim
+			ty = t >= 0 ? atan2f(g->ped[t].x - p->p[0], -(g->ped[t].z - p->p[2])) : inCover ? p->coverRef + clampf(wrapang(g->cam.yaw - p->coverRef), -COVER_CONE, COVER_CONE) : g->cam.yaw;
+		} else t = find_target(g, auto_range(p->weapon, w), p->face, &ty);       // R alone: auto-aim
 		p->target = t;
 		p->aimYaw = t >= 0 || aimHeld ? ty : p->face;
 		p->face = wrapang(p->face + wrapang(p->aimYaw - p->face) * fminf(1.0f, dt * 14.0f));
@@ -419,6 +502,7 @@ static void player_weapons(Game *g, const Input *in, float dt)
 			if (p->aimT > 0.55f && p->fireCd <= 0 && p->ammo[p->weapon] > 0) {
 				float m[3]; player_muzzle(g, m);
 				float pitch = 0;
+				if (g->fpsAim) { m[0] = g->cam.eye[0] + sinf(p->face) * 0.5f; m[1] = g->cam.eye[1] - 0.05f; m[2] = g->cam.eye[2] - cosf(p->face) * 0.5f; pitch = g->cam.pitch; }      // first person: from the crosshair
 				if (t >= 0) { const Ped *q = &g->ped[t]; float d = hypotf(q->x - m[0], q->z - m[2]); pitch = atan2f(1.15f - m[1], fmaxf(d, 1.0f)); }
 				fire_bullet(g, 0, m, p->face, pitch, w, 1.0f);
 				if (!TEST_LOADOUT) p->ammo[p->weapon]--;
@@ -427,18 +511,18 @@ static void player_weapons(Game *g, const Input *in, float dt)
 				startle(g, p->p[0], p->p[2], 42.0f);
 				if (p->ammo[p->weapon] == 0) toast(g, "Out of ammo");
 			}
-		} else if (shoot && p->fireCd <= 0) {                                       // a punch: it lands when the fist is fully out
-			p->punchT = 0.34f; p->punchSide ^= 1; p->fireCd = 1.0f / w->rate; p->punchHit = true;
+		} else if (shoot && p->fireCd <= 0) {                                       // a punch or a swing: it lands when the fist is fully out
+			p->punchT = melee_time(p->weapon); p->punchSide ^= 1; p->fireCd = 1.0f / w->rate; p->punchHit = true;
 		}
 	}
-	if (p->punchHit && p->punchT <= 0.34f * 0.58f) {
+	if (p->punchHit && p->punchT <= melee_time(p->weapon) * (p->weapon == W_BAT ? 0.5f : 0.58f)) {
 		p->punchHit = false;
-		float ty = p->face;
-		int t = find_target(g, 2.4f, p->face, &ty);
+		float ty = p->face, reach = p->weapon == W_BAT ? 2.7f : 2.1f;
+		int t = find_target(g, reach + 0.3f, p->face, &ty);
 		if (t >= 0) {
 			p->target = t; p->aimYaw = ty;
 			Ped *q = &g->ped[t];
-			if (hypotf(q->x - p->p[0], q->z - p->p[2]) < 2.1f) { damage_ped(g, t, WPN[W_FISTS].dmg, 1); q->vx += sinf(p->face) * 2.5f; q->vz += -cosf(p->face) * 2.5f; if (!q->dead && q->state != PED_DOWN && !q->cop) { q->state = PED_DOWN; q->timer = 2.0f; } }
+			if (hypotf(q->x - p->p[0], q->z - p->p[2]) < reach) { damage_ped(g, t, WPN[weapon_melee(p->weapon) ? p->weapon : W_FISTS].dmg, 1); q->vx += sinf(p->face) * 2.5f; q->vz += -cosf(p->face) * 2.5f; if (!q->dead && q->state != PED_DOWN && !q->cop) { q->state = PED_DOWN; q->timer = 2.0f; } }
 		}
 	}
 	if (p->punchT > 0) aimTarget = 1;
@@ -446,7 +530,7 @@ static void player_weapons(Game *g, const Input *in, float dt)
 	p->aimT += (aimTarget - p->aimT) * fminf(1.0f, dt * (aimTarget > p->aimT ? 12.0f : 6.0f));
 	// the shooting itself is a crime if anybody is around to see it
 	if (g->time - p->lastShotT < 0.25f) {
-		for (int i = 0; i < MAX_PED; i++) { const Ped *q = &g->ped[i]; if (q->on && !q->dead && hypotf(q->x - p->p[0], q->z - p->p[2]) < 45.0f) { add_heat(g, 9.0f * dt); break; } }
+		for (int i = 0; i < MAX_PED; i++) { const Ped *q = &g->ped[i]; if (q->on && !q->dead && hypotf(q->x - p->p[0], q->z - p->p[2]) < 45.0f) { add_heat(g, 14.0f * dt); break; } }
 	}
 	if (p->hurtT <= -3.5f && p->hp < PLAYER_MAX_HP && p->hp > 0) { p->hp = fminf(PLAYER_MAX_HP, p->hp + 5.0f * dt); }       // recovery after a few quiet seconds
 }
@@ -463,6 +547,7 @@ static void respawn(Game *g, bool arrested)
 	p->cash -= (int)(p->cash * (arrested ? 0.2f : 0.1f));
 	if (arrested && !TEST_LOADOUT) { for (int w = W_PISTOL; w < W_COUNT; w++) { p->has[w] = false; p->ammo[w] = 0; } p->weapon = W_FISTS; }
 	p->hp = PLAYER_MAX_HP; p->armor = 0; p->ps = PS_ALIVE; p->psT = 0; p->arrestT = 0; p->hurtT = 0; p->aimT = 0; p->sprint = false; p->lock = -1;
+	p->cover = 0; p->coverCar = -1; p->peek = 0; p->peekT = 0; p->crouch = 0;
 	p->car = -1; p->v[0] = p->v[2] = 0; p->speed = 0;
 	float rx = arrested ? POLICE_X : HOSPITAL_X, rz = arrested ? POLICE_Z : HOSPITAL_Z;
 	p->p[0] = rx + 8.0f; p->p[2] = rz; p->face = DEG(arrested ? 270 : 90);
@@ -473,13 +558,23 @@ static void respawn(Game *g, bool arrested)
 	g->saveNeeded = true;
 }
 
+void player_respawn(Game *g)
+{
+	Player *p = &g->p;
+	int cash = p->cash;
+	if (p->car >= 0) { g->car[p->car].driven = false; p->car = -1; }
+	p->p[1] = 0; p->v[1] = 0; p->chute = 0; p->airT = 0; g->fpsAim = false; g->wheel = false;
+	respawn(g, false);
+	p->cash = cash;
+}
+
 void combat_init(Game *g)
 {
 	Player *p = &g->p;
 	int cash = p->cash;
 	p->hp = PLAYER_MAX_HP; p->armor = 0; p->ps = PS_ALIVE; p->cash = cash;
 	memset(p->has, 0, sizeof p->has); memset(p->ammo, 0, sizeof p->ammo);
-	p->has[W_FISTS] = true; p->has[W_PISTOL] = true; p->ammo[W_PISTOL] = 36; p->weapon = W_PISTOL; p->target = -1; p->lock = -1;
+	p->has[W_FISTS] = true; p->has[W_PISTOL] = true; p->ammo[W_PISTOL] = 36; p->weapon = W_PISTOL; p->target = -1; p->lock = -1; p->cover = 0; p->coverCar = -1;
 	if (TEST_LOADOUT) give_weapons(p);
 	memset(g->bullet, 0, sizeof g->bullet); memset(g->part, 0, sizeof g->part); memset(g->decal, 0, sizeof g->decal); memset(g->pick, 0, sizeof g->pick); memset(g->blast, 0, sizeof g->blast);
 	g->heat = 0; g->stars = 0; g->timeScale = 1.0f; g->hudT = 0; g->toastT = 0;
@@ -495,6 +590,10 @@ void combat_init(Game *g)
 		{ 5, 1, 2, PK_SMG }, { 2, 6, 3, PK_SMG }, { 6, 5, 1, PK_SMG }, { 3, 2, 0, PK_SMG }, { 7, 3, 2, PK_SMG }, { 4, 7, 3, PK_SMG },
 		{ 0, 3, 3, PK_SHOTGUN }, { 4, 1, 0, PK_SHOTGUN }, { 7, 6, 1, PK_SHOTGUN }, { 2, 5, 2, PK_SHOTGUN }, { 5, 6, 0, PK_SHOTGUN },
 		{ 6, 1, 0, PK_HEALTH }, { 0, 5, 2, PK_HEALTH }, { 4, 2, 3, PK_ARMOR }, { 7, 4, 0, PK_ARMOR },
+		{ 3, 3, 2, PK_BAT }, { 6, 3, 1, PK_BAT }, { 1, 4, 0, PK_BAT }, { 5, 6, 2, PK_BAT },
+		{ 4, 4, 2, PK_RIFLE }, { 2, 1, 3, PK_RIFLE }, { 6, 6, 0, PK_RIFLE }, { 5, 4, 1, PK_RIFLE }, { 0, 2, 1, PK_RIFLE },
+		{ 7, 2, 2, PK_SNIPER }, { 0, 0, 3, PK_SNIPER }, { 3, 5, 1, PK_SNIPER },
+		{ 5, 7, 0, PK_RPG }, { 1, 6, 2, PK_RPG }, { 7, 7, 3, PK_RPG },
 		{ 4, 4, 1, PK_CASH }, { 2, 4, 3, PK_CASH }, { 6, 4, 0, PK_CASH }, { 3, 1, 2, PK_CASH }, { 5, 0, 3, PK_CASH }, { 0, 6, 1, PK_CASH } };
 	for (unsigned i = 0; i < sizeof spots / sizeof spots[0]; i++) {
 		float x, z; traffic_node_xy((((spots[i][1] * NB + spots[i][0]) << 2) | spots[i][2]), &x, &z);
@@ -518,7 +617,7 @@ static void temp_pickups(Game *g, float dt)
 		float d = hypotf(x - g->p.p[0], z - g->p.p[2]);
 		if (d < 30.0f || d > 95.0f) continue;
 		float r = crand(g);
-		int type = r < 0.28f ? PK_PISTOL : r < 0.55f ? PK_SMG : r < 0.78f ? PK_SHOTGUN : r < 0.9f ? PK_HEALTH : PK_ARMOR;
+		int type = r < 0.2f ? PK_PISTOL : r < 0.38f ? PK_SMG : r < 0.52f ? PK_SHOTGUN : r < 0.6f ? PK_BAT : r < 0.72f ? PK_RIFLE : r < 0.79f ? PK_SNIPER : r < 0.84f ? PK_RPG : r < 0.92f ? PK_HEALTH : PK_ARMOR;
 		for (int i = 0; i < MAX_PICKUP; i++) if (!g->pick[i].on && !g->pick[i].fixed) { Pickup *k = &g->pick[i]; k->on = true; k->type = type; k->amount = 0; k->x = x; k->z = z; k->t = 0; k->respawn = 100.0f; k->fixed = false; break; }
 		return;
 	}
