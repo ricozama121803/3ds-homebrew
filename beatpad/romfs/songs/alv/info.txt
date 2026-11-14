@@ -1,8 +1,0 @@
-title=ALV
-artist=
-bpm=89.01
-length_ms=225300
-preview_ms=166022
-notes_easy=314
-notes_normal=547
-notes_hard=669

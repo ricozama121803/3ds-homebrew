@@ -233,6 +233,11 @@ static void update_getsongs(App *a, u32 down, u32 rep)
 		a->lastIp = net_server_ip();
 		rescan(a);
 	}
+	static float lastRefresh;
+	if (net_state() == NET_CONNECTED && !net_busy() && a->time - lastRefresh > 4.0f) {   // songs converting on the PC pop in
+		lastRefresh = a->time;
+		net_refresh();
+	}
 	gs_build(a);
 	if (rep & KEY_DDOWN) { a->menuSel = a->ngs ? (a->menuSel + 1) % a->ngs : 0; a->gsConfirmDelete = -1; }
 	if (rep & KEY_DUP) { a->menuSel = a->ngs ? (a->menuSel + a->ngs - 1) % a->ngs : 0; a->gsConfirmDelete = -1; }

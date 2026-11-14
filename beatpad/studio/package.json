@@ -1,0 +1,28 @@
+{
+  "name": "beatpad-song-studio",
+  "version": "1.0.0",
+  "description": "Guided web app for turning songs into BeatPad charts and sending them to a 3DS",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -p 4310",
+    "build": "next build"
+  },
+  "dependencies": {
+    "@tabler/icons-react": "^3.51.0",
+    "clsx": "^2.1.1",
+    "motion": "^14.14.0",
+    "next": "^16.4.6",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "react-dropzone": "^20.2.0",
+    "tailwind-merge": "^3.7.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.5",
+    "@types/node": "^26.6.6",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "tailwindcss": "^4.3.5",
+    "typescript": "^5.9.3"
+  }
+}

@@ -1,0 +1,44 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+  --color-accent-400: #9d7bff;
+  --color-accent-500: #7c4dff;
+  --color-accent-600: #6a3cf0;
+  /* BeatPad lane colours */
+  --color-lane-1: #3fd96a;
+  --color-lane-2: #f04848;
+  --color-lane-3: #f5d03a;
+  --color-lane-4: #3d8cf5;
+  --color-lane-5: #ff9a2e;
+  --color-lane-6: #c160f0;
+}
+
+/* Used by Aceternity components */
+@utility shadow-input {
+  box-shadow: 0px 2px 3px -1px rgba(0, 0, 0, 0.1), 0px 1px 0px 0px rgba(25, 28, 33, 0.02),
+    0px 0px 0px 1px rgba(25, 28, 33, 0.08);
+}
+
+html { color-scheme: dark; }
+body { background: #0a0a0a; }
+input[type="checkbox"] { accent-color: var(--color-accent-500); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
+
+/* Mascot: a note gem that bobs and blinks */
+@keyframes gem-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
+@keyframes gem-shadow { 0%, 100% { transform: scaleX(1); opacity: 0.6; } 50% { transform: scaleX(0.8); opacity: 0.35; } }
+@keyframes gem-blink { 0%, 90%, 100% { transform: scaleY(1); } 93% { transform: scaleY(0.08); } 96% { transform: scaleY(1); } }
+.gem-body { animation: gem-float 1.4s ease-in-out infinite; }
+.gem-shadow { animation: gem-shadow 1.4s ease-in-out infinite; }
+.gem-eye { animation: gem-blink 4.5s infinite; transform-box: fill-box; transform-origin: center; }
+@media (prefers-reduced-motion: reduce) { .gem-body, .gem-shadow, .gem-eye { animation: none !important; } }
+
+@keyframes rec-pulse { 50% { opacity: 0.25; } }
+.rec-dot { animation: rec-pulse 1s infinite; }

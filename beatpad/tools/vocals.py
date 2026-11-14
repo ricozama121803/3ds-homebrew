@@ -36,8 +36,9 @@ def yin(x, sr, hop, fmin=80.0, fmax=1000.0, W=1024):
             if 1 <= t < tmax:                        # parabolic refinement
                 a_, b_, c_ = cm[k, t - 1], cm[k, t], cm[k, t + 1]
                 den = a_ - 2 * b_ + c_
-                t = t + (0.5 * (a_ - c_) / den if abs(den) > 1e-9 else 0)
-            f0[s + k] = sr / t; ap[s + k] = cm[k, int(round(t))] if int(round(t)) <= tmax else 1
+                shift = 0.5 * (a_ - c_) / den if den > 1e-9 else 0.0     # only a real dip (curving up) refines
+                if abs(shift) <= 1: t = t + shift                         # near-silent frames give wild fits: skip
+            f0[s + k] = sr / t; ap[s + k] = cm[k, min(tmax, max(0, int(round(t))))]
     return f0, ap
 
 

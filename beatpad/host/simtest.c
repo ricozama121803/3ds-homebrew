@@ -1,5 +1,5 @@
-// Logic tests on the PC: loads the real charts and plays them with a perfect bot, a sloppy bot and an idle player.
-//   gcc -O2 -o /tmp/simtest host/simtest.c source/game.c source/song.c -lm && /tmp/simtest
+// Logic tests on the PC: loads real charts and plays them with a perfect bot, a sloppy bot and an idle player.
+// Run host/simtest.sh (tests every song in library/), or: simtest <dir that contains songs/>
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>
@@ -48,10 +48,11 @@ static void run(const Song *s, int diff, Bot bot, Play *p, Chart *c, bool noFail
 	}
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
+	const char *root = argc > 1 ? argv[1] : "romfs";
 	static Song songs[MAX_SONGS];             // zeroed: songs_scan appends after existing entries
-	int n = songs_scan("romfs", songs, MAX_SONGS);
+	int n = songs_scan(root, songs, MAX_SONGS);
 	CHECK(n >= 1, "no songs found");
 	for (int si = 0; si < n; si++) {
 		const Song *s = &songs[si];

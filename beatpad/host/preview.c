@@ -50,9 +50,10 @@ static void simulate(Play *p, float from, float to, int missEvery)
 int main(int argc, char **argv)
 {
 	if (argc > 1) outdir = argv[1];
+	const char *root = argc > 2 ? argv[2] : "romfs";
 	render_init();
 	App *a = &app;
-	a->nsongs = songs_scan("romfs", a->songs, MAX_SONGS);
+	a->nsongs = songs_scan(root, a->songs, MAX_SONGS);
 	if (!a->nsongs) { fprintf(stderr, "no songs\n"); return 1; }
 	a->speed = 1.75f; a->noFail = true; a->audioOk = true; a->time = 3.2f;
 
@@ -79,6 +80,17 @@ int main(int argc, char **argv)
 	play_start(&a->play, &a->songs[0], &a->chart, a->diff, true);
 	simulate(&a->play, -2400, 61360, 0);
 	snap("play_hard");
+	{                                                   // 40 ms after a hit that lands on a beat: beam, ring, beat flash
+		const Chart *hc = &a->chart; int k = 0;
+		const Song *so = &a->songs[0];
+		for (int i = 0; i < hc->n && !k; i++)
+			if (hc->notes[i].t > 61500 && hc->notes[i].len == 0)
+				for (int b = 0; b < so->nbeats; b++) if (abs(so->beats[b] - hc->notes[i].t) < 3) { k = i; break; }
+		Play saved = a->play;
+		simulate(&a->play, 61360, hc->notes[k].t + 40, 0);
+		snap("play_hit");
+		a->play = saved;
+	}
 	simulate(&a->play, 61360, 70350, 7);
 	snap("play_miss");
 

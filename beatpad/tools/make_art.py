@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Draws the HOME Menu icon (48x48) and banner (256x128) and cuts the 3 s banner jingle from a song.
-    python3 tools/make_art.py [song dir]      (default romfs/songs/alv)"""
+"""Draws the HOME Menu icon (48x48) and banner (256x128) and synthesises the 3 s banner jingle.
+    python3 tools/make_art.py"""
 import os, sys, struct
 from PIL import Image, ImageDraw, ImageFont
 
@@ -64,24 +64,67 @@ for i, ch in enumerate(txt):
     x += d.textlength(ch, font=f)
 im.resize((256, 128), Image.LANCZOS).save(os.path.join(assets, "banner.png"))
 
-# banner jingle: 3 s from the song preview, faded, 16-bit stereo 32 kHz
-song = sys.argv[1] if len(sys.argv) > 1 else os.path.join(here, "..", "romfs", "songs", "alv")
-info = dict(l.strip().split("=", 1) for l in open(os.path.join(song, "info.txt")) if "=" in l)
-start = int(info.get("preview_ms", 0)) * 32 * 4
-n = 3 * 32000
-if os.path.exists(os.path.join(song, "audio.bpa")):
-    sys.path.insert(0, here); import bpa
-    raw = bpa.decode(open(os.path.join(song, "audio.bpa"), "rb").read()).tobytes()[start: start + n * 4]
-else:
-    with open(os.path.join(song, "audio.pcm"), "rb") as fpcm:
-        fpcm.seek(start); raw = fpcm.read(n * 4)
-samples = list(struct.unpack("<%dh" % (len(raw) // 2), raw))
-fade = 8000
-for i in range(len(samples) // 2):
-    g = min(1.0, i / 800, (len(samples) // 2 - i) / fade)
-    samples[2 * i] = int(samples[2 * i] * g); samples[2 * i + 1] = int(samples[2 * i + 1] * g)
-data = struct.pack("<%dh" % len(samples), *samples)
+# banner jingle: an original 3 s riff, synthesised (kick / snare / hats under a rising square-wave arpeggio
+# that lands on a held chord), 16-bit stereo 32 kHz
+import numpy as np
+SR, BPM = 32000, 128
+N = 3 * SR
+t = np.arange(N) / SR
+beat = 60 / BPM
+mix = np.zeros((N, 2))
+
+def place(sig, at, pan=0.0, gain=1.0):
+    i = int(at * SR)
+    if i >= N: return
+    sig = sig[: N - i] * gain
+    mix[i: i + len(sig), 0] += sig * (1 - max(0, pan))
+    mix[i: i + len(sig), 1] += sig * (1 + min(0, pan))
+
+def env(n, a=0.004, d=0.18):
+    tt = np.arange(n) / SR
+    return np.minimum(1, tt / a) * np.exp(-tt / d)
+
+def square(f, dur, duty=0.5, d=0.18):
+    n = int(dur * SR); tt = np.arange(n) / SR
+    w = np.where((tt * f) % 1 < duty, 1.0, -1.0) + 0.5 * np.where((tt * f * 2.003) % 1 < 0.5, 1.0, -1.0)
+    k = np.ones(9) / 9                                       # soften the edges a little
+    return np.convolve(w, k, "same") * env(n, d=d) * 0.5
+
+def kick():
+    n = int(0.25 * SR); tt = np.arange(n) / SR
+    f = 50 + 110 * np.exp(-tt * 30)
+    return np.sin(2 * np.pi * np.cumsum(f) / SR) * np.exp(-tt * 14)
+
+rng = np.random.default_rng(3)
+def noise(dur, d, hp=True):
+    n = int(dur * SR); x = rng.uniform(-1, 1, n)
+    if hp: x = np.diff(np.concatenate([[0], x]))
+    return x * env(n, 0.001, d)
+
+midi = lambda m: 440 * 2 ** ((m - 69) / 12)
+# drums: four-on-the-floor kick, snare on 2 and 4, 8th hats, a fill into the last bar's downbeat
+for b in range(6):
+    place(kick(), b * beat, gain=0.9)
+    if b % 2 == 1: place(noise(0.2, 0.07, False) * 0.5 + square(190, 0.2, d=0.05) * 0.3, b * beat, gain=0.55)
+    for h in range(2): place(noise(0.05, 0.012), (b + h / 2) * beat, pan=0.3 if h else -0.3, gain=0.25)
+for k, x in enumerate([5.5, 5.625, 5.75, 5.875]): place(noise(0.1, 0.04, False), x * beat, gain=0.25 + 0.08 * k)
+# lead: rising arpeggio in 16ths, two bars of I - vi - IV - V feel, then a held major chord
+arp = [60, 64, 67, 72, 57, 60, 64, 69, 53, 57, 60, 65, 55, 59, 62, 67, 60, 64, 67, 72, 74, 76, 79, 84]
+for i, m in enumerate(arp):
+    place(square(midi(m + 12), 0.2, duty=0.25, d=0.09), i * beat / 4, pan=0.25 * np.sin(i), gain=0.32)
+end = 6 * beat
+for m, pan in ((60, -0.4), (64, 0.0), (67, 0.4), (72, 0.0)):
+    place(square(midi(m + 12), 3 - end, duty=0.5, d=0.6), end - 0.75 * beat, pan=pan, gain=0.2)
+place(square(midi(36), 1.0, duty=0.5, d=0.35), end - 0.75 * beat, gain=0.45)          # bass hit on the chord
+# bass line under the arpeggio
+for i, m in enumerate([36, 36, 33, 33, 29, 29, 31, 31]):
+    place(square(midi(m), beat / 2, d=0.12), i * beat / 2, gain=0.35)
+# master: fade the tail, normalise to -1 dBFS
+fade = np.minimum(1, (N - np.arange(N)) / (0.35 * SR))
+mix *= fade[:, None]
+mix *= 0.89 / np.abs(mix).max()
+data = (mix * 32767).astype("<i2").tobytes()
 with open(os.path.join(assets, "audio.wav"), "wb") as w:
-    w.write(b"RIFF" + struct.pack("<I", 36 + len(data)) + b"WAVEfmt " + struct.pack("<IHHIIHH", 16, 1, 2, 32000, 128000, 4, 16))
+    w.write(b"RIFF" + struct.pack("<I", 36 + len(data)) + b"WAVEfmt " + struct.pack("<IHHIIHH", 16, 1, 2, SR, SR * 4, 4, 16))
     w.write(b"data" + struct.pack("<I", len(data)) + data)
 print("wrote icon.png, banner.png, audio.wav")

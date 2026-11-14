@@ -106,7 +106,18 @@ static void judge(Play *p, Note *n, int j, int offset)
 		p->score += JUDGE_POINTS[j] * play_multiplier(p);
 		p->hitSum += offset; p->hitN++;
 		p->laneFlash[n->lane] = 1.0f;
-		burst(p, n->lane, j == J_PERFECT ? 14 : 8, j == J_PERFECT ? 260 : 180);
+		burst(p, n->lane, j == J_PERFECT ? 18 : 9, j == J_PERFECT ? 300 : 190);
+		// shockwave ring, lane beam and a highway kick, strongest on Perfects
+		int slot = 0;
+		for (int i = 0; i < MAX_RINGS; i++) {
+			if (p->rings[i].t <= 0 || p->rings[i].t >= 1) { slot = i; break; }
+			if (p->rings[i].t > p->rings[slot].t) slot = i;
+		}
+		p->rings[slot] = (HitRing){ 0.001f, n->lane, j == J_PERFECT };
+		p->beam[n->lane] = j == J_PERFECT ? 1.0f : 0.65f;
+		p->pump = fmaxf(p->pump, j == J_PERFECT ? 1.0f : 0.6f);
+		p->scorePop = 1.0f;
+		if (p->combo % 50 == 0) p->flashT = 1.0f;
 	}
 	p->health += JUDGE_HEALTH[j];
 	if (p->health > 1) p->health = 1;
@@ -116,6 +127,7 @@ static void judge(Play *p, Note *n, int j, int offset)
 	}
 	int m = play_multiplier(p);
 	if (m > p->lastMult) p->multPopT = 0.6f;
+	if (m == 4 && p->lastMult < 4) p->feverPopT = 1.4f;
 	p->lastMult = m;
 }
 
@@ -178,7 +190,14 @@ void play_update(Play *p, float t, uint8_t pressed, uint8_t held, float dt)
 		p->laneFlash[l] -= dt * 4.0f; if (p->laneFlash[l] < 0) p->laneFlash[l] = 0;
 		p->lanePress[l] -= dt * 8.0f; if (p->lanePress[l] < 0) p->lanePress[l] = 0;
 	}
-	p->popT -= dt; p->comboPopT -= dt; p->multPopT -= dt; p->missT -= dt;
+	p->popT -= dt; p->comboPopT -= dt; p->multPopT -= dt; p->missT -= dt; p->feverPopT -= dt;
+	for (int i = 0; i < MAX_RINGS; i++) if (p->rings[i].t > 0 && p->rings[i].t < 1) p->rings[i].t += dt / 0.38f;
+	for (int l = 0; l < NUM_LANES; l++) p->beam[l] = fmaxf(0, p->beam[l] - dt * 5.0f);
+	p->pump = fmaxf(0, p->pump - dt * 7.0f);
+	p->flashT = fmaxf(0, p->flashT - dt * 4.0f);
+	p->scorePop = fmaxf(0, p->scorePop - dt * 6.0f);
+	float ft = play_multiplier(p) == 4 ? 1.0f : 0.0f;          // fever fades in and out
+	p->fever += (ft - p->fever) * fminf(1, dt * (ft > p->fever ? 3.0f : 6.0f));
 	for (int i = 0; i < MAX_SPARKS; i++) {
 		Spark *s = &p->sparks[i];
 		if (s->life <= 0) continue;

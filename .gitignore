@@ -21,3 +21,7 @@ __pycache__/
 beatpad/romfs/songs/*/audio.*
 beatpad/.stems/
 beatpad/library/
+
+# HOME Menu files extracted from a console (Nintendo data): never committed
+homemenu-mod/out/
+homemenu-mod/work/

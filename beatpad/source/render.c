@@ -20,6 +20,11 @@ C2D_TextBuf g_tbuf;
 static float g_par;            // stereo: horizontal shift at the far end for this eye (px)
 static float g_laneW;
 static int   g_nl, g_vis[NUM_LANES];   // visible lane count, lane -> visual column (-1 hidden)
+// excitement: set once per frame in render_top
+static float g_pump;           // highway kick from the last hit (1 -> 0)
+static float g_beat;           // flash on every beat of the song (1 -> 0 over 250 ms)
+static float g_streak;         // 0 below a 10 combo, 1 from 30 up: how hard the beat flashes hit
+static float g_fever;          // x4 multiplier, eased
 
 // copies s, cut to n characters with "..." (the system font is proportional; n is a rough fit)
 static const char *fit(char *out, size_t sz, const char *s, int n)
@@ -50,8 +55,8 @@ static void setup_lanes(uint8_t mask)
 	g_laneW = g_nl <= 4 ? 64.0f : 52.0f;
 }
 static inline float proj_s(float z) { return 1.0f / (1.0f + KZ * z); }
-static inline float proj_y(float s) { return YH + (YS - YH) * s; }
-static inline float proj_x(float off, float s) { return TOP_W / 2 + off * s + g_par * (1.0f - s); }
+static inline float proj_y(float s) { return YH + (YS - YH) * s * (1.0f + 0.012f * g_pump); }       // hits kick the highway at you
+static inline float proj_x(float off, float s) { return TOP_W / 2 + off * s * (1.0f + 0.03f * g_pump) + g_par * (1.0f - s); }
 static inline float col_off(float col) { return (col - (g_nl - 1) * 0.5f) * g_laneW; }   // column centre at the strike line
 static inline float half_w(void) { return g_nl * g_laneW * 0.5f + 6; }
 
@@ -67,7 +72,11 @@ static uint32_t mult_color(int m)
 
 static void draw_background(const App *a, float beatPulse, float downPulse)
 {
-	vgrad(0, 0, TOP_W, SCR_H, rgba(0x120a2e, 255), rgba(0x05030f, 255));
+	static const uint32_t FEVER_BG[3] = { 0x3a0d52, 0x0d2a55, 0x521035 };
+	int fb = a->play.song ? (int)(a->play.t / (60000.0f / a->play.song->bpm)) % 3 : 0;   // changes every beat
+	if (fb < 0) fb = 0;
+	uint32_t top = mixrgb(0x120a2e, FEVER_BG[fb], g_fever * (0.45f + 0.35f * g_beat));
+	vgrad(0, 0, TOP_W, SCR_H, rgba(top, 255), rgba(mixrgb(0x05030f, top, 0.3f * g_fever), 255));
 	// glow at the vanishing point, pulsing on the beat
 	float gy = proj_y(proj_s(1.0f));
 	for (int i = 0; i < 4; i++) {
@@ -75,10 +84,11 @@ static void draw_background(const App *a, float beatPulse, float downPulse)
 		ellipse(TOP_W / 2 + g_par, gy, r * 1.8f, r * 0.55f, rgba(0x6a3cff, (int)(26 + beatPulse * 18) - i * 5), 24);
 	}
 	// stage light beams swinging slowly, flashing on downbeats
-	for (int i = 0; i < 4; i++) {
-		float bx = 40 + i * 107, sw = sinf(a->time * 0.6f + i * 1.7f) * 70;
-		uint32_t c = i & 1 ? 0xff4fd8 : 0x47c8ff;
-		int al = (int)(16 + downPulse * 40);
+	int beams = g_fever > 0.3f ? 8 : 4;
+	for (int i = 0; i < beams; i++) {
+		float bx = beams == 8 ? 20 + i * 51 : 40 + i * 107, sw = sinf(a->time * (0.6f + g_fever) + i * 1.7f) * 70;
+		uint32_t c = beams == 8 ? LANE_RGB[i % NUM_LANES] : i & 1 ? 0xff4fd8 : 0x47c8ff;
+		int al = (int)(16 + downPulse * 40 + g_beat * g_streak * 30 + g_fever * g_beat * 50);
 		C2D_DrawTriangle(bx, -5, rgba(c, al), bx + sw - 40, 250, rgba(c, 0), bx + sw + 40, 250, rgba(c, 0), 0);
 	}
 }
@@ -93,7 +103,8 @@ static void draw_highway(const App *a, const Play *p)
 		float z0 = ZNEAR + (1.0f - ZNEAR) * i / STR, z1 = ZNEAR + (1.0f - ZNEAR) * (i + 1) / STR;
 		float s0 = proj_s(z0), s1 = proj_s(z1);
 		int a0 = (int)(235 * clampf((1.0f - z0) * 3.0f, 0, 1)), a1 = (int)(235 * clampf((1.0f - z1) * 3.0f, 0, 1));
-		uint32_t c0 = rgba(0x161427, a0), c1 = rgba(0x161427, a1);
+		uint32_t body = mixrgb(0x161427, 0x24164a, g_fever * (0.5f + 0.5f * g_beat));
+		uint32_t c0 = rgba(body, a0), c1 = rgba(body, a1);
 		quad4(proj_x(-hw, s1), proj_y(s1), c1, proj_x(hw, s1), proj_y(s1), c1,
 		      proj_x(hw, s0), proj_y(s0), c0, proj_x(-hw, s0), proj_y(s0), c0);
 	}
@@ -114,12 +125,27 @@ static void draw_highway(const App *a, const Play *p)
 		                 proj_x(o, sF), proj_y(sF), rgba(0x5a5a8c, 0), 0);
 	}
 	uint32_t rc = mult_color(m);
-	float glow = (m == 4 ? 0.6f + 0.4f * sinf(a->time * 8) : 0.5f) + (p ? clampf(p->multPopT, 0, 1) : 0);
+	float glow = (m == 4 ? 0.6f + 0.4f * sinf(a->time * 8) : 0.5f) + (p ? clampf(p->multPopT, 0, 1) : 0) + g_beat * g_streak;
 	for (int side = -1; side <= 1; side += 2) {
-		float o = side * hw, w = 3.5f;
-		quad4(proj_x(o - w, sF), proj_y(sF), rgba(rc, 0), proj_x(o + w, sF), proj_y(sF), rgba(rc, 0),
-		      proj_x(o + w, sN), proj_y(sN), rgba(rc, (int)(160 + 95 * glow)), proj_x(o - w, sN), proj_y(sN), rgba(rc, (int)(160 + 95 * glow)));
+		float o = side * hw, w = 3.5f + 2.0f * g_beat * g_streak;
+		const int SEG = 6;                                      // in fever the rails run through the lane colours
+		for (int k = 0; k < SEG; k++) {
+			float z0 = ZNEAR + (1 - ZNEAR) * k / SEG, z1 = ZNEAR + (1 - ZNEAR) * (k + 1) / SEG;
+			float s0 = proj_s(z0), s1 = proj_s(z1);
+			uint32_t c = mixrgb(rc, LANE_RGB[(k + (int)(a->time * 8)) % NUM_LANES], g_fever);
+			int a0 = (int)((160 + 95 * glow) * (1 - (float)k / SEG)), a1 = (int)((160 + 95 * glow) * (1 - (float)(k + 1) / SEG));
+			quad4(proj_x(o - w, s1), proj_y(s1), rgba(c, a1), proj_x(o + w, s1), proj_y(s1), rgba(c, a1),
+			      proj_x(o + w, s0), proj_y(s0), rgba(c, a0), proj_x(o - w, s0), proj_y(s0), rgba(c, a0));
+		}
 	}
+	// fever: sparks streaming down the rails toward you
+	if (g_fever > 0.05f)
+		for (int k = 0; k < 20; k++) {
+			float ph = fmodf(a->time * 0.9f + k * 0.618f, 1.0f), z = 1 - ph * (1 - ZNEAR);
+			float sc = proj_s(z), side = (k & 1) ? 1 : -1;
+			float x = proj_x(side * (hw + 7), sc), y = proj_y(sc), r = 1.2f + 2.2f * sc;
+			rect(x - r, y - r, r * 2, r * 2, rgba(LANE_RGB[k % NUM_LANES], (int)(230 * g_fever * clampf((1 - z) * 3, 0, 1))));
+		}
 	// beat lines
 	const Song *s = a->play.song ? a->play.song : (a->nsongs ? &a->songs[a->sel] : NULL);
 	if (s) for (int i = 0; i < s->nbeats; i++) {
@@ -127,7 +153,7 @@ static void draw_highway(const App *a, const Play *p)
 		if (z < ZNEAR) continue;
 		if (z > 1.0f) break;
 		float sc = proj_s(z), y = proj_y(sc);
-		int al = (int)((s->downbeat[i] ? 150 : 60) * clampf((1.0f - z) * 3.0f, 0, 1));
+		int al = (int)((s->downbeat[i] ? 150 : 60) * (1 + 0.6f * g_streak) * clampf((1.0f - z) * 3.0f, 0, 1));
 		float th = (s->downbeat[i] ? 2.2f : 1.2f) * sc;
 		quad4(proj_x(-hw, sc), y - th, rgba(0x9a8cff, al), proj_x(hw, sc), y - th, rgba(0x9a8cff, al),
 		      proj_x(hw, sc), y + th, rgba(0x9a8cff, al), proj_x(-hw, sc), y + th, rgba(0x9a8cff, al));
@@ -148,11 +174,17 @@ static void draw_targets(const Play *p)
 {
 	float s = proj_s(0), y = proj_y(s);
 	float hw = half_w();
-	quad4(proj_x(-hw, s), y - 2, rgba(0xffffff, 90), proj_x(hw, s), y - 2, rgba(0xffffff, 90),
-	      proj_x(hw, s), y + 2, rgba(0xffffff, 90), proj_x(-hw, s), y + 2, rgba(0xffffff, 90));
+	// the strike line flashes on every beat once you're on a streak
+	float bf = g_beat * g_streak;
+	uint32_t lc = mixrgb(0xffffff, LANE_RGB[(int)(g_now / 250) % NUM_LANES], g_fever * 0.6f);
+	float th = 2 + 2.5f * bf;
+	if (bf > 0.02f) quad4(proj_x(-hw, s), y - th * 3, rgba(lc, 0), proj_x(hw, s), y - th * 3, rgba(lc, 0),
+	                      proj_x(hw, s), y, rgba(lc, (int)(110 * bf)), proj_x(-hw, s), y, rgba(lc, (int)(110 * bf)));
+	quad4(proj_x(-hw, s), y - th, rgba(lc, (int)(90 + 165 * bf)), proj_x(hw, s), y - th, rgba(lc, (int)(90 + 165 * bf)),
+	      proj_x(hw, s), y + th, rgba(lc, (int)(90 + 165 * bf)), proj_x(-hw, s), y + th, rgba(lc, (int)(90 + 165 * bf)));
 	for (int l = 0; l < NUM_LANES; l++) {
 		if (g_vis[l] < 0) continue;
-		float x = proj_x(col_off((float)g_vis[l]), s), rx = g_laneW * 0.40f;
+		float x = proj_x(col_off((float)g_vis[l]), s), rx = g_laneW * 0.40f * (1 + 0.06f * bf);
 		bool held = p && (p->heldMask & (1 << l));
 		float flash = p ? p->laneFlash[l] : 0;
 		if (flash > 0) ellipse(x, y, rx * (1.2f + 0.5f * flash), rx * 0.55f * (1.2f + 0.5f * flash), rgba(LANE_RGB[l], (int)(120 * flash)), 18);
@@ -208,6 +240,32 @@ static void draw_notes(const Play *p)
 	}
 }
 
+// what a good hit leaves behind: a beam of light up the lane and a shockwave ring from the target
+static void draw_hits(const Play *p)
+{
+	float s0 = proj_s(0), y0 = proj_y(s0);
+	for (int l = 0; l < NUM_LANES; l++) {
+		float b = p->beam[l];
+		if (b <= 0 || g_vis[l] < 0) continue;
+		float o = col_off((float)g_vis[l]), w = g_laneW * 0.42f * (0.6f + 0.4f * b);
+		float sF = proj_s(0.75f * b + 0.1f);
+		uint32_t c = mixrgb(LANE_RGB[l], 0xffffff, 0.35f);
+		quad4(proj_x(o - w * 0.3f, sF), proj_y(sF), rgba(c, 0), proj_x(o + w * 0.3f, sF), proj_y(sF), rgba(c, 0),
+		      proj_x(o + w, s0), y0, rgba(c, (int)(170 * b)), proj_x(o - w, s0), y0, rgba(c, (int)(170 * b)));
+		quad4(proj_x(o - w * 0.1f, sF), proj_y(sF), rgba(0xffffff, 0), proj_x(o + w * 0.1f, sF), proj_y(sF), rgba(0xffffff, 0),
+		      proj_x(o + w * 0.3f, s0), y0, rgba(0xffffff, (int)(200 * b)), proj_x(o - w * 0.3f, s0), y0, rgba(0xffffff, (int)(200 * b)));
+	}
+	for (int i = 0; i < MAX_RINGS; i++) {
+		const HitRing *r = &p->rings[i];
+		if (r->t <= 0 || r->t >= 1 || g_vis[r->lane] < 0) continue;
+		float k = r->t, e = 1 - (1 - k) * (1 - k);              // fast out, slow finish
+		float x = proj_x(col_off((float)g_vis[r->lane]), s0), rx = g_laneW * 0.4f * (1 + 1.7f * e);
+		uint32_t c = r->perfect ? mixrgb(LANE_RGB[r->lane], 0xffffff, 0.5f) : LANE_RGB[r->lane];
+		ring(x, y0, rx, rx * 0.45f, 3.5f * (1 - k) + 1, rgba(c, (int)(255 * (1 - k))), 22);
+		if (r->perfect) ring(x, y0, rx * 0.7f, rx * 0.31f, 2, rgba(0xffffff, (int)(200 * (1 - k))), 18);
+	}
+}
+
 static void draw_sparks(const Play *p)
 {
 	float s = proj_s(0), y = proj_y(s);
@@ -235,6 +293,16 @@ static void draw_play_hud(const App *a, const Play *p)
 		float pop = clampf(p->comboPopT, 0, 1);
 		stext(TOP_W / 2, 140, 0.7f + pop * 0.3f, rgba(mixrgb(0xffffff, 0xffd23a, pop), 230), AL_CENTER, buf);
 	}
+	if (p->feverPopT > 0) {
+		float k = clampf(p->feverPopT / 1.4f, 0, 1), sc = 1.3f + 0.6f * fmaxf(0, k - 0.8f) * 5;
+		const char *F = "FEVER!";
+		for (int i = 0; F[i]; i++) {                              // each letter in a lane colour, bouncing
+			char c[2] = { F[i], 0 };
+			float x = TOP_W / 2 - 70 + i * 28, y = 40 + sinf(a->time * 14 + i) * 3;
+			stext(x, y, sc, rgba(mixrgb(LANE_RGB[(i + (int)(a->time * 10)) % NUM_LANES], 0xffffff, 0.2f), (int)(255 * clampf(k * 3, 0, 1))), AL_CENTER, c);
+		}
+	} else if (p->fever > 0.5f)
+		stext(36, 172, 0.42f, rgba(mixrgb(0xd070ff, 0xffffff, g_beat), 255), AL_CENTER, "FEVER");
 	if (p->comboPopT > 0) {
 		snprintf(buf, sizeof buf, "%d NOTE STREAK!", p->combo - p->combo % 50);
 		stext(TOP_W / 2, 64, 0.75f, rgba(0xffd23a, (int)(255 * clampf(p->comboPopT * 2, 0, 1))), AL_CENTER, buf);
@@ -323,6 +391,17 @@ void render_top(const App *a, float eye, float slider)
 			if (d < 400) { beatPulse = fmaxf(beatPulse, 1 - d / 400); if (s->downbeat[i]) downPulse = 1 - d / 400; }
 		}
 	}
+	float bp = 0;                                               // sharper beat flash (250 ms)
+	if (s) for (int i = 0; i < s->nbeats; i++) {
+		float d = g_now - s->beats[i];
+		if (d < 0) break;
+		if (d < 250) bp = (1 - d / 250) * (1 - d / 250);
+	}
+	bool live = showPlay && s;
+	g_beat = live ? bp : 0;
+	g_streak = live ? clampf((p->combo - 10) / 20.0f, 0, 1) : 0;
+	g_fever = live ? p->fever : 0;
+	g_pump = live ? p->pump : 0;
 
 	draw_background(a, beatPulse, downPulse);
 	if (a->screen == SCR_NOSONGS) {
@@ -365,9 +444,12 @@ void render_top(const App *a, float eye, float slider)
 	}
 	draw_highway(a, showPlay ? p : NULL);
 	draw_targets(showPlay ? p : NULL);
-	if (showPlay && p->chart.n) { draw_notes(p); draw_sparks(p); }
+	if (showPlay && p->chart.n) { draw_notes(p); draw_hits(p); draw_sparks(p); }
 
-	if (a->screen == SCR_PLAY) draw_play_hud(a, p);
+	if (a->screen == SCR_PLAY) {
+		draw_play_hud(a, p);
+		if (p->flashT > 0) rect(0, 0, TOP_W, SCR_H, rgba(0xffffff, (int)(140 * p->flashT)));
+	}
 	else if (a->screen == SCR_PAUSE) {
 		draw_play_hud(a, p);
 		dim(170);
@@ -563,7 +645,7 @@ void render_bottom(const App *a)
 	text(304, 30, 0.42f, rgba(0xb0a8d8, 255), AL_RIGHT, "%s / %s", tm, tl);
 
 	snprintf(buf, sizeof buf, "%d", (int)a->displayScore);
-	text(BOT_W / 2, 58, 1.2f, rgba(0xffffff, 255), AL_CENTER, "%s", buf);
+	text(BOT_W / 2, 58 - 4 * p->scorePop, 1.2f + 0.14f * p->scorePop, rgba(mixrgb(0xffffff, mult_color(play_multiplier(p)), p->scorePop * 0.6f), 255), AL_CENTER, "%s", buf);
 	int m = play_multiplier(p);
 	if (a->screen == SCR_RESULTS) {
 		const char *g = play_grade(p);

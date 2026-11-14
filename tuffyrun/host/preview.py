@@ -16,7 +16,8 @@ if len(sys.argv) > 2 and sys.argv[2] == "--raw":
     sys.exit(0)
 
 FONT = None
-for cand in ["/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"]:
+for cand in ["/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+             "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans-Bold.ttf", "/usr/share/fonts/google-noto/NotoSans-Bold.ttf"]:   # Debian, Fedora
     if os.path.exists(cand):
         FONT = cand; break
 

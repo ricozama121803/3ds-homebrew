@@ -6,7 +6,8 @@
 #define NUM_LANES   6
 #define MAX_SONGS   64
 #define NUM_DIFFS   3
-#define MAX_SPARKS  96
+#define MAX_SPARKS  128
+#define MAX_RINGS   12
 
 // lanes, left to right: D-pad Left, D-pad Up, D-pad Right | Y, X, A
 enum { LANE_DLEFT, LANE_DUP, LANE_DRIGHT, LANE_Y, LANE_X, LANE_A };
@@ -48,6 +49,7 @@ typedef struct {
 } Song;
 
 typedef struct { float x, y, vx, vy, life, max; uint32_t color; uint8_t lane; } Spark;   // x, y: px from the lane's target
+typedef struct { float t; uint8_t lane, perfect; } HitRing;                             // t: 0 -> 1 as it expands
 
 typedef struct {
 	const Song *song;
@@ -67,6 +69,13 @@ typedef struct {
 	int lastMult;
 	int missEvents;         // incremented per miss (main plays the miss sound)
 	Spark sparks[MAX_SPARKS];
+	HitRing rings[MAX_RINGS];
+	float beam[NUM_LANES];  // light shooting up the lane after a hit (1 -> 0)
+	float pump;             // highway kick on each hit (1 -> 0)
+	float fever;            // eases to 1 while the multiplier is x4
+	float feverPopT;        // "FEVER!" banner when it starts
+	float flashT;           // white flash on streak milestones
+	float scorePop;         // bottom-screen score bump
 	unsigned rng;
 } Play;
 

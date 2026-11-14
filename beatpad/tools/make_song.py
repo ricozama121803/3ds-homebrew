@@ -135,6 +135,62 @@ def fit_constant_grid(env, low, fps, bpm, t0, t1):
     return P, ph
 
 
+def align_to(mix, stem, sr=SR):
+    """Demucs keeps the MP3 decoder's start-up delay that ffmpeg trims, so its stems run ~23 ms late.
+    Finds the lag by cross-correlating 20 s from the middle of the song and returns the stem shifted into line."""
+    n = len(mix); mid = n // 2; w = 20 * sr; r = sr // 5               # search +-200 ms
+    a = mix[mid: mid + w].astype(np.float64)
+    b = stem[max(0, mid - r): mid + w + r].astype(np.float64)
+    nfft = 1 << int(np.ceil(np.log2(len(a) + len(b))))
+    c = np.fft.irfft(np.fft.rfft(b, nfft) * np.conj(np.fft.rfft(a, nfft)), nfft)[: len(b) - len(a) + 1]
+    lag = int(np.argmax(c)) - (mid - max(0, mid - r))
+    out = stem[lag:] if lag >= 0 else np.concatenate([np.zeros(-lag, stem.dtype), stem])
+    return np.pad(out, (0, max(0, n - len(out))))[:n], lag
+
+
+def fine_onsets(x, sr=SR, hop=64):
+    """Drum/attack onsets with ~3 ms precision: log-band spectral flux at a 64-sample hop, local peaks,
+    parabolic interpolation. Returns (times s, strengths)."""
+    S = stft_mag(x, 1024, hop)
+    fb, _ = band_matrix(S.shape[1], 30, 10000, 40)
+    fb = fb[:, : S.shape[1]]
+    e = flux(S @ fb.T)
+    e = e / (np.percentile(e, 99) + 1e-9)
+    w = 6                                                       # peaks must win +-6 frames (~17 ms)
+    pad = np.pad(e, w, mode="constant")
+    win = np.lib.stride_tricks.sliding_window_view(pad, 2 * w + 1)
+    loc = np.convolve(e, np.ones(int(sr / hop)) / int(sr / hop), "same")       # 1 s average
+    pk = np.where((e == win.max(1)) & (e > 2.0 * loc) & (e > 0.08))[0]
+    pk = pk[(pk > 0) & (pk < len(e) - 1)]
+    a_, b_, c_ = e[pk - 1], e[pk], e[pk + 1]
+    den = a_ - 2 * b_ + c_
+    sh = np.where(den < -1e-9, 0.5 * (a_ - c_) / np.where(den < -1e-9, den, 1), 0)
+    # STFT frame i covers samples [i*hop, i*hop+1024): the attack sits near the frame's centre
+    t = (pk + np.clip(sh, -1, 1)) * hop / sr + 512 / sr
+    return t, e[pk]
+
+
+def refine_grid(P, ph, ot, ow, t0, t1):
+    """Re-fits the beat grid to the onsets: each 8th-note position takes the strongest onset near it, then a
+    weighted line through them gives the tempo and phase (sub-millisecond; a wrong period otherwise drifts by
+    the length of the song). Repeats with a narrowing window. Returns (P, ph, matched 8th indices, residuals)."""
+    for win in (0.22, 0.16, 0.12, 0.10, 0.10):
+        h = P / 2
+        j = np.arange(int(np.floor((t0 - ph) / h)), int((t1 - ph) / h) + 1)
+        pred = ph + j * h
+        lo = np.searchsorted(ot, pred - win * P); hi = np.searchsorted(ot, pred + win * P)
+        J, T, W = [], [], []
+        for k in range(len(j)):
+            if hi[k] > lo[k]:
+                m = lo[k] + int(np.argmax(ow[lo[k]: hi[k]]))
+                J.append(j[k]); T.append(ot[m]); W.append(ow[m] * (2.0 if j[k] % 2 == 0 else 1.0))
+        J, T, W = np.array(J, float), np.array(T), np.array(W)
+        A = np.stack([np.ones_like(J), J * 0.5], 1) * W[:, None]
+        sol = np.linalg.lstsq(A, T * W, rcond=None)[0]
+        ph, P = sol[0], sol[1]
+    return P, ph, J, T - (ph + J * P / 2), W
+
+
 def peak_salience_pitch(spec_frame, freqs):
     """Rough dominant pitch (MIDI float) from a magnitude spectrum, via harmonic summation over 90-1000 Hz."""
     cands = np.geomspace(90, 1000, 240)
@@ -243,14 +299,34 @@ def main():
     bpm = a.bpm or tempo_estimate(smooth(env, 2), fps)
     loud = rms > 0.15 * np.median(rms)
     first, last = np.argmax(loud), len(loud) - 1 - np.argmax(loud[::-1])
+    xi = x
+    if stems:
+        xi, lag = align_to(x, np.frombuffer(decode(os.path.join(stems, "no_vocals.wav"), SR, 1, "f32le"), np.float32))
+        print(f"stems are {lag / SR * 1000:+.1f} ms off the mix: corrected")
     if a.variable_tempo:
         beats = track_beats(smooth(env, 1), fps, bpm)
         beats = beats[(beats > 0)]
     else:
         P, ph = fit_constant_grid(env, low, fps, bpm, first / fps, last / fps)
+        # sharpen it on precise drum onsets (the instrumental stem when we have one)
+        ot, ow = fine_onsets(xi)
+        P, ph, J, res, W = refine_grid(P, ph, ot, ow, first / fps, last / fps)
+        matched_t = ph + J * P / 2 + res                  # the drum hits the grid was fitted to
+        ph = ph % P
         bpm = 60.0 / P
-        beats = np.round(np.arange(ph, len(env) / fps, P) * fps).astype(int)
-        bt_exact = np.arange(ph, len(env) / fps, P)
+        bt_exact = ph + np.arange(0, int(len(env) / fps / P) + 1) * P
+        # small real tempo changes: weighted median residual of the hits within +-8 beats, applied if it matters
+        bt_res = np.zeros(len(bt_exact))
+        for k, tb in enumerate(bt_exact):
+            m = np.abs(matched_t - tb) < 8 * P
+            if m.sum() >= 6:
+                r, w = res[m], W[m]
+                o = np.argsort(r); cw = np.cumsum(w[o])
+                bt_res[k] = r[o][np.searchsorted(cw, cw[-1] / 2)]
+        if np.abs(bt_res).max() > 0.012: bt_exact = bt_exact + bt_res
+        print(f"grid fit: {len(res)} drum hits matched, median residual {np.median(np.abs(res)) * 1000:.1f} ms, "
+              f"tempo drift correction up to {np.abs(bt_res).max() * 1000:.0f} ms")
+        beats = np.round(bt_exact * fps).astype(int)
     keep = (beats >= first - fps * 0.2) & (beats <= last)
     beats = beats[keep]
     bt = bt_exact[keep] if not a.variable_tempo else beats / fps
@@ -264,7 +340,6 @@ def main():
 
     # ---- drum hits (instrumental gaps): on the instrumental stem when we have it ----
     if stems:
-        xi = np.frombuffer(decode(os.path.join(stems, "no_vocals.wav"), SR, 1, "f32le"), np.float32)
         Si = stft_mag(xi); Bi = Si @ fb.T
     else:
         Bi = B
@@ -292,7 +367,7 @@ def main():
     vnotes = []
     if stems:
         import vocals
-        xv = np.frombuffer(decode(os.path.join(stems, "vocals.wav"), SR, 1, "f32le"), np.float32)
+        xv, _ = align_to(x - xi, np.frombuffer(decode(os.path.join(stems, "vocals.wav"), SR, 1, "f32le"), np.float32))
         vnotes = vocals.vocal_notes(xv, SR, HOP)
         print(f"{len(vnotes)} sung notes")
     vt0 = np.array([n["t0"] for n in vnotes]); vt1 = np.array([n["t1"] for n in vnotes])
@@ -303,49 +378,103 @@ def main():
     rng = np.random.default_rng(7)
 
     # ================= highway =================
+    # Candidates are sung syllables (snapped onto the 16th grid when they're within 45 ms of it) and drum hits on
+    # the grid. Strong metrical positions score higher; drums score lower than singing except where nobody sings.
+    # Notes are then chosen two bars at a time, with each section's share set by how loud it is, so density
+    # follows the song's energy instead of bunching up.
+    METRIC = {0: 1.3, 2: 1.1, 1: 0.9, 3: 0.9}
+    beat_idx = np.repeat(np.arange(len(bt) - 1), 4)            # beat number of each grid point
+    is_down = ((beat_idx - phase) % 4 == 0) & (gpos == 0)
+    def nearest(t):                                             # index of the closest grid point
+        j = int(np.clip(np.searchsorted(grid, t), 1, len(grid) - 1))
+        return j - 1 if abs(grid[j - 1] - t) < abs(grid[j] - t) else j
+    kickness = np.array([at(kick, t) for t in grid]); snareness = np.array([at(snare, t) for t in grid])
+    sung = np.zeros(len(grid), bool)
+    for t0, t1 in zip(vt0, vt1): sung |= (grid > t0 - beat_len * 0.6) & (grid < t1 + beat_len * 0.6)
+
+    # sung candidates
+    V = {}                                                      # grid index (or -1 - k for off-grid) -> candidate
+    if len(vnotes):
+        prev_gap = np.concatenate([[9], vt0[1:] - vt1[:-1]])
+        dp = np.abs(np.concatenate([[0], np.diff(vmidi)]))
+        base = (vstr / np.percentile(vstr, 90)) + 0.6 * np.clip((vt1 - vt0) / 0.5, 0, 1.5) \
+               + 0.5 * (prev_gap > 0.2) + 0.25 * np.clip(dp / 3, 0, 1)
+        for k in range(len(vt0)):
+            gi = nearest(vt0[k])
+            if abs(vt0[k] - grid[gi]) <= 0.045:
+                key, t, sc = gi, grid[gi], base[k] * METRIC[gpos[gi]]
+            else:
+                key, t, sc = -1 - k, vt0[k], base[k] * 0.5      # off the grid: usually detection noise
+            c = dict(t=t, s=sc, pitch=vmidi[k], end=vt1[k], vocal=True, drum=None)
+            if key not in V or V[key]["s"] < sc: V[key] = c
+    cands = list(V.values())
+    # drum candidates on the grid
+    for gi in range(len(grid)):
+        if gi in V: continue
+        dscore = max(kickness[gi], snareness[gi]) * METRIC[gpos[gi]] * (1.9 if not sung[gi] else 0.55)
+        cands.append(dict(t=grid[gi], s=dscore, pitch=gpitch[gi], end=grid[gi], vocal=False,
+                          drum="kick" if kickness[gi] >= snareness[gi] else "snare", gpos=gpos[gi], down=bool(is_down[gi])))
+    cands.sort(key=lambda c: c["t"])
+    ct = np.array([c["t"] for c in cands])
+
+    # section loudness -> share of the note budget
+    downs = [bt[i] for i in range(len(bt)) if (i - phase) % 4 == 0]
+    edges = [bt[0]] + downs[1::2] + [bt[-1] + 1e-3]
+    sec_rms = np.array([rms[int(e0 * fps): max(int(e0 * fps) + 1, int(e1 * fps))].mean() for e0, e1 in zip(edges[:-1], edges[1:])])
+    weight = np.clip((sec_rms / np.median(sec_rms[sec_rms > 0.3 * np.median(sec_rms)])) ** 0.8, 0.05, 1.25)
+    weight *= np.array([e1 - e0 for e0, e1 in zip(edges[:-1], edges[1:])])
+
     for name, d in HIGHWAY.items():
         lanes = d["lanes"]; nl = len(lanes)
-        cand_t, cand_s, cand_p, cand_end, cand_vocal = [], [], [], [], []
-        if len(vnotes):
-            # score: loud attacks, longer notes, phrase starts, melody moves
-            prev_gap = np.concatenate([[9], vt0[1:] - vt1[:-1]])
-            dp = np.abs(np.concatenate([[0], np.diff(vmidi)]))
-            sc = (vstr / np.percentile(vstr, 90)) + 0.6 * np.clip((vt1 - vt0) / 0.5, 0, 1.5) \
-                 + 0.5 * (prev_gap > 0.2) + 0.25 * np.clip(dp / 3, 0, 1)
-            cand_t += list(vt0); cand_s += list(sc); cand_p += list(vmidi); cand_end += list(vt1); cand_vocal += [True] * len(vt0)
-            # instrumental fill where nobody sings for over a beat
-            sung = np.zeros(len(grid), bool)
-            for t0, t1 in zip(vt0, vt1): sung |= (grid > t0 - beat_len * 0.6) & (grid < t1 + beat_len * 0.6)
-            fill = np.where(~sung & (gpos % 2 == 0))[0]
-            cand_t += list(grid[fill]); cand_s += list(gstr[fill] * 1.3); cand_p += list(gpitch[fill])
-            cand_end += list(grid[fill]); cand_vocal += [False] * len(fill)
-        else:
-            sub_ok = np.where(gpos % (2 if name != "hard" else 1) == 0)[0]
-            cand_t += list(grid[sub_ok]); cand_s += list(gstr[sub_ok]); cand_p += list(gpitch[sub_ok])
-            cand_end += list(grid[sub_ok]); cand_vocal += [False] * len(sub_ok)
-        cand_t = np.array(cand_t); cand_s = np.array(cand_s); cand_p = np.array(cand_p); cand_end = np.array(cand_end)
-        sel = greedy_pick(cand_t, cand_s, d["gap"], int(d["nps"] * dur))
-        sel = sorted(sel, key=lambda i: cand_t[i])
-        st = cand_t[sel]
-        # tidy: notes within 15 ms of a 32nd grid line sit on it
-        g32 = beat_len / 8
-        st = np.array([bt[0] + round((t - bt[0]) / g32) * g32 if abs(((t - bt[0]) / g32) - round((t - bt[0]) / g32)) * g32 < 0.015 else t for t in st])
-        li = contour_lanes(st, cand_p[sel], nl)
+        budget = d["nps"] * dur
+        quota = budget * weight / weight.sum()
+        taken = []                                              # sorted times
+        chosen = []
+        for (e0, e1), q in zip(zip(edges[:-1], edges[1:]), quota):
+            idx = np.where((ct >= e0) & (ct < e1))[0]
+            got = 0
+            for i in sorted(idx, key=lambda i: -cands[i]["s"]):
+                if got >= round(q) or cands[i]["s"] < 0.25: break
+                if not cands[i]["vocal"] and (name == "easy" and cands[i]["gpos"] % 2) : continue   # easy: drums on 8ths only
+                t = ct[i]
+                j = np.searchsorted(taken, t)
+                if j > 0 and t - taken[j - 1] < d["gap"] - 1e-3: continue
+                if j < len(taken) and taken[j] - t < d["gap"] - 1e-3: continue
+                taken.insert(j, t); chosen.append(i); got += 1
+        chosen.sort(key=lambda i: ct[i])
+
+        # lanes: sung notes follow the melody across all lanes; drum notes put kicks under the left thumb and
+        # snares under the right, stepping across that hand's lanes so beats read as a pattern
+        left, right = [l for l in lanes if l < 3], [l for l in lanes if l >= 3]
+        vsel = [i for i in chosen if cands[i]["vocal"]]
+        vl = dict(zip(vsel, contour_lanes([ct[i] for i in vsel], [cands[i]["pitch"] for i in vsel], nl)))
+        step = {"kick": 0, "snare": 0}
         notes = []
-        for k, i in enumerate(sel):
-            t = st[k]
-            nxt = st[k + 1] if k + 1 < len(sel) else t + 10
+        for k, i in enumerate(chosen):
+            c = cands[i]; t = ct[i]
+            nxt = ct[chosen[k + 1]] if k + 1 < len(chosen) else t + 10
             hold = 0.0
-            if cand_vocal[i] and cand_end[i] - cand_t[i] >= d["hold"]:
-                hold = min(cand_end[i] - t, nxt - t - 0.15)
-                if hold < 0.3: hold = 0.0
-            notes.append([t, lanes[li[k]], hold])
-            if d["chords"] and hold == 0 and at(kick, t) > 0.6 and rng.random() < d["chords"] * 4:
-                notes.append([t, 5 - lanes[li[k]], 0.0])
+            if c["vocal"]:
+                lane = lanes[vl[i]]
+                if c["end"] - t >= d["hold"]:
+                    hold = min(c["end"] - t, nxt - t - 0.15)
+                    if hold < 0.3: hold = 0.0
+            else:
+                hand = left if c["drum"] == "kick" else right
+                if c.get("down"): step[c["drum"]] = 0                  # each bar's pattern restarts on the downbeat
+                lane = hand[[0, len(hand) - 1, len(hand) // 2][step[c["drum"]] % 3] if len(hand) > 2 else step[c["drum"]] % len(hand)]
+                step[c["drum"]] += 1
+            notes.append([t, lane, hold])
+            # chords: a strong kick under a downbeat note doubles it on the other hand
+            gi = nearest(t)
+            if d["chords"] and hold == 0 and is_down[gi] and abs(grid[gi] - t) < 0.002 and kickness[gi] > 0.5 and rng.random() < d["chords"] * 6:
+                other = right if lane < 3 else left
+                notes.append([t, other[len(other) // 2], 0.0])
         notes = write_chart(os.path.join(a.outdir, f"{name}.chart"), notes)
         counts[name] = len(notes)
-        holds = sum(1 for n in notes if n[2] > 0)
-        print(f"highway {name:7s} {len(notes):4d} notes ({len(notes) / dur:.2f}/s), {holds} holds")
+        on_grid = np.mean([np.min(np.abs(grid - n[0])) < 0.003 for n in notes]) * 100
+        print(f"highway {name:7s} {len(notes):4d} notes ({len(notes) / dur:.2f}/s), {sum(1 for n in notes if n[2] > 0)} holds, "
+              f"{sum(cands[i]['vocal'] for i in chosen) * 100 // max(1, len(chosen))}% sung, {on_grid:.0f}% on the 16th grid")
 
     w = int(15 * fps)
     rs = np.convolve(rms, np.ones(w), "valid")

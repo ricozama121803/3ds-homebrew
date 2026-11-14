@@ -1,9 +1,13 @@
 # 3DS homebrew Makefile: builds .elf, .3dsx and .cia.
 # Textures are generated first:  make assets   (needs ../tools/venv with pillow + numpy)
+# `make cia` also works without devkitPro once the .elf exists (it only needs makerom + bannertool)
 ifeq ($(strip $(DEVKITARM)),)
-$(error "DEVKITARM not set. Run: export DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM")
+ifneq ($(MAKECMDGOALS),cia)
+$(error "DEVKITARM not set. Run: source ../env.sh  (or ../dkp-make.sh <project> to build in the devkitARM container)")
 endif
+else
 include $(DEVKITARM)/3ds_rules
+endif
 
 TARGET   := webslinger
 BUILD    := build
@@ -84,7 +88,9 @@ $(TARGET).cia: $(TARGET).elf assets/app.rsf $(BUILD)/banner.bnr $(BUILD)/icon.ic
 	$(MAKEROM) -f cia -o $@ -elf $(TARGET).elf -rsf assets/app.rsf \
 	  -icon $(BUILD)/icon.icn -banner $(BUILD)/banner.bnr -exefslogo -target t
 
--include $(OBJS:.o=.d)
+ifneq ($(strip $(DEVKITARM)),)
+-include $(OBJS:.o=.d)        # (skipped for a host-only `make cia`: the .d files name container paths)
+endif
 
 clean:
 	rm -rf $(BUILD) $(TARGET).elf $(TARGET).3dsx $(TARGET).smdh $(TARGET).cia

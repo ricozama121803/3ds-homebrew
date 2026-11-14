@@ -89,6 +89,12 @@ int songs_scan(const char *root, Song *out, int max)
 		memset(s, 0, sizeof *s);
 		snprintf(s->root, sizeof s->root, "%s", root);
 		memcpy(s->dir, e->d_name, strlen(e->d_name) + 1);
+		char ap[200];                                                    // a song needs its audio to be playable
+		snprintf(ap, sizeof ap, "%s/songs/%s/audio.bpa", root, s->dir);
+		FILE *af = fopen(ap, "rb");
+		if (!af) { snprintf(ap, sizeof ap, "%s/songs/%s/audio.pcm", root, s->dir); af = fopen(ap, "rb"); }
+		if (!af) continue;
+		fclose(af);
 		if (load_info(root, s)) n++;
 	}
 	closedir(dir);
