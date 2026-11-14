@@ -1,5 +1,5 @@
 # local toolchain helpers (python venv, devkitPro installer, etc.)
-tools/
+/tools/
 
 # build output
 build/
@@ -16,3 +16,8 @@ samples/
 # python / blender byproducts
 __pycache__/
 *.blend1
+
+# BeatPad: decoded song audio (regenerate with beatpad/tools/make_song.py)
+beatpad/romfs/songs/*/audio.*
+beatpad/.stems/
+beatpad/library/

@@ -55,8 +55,11 @@ Nintendo 3DS homebrew games written in C with [devkitPro](https://devkitpro.org/
 | `sunset-ops/` | First-person team deathmatch (4 vs 4 against bots) on a Nuketown-style suburban cul-de-sac in the desert (two enterable houses, bus and truck): red-dot sights, four weapons, grenades, medkits, radar and kill feed, stereoscopic 3D. X/Y/A/B move, Circle Pad looks, R shoots, L aims, D-pad changes weapon / throws a grenade / heals. Design notes in [`PLAN.md`](sunset-ops/PLAN.md) |
 | `webslinger/` | Third-person web-swinging through a procedural Manhattan (15x15 blocks on a 960 m island, buildings up to a stepped landmark tower, park, water, traffic). R holds a web swing (pendulum physics, auto-chains), A jumps / lets go with a boost, run into a building to climb it (hold L to run up and along it, with the camera tilting up the facade), L + R web-zips to a roof, tap L in the air for a wingsuit, L sprints, B dives, A A flips / rolls, and letting go of a web at speed throws a flip or corkscrew; Circle Pad steers, D-pad / C-stick / touch drag move the camera. Free Roam and a timed Beacon Run, city map on the bottom screen, stereoscopic 3D. The hero is one continuous skinned mesh (Blender pipeline in `assets/hero`, `make hero`) driven by CMU-mocap walk / jog / sprint cycles (`source/hero_anim.h`). Host tests: `host/simtest.c`, `host/movetest.c` |
 | `grand-theft-otto-2/` | Fully 3D third-person Grand Theft Otto in a small LA (8x8 blocks): Blender-made, rigged and mocap-animated Otto, pedestrians and five cars plus a SWAT van; traffic with lights, crowds, cops and a 1-5 star wanted level, guns with a SELECT weapon wheel and L lock-on / punches, explosions, WASTED / BUSTED, Pay 'n' Spray, motorcycles and helicopters; beach with a pier and Ferris wheel, hills with a HOLLYWOOD sign, freeway, Capitol Records, Dodger Stadium, LAX Theme Building, Venice sign, Randy's donut, City Hall. `make models` rebuilds the Blender assets; host tests in `host/` (traffic soak, combat, controls). Plan and status in `PLAN.md` |
+| `beatpad/` | Button rhythm game: notes scroll down a perspective highway and you hit them on the beat with D-pad Left / Up / Right and Y / X / A (Easy uses four lanes, Normal and Hard all six), with hold notes, chords across both hands, a x1-x4 multiplier, a rock meter (optional no-fail), grades and best scores on the SD card, and an autoplay preview on the song select. Charts follow the singing: `tools/make_song.py` splits the vocals with Demucs (`tools/venv`) so notes land on the sung syllables, long sung notes become holds and lanes follow the melody. **Adding songs over Wi-Fi:** `beatpad/add-song.sh song.mp3 [more / folders]` converts them into `beatpad/library/` and shares them (`beatpad/serve-songs.sh` just shares); on the 3DS press Y (Get Songs), which finds the PC by itself and downloads to `sdmc:/3ds/beatpad/songs/`. Song audio is 4-bit ADPCM (`tools/bpa.py`, ~7 MB a song) streamed through the DSP. Host tests: `host/simtest.c`, `host/bpatest.c`, `host/nettest.c`; frames: `host/preview.sh` |
 
 ## Setup
+
+Without a local devkitPro, `./dkp-make.sh <project>` builds the `.3dsx` in the official `devkitpro/devkitarm` container (podman or docker) and the `.cia` on the host.
 
 Toolchain install (Debian/Ubuntu-style Linux):
 
@@ -74,7 +77,9 @@ source env.sh
 cd grand-theft-otto && make     # produces .3dsx, .cia, .elf and .smdh
 ```
 
-Copy the `.3dsx` to `sdmc:/3ds/` and launch it from the Homebrew Launcher, or load the `.cia` with FBI, or run it in the [Citra](https://citra-emu.org/) emulator.
+To install a `.cia` without taking the SD card out: open FBI → Remote Install → Receive URLs over the network on the 3DS, then run `./install-cia.sh <project> <3ds-ip>` (the IP is remembered).
+
+Or copy the `.3dsx` to `sdmc:/3ds/` and launch it from the Homebrew Launcher, or load the `.cia` with FBI, or run it in the [Citra](https://citra-emu.org/) emulator.
 
 Build output (`build/`, `.elf`, `.cia`, `.3dsx`, `.smdh`) is git-ignored.
 
